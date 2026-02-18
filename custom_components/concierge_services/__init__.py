@@ -11,7 +11,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to support
-PLATFORMS: list[str] = []
+PLATFORMS: list[str] = ["sensor"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

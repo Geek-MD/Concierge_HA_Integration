@@ -26,9 +26,9 @@ _LOGGER = logging.getLogger(__name__)
 # Configuration schema
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_IMAP_SERVER): str,
+        vol.Required(CONF_IMAP_SERVER, description={"suggested_value": "imap.gmail.com"}): str,
         vol.Required(CONF_IMAP_PORT, default=DEFAULT_IMAP_PORT): int,
-        vol.Required(CONF_EMAIL): str,
+        vol.Required(CONF_EMAIL, description={"suggested_value": "user@gmail.com"}): str,
         vol.Required(CONF_PASSWORD): str,
     }
 )
