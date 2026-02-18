@@ -6,6 +6,9 @@
 [![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/Geek-MD/Concierge_Services/blob/main/LICENSE)
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom%20Repository-blue)](https://hacs.xyz/)
 
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
+
 # Concierge Services
 
 **Concierge Services** is a custom integration for [Home Assistant](https://www.home-assistant.io) that allows you to manage utility bills (electricity, water, gas, etc.) received by email. The integration automatically extracts information from attached PDFs and creates sensors for each service with the total amount due and additional data.
@@ -138,20 +141,10 @@ All configuration is done through the user interface.
 
 ---
 
-## 🙋‍♂️ Support
+## 📜 License
 
-If you encounter any issues or have suggestions, please [open an issue](https://github.com/Geek-MD/Concierge_Services/issues).
-
----
-
-## 📄 License
-
-MIT © Edison Montes [_@GeekMD_](https://github.com/Geek-MD)
+MIT License. See [LICENSE](https://github.com/Geek-MD/Concierge_Services/blob/main/LICENSE) for details.
 
 ---
 
-<div align="center">
-  
 💻 **Proudly developed with GitHub Copilot** 🚀
-
-</div>
