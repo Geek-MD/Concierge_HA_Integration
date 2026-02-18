@@ -63,15 +63,34 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[str]):
 
     def _check_connection(self) -> str:
         """Check IMAP connection."""
+        imap = None
         try:
             data = self.config_entry.data
             imap = imaplib.IMAP4_SSL(data[CONF_IMAP_SERVER], data[CONF_IMAP_PORT])
             imap.login(data[CONF_EMAIL], data[CONF_PASSWORD])
-            imap.logout()
             return "OK"
-        except Exception as err:
-            _LOGGER.warning("IMAP connection check failed: %s", err)
+        except imaplib.IMAP4.error as err:
+            _LOGGER.warning(
+                "IMAP authentication failed for %s: %s. Check credentials or app password.",
+                self.config_entry.data[CONF_EMAIL],
+                err,
+            )
             return "Problem"
+        except Exception as err:
+            _LOGGER.warning(
+                "IMAP connection failed for %s@%s:%s: %s. Check server address, port, and network connectivity.",
+                self.config_entry.data[CONF_EMAIL],
+                self.config_entry.data[CONF_IMAP_SERVER],
+                self.config_entry.data[CONF_IMAP_PORT],
+                err,
+            )
+            return "Problem"
+        finally:
+            if imap is not None:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass  # Ignore logout errors
 
 
 class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):
