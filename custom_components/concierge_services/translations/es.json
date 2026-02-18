@@ -16,6 +16,18 @@
           "email": "Ejemplo: usuario@gmail.com",
           "password": "Use una contraseña de aplicación para Gmail y Yahoo"
         }
+      },
+      "finalize": {
+        "title": "Finalizar Configuración",
+        "description": "Configure el nombre descriptivo y el área para la integración ({email})",
+        "data": {
+          "friendly_name": "Nombre Descriptivo",
+          "area_id": "Área"
+        },
+        "data_description": {
+          "friendly_name": "Un nombre descriptivo para esta cuenta de correo",
+          "area_id": "Asociar esta integración con un área específica (opcional)"
+        }
       }
     },
     "error": {

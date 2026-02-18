@@ -16,6 +16,18 @@
           "email": "Example: user@gmail.com",
           "password": "Use an app password for Gmail and Yahoo"
         }
+      },
+      "finalize": {
+        "title": "Finalize Configuration",
+        "description": "Configure the friendly name and area for the integration ({email})",
+        "data": {
+          "friendly_name": "Friendly Name",
+          "area_id": "Area"
+        },
+        "data_description": {
+          "friendly_name": "A descriptive name for this email account",
+          "area_id": "Associate this integration with a specific area (optional)"
+        }
       }
     },
     "error": {

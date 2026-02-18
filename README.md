@@ -12,7 +12,7 @@
 
 # Concierge Services
 
-**Concierge Services** is a custom integration for [Home Assistant](https://www.home-assistant.io) that allows you to manage utility bills (electricity, water, gas, etc.) received by email. The integration automatically extracts information from attached PDFs and creates sensors for each service with the total amount due and additional data.
+**Concierge Services** is a custom integration for [Home Assistant](https://www.home-assistant.io) that allows you to manage utility bills (electricity, water, gas, etc.) received by email. The integration automatically detects services, extracts information from emails using heuristic analysis, and creates devices and sensors for each service with billing data.
 
 ---
 
@@ -23,14 +23,26 @@
 - 🔒 **Secure Storage**: Credentials are stored securely in Home Assistant
 - 🌐 **Multi-language Support**: Complete interface in Spanish and English
 - 🎯 **UI Configuration**: No YAML file editing required
+- 🏠 **Friendly Names**: Set custom names for your integrations
+- 📍 **Area Assignment**: Associate integrations with specific areas in your home
+- 🔍 **Automatic Service Detection**: Detects utility services from your inbox automatically
+- 🤖 **Heuristic Attribute Extraction**: Intelligently extracts billing data from email content
+  - Account/customer numbers
+  - Invoice/folio numbers
+  - Total amounts due
+  - Due dates and billing periods
+  - Consumption data
+  - Addresses and company information
+  - Any structured data found in emails
+- 🔧 **Device Architecture**: Each service appears as a separate device
+- 📊 **Status Sensor**: Monitor email connection status in real-time
 
 ### 🚧 Coming Soon
 
-- 📊 **Sensors per Service**: Configure individual sensors for each service (electricity, water, gas, etc.)
-- 📄 **PDF Extraction**: Automatically analyze bill PDFs
-- 💰 **Total Amount Due**: Sensor displays the total amount to pay
-- 📈 **Detailed Attributes**: Consumption, customer number, period, and other data as sensor attributes
-- 🔔 **Notifications**: Alerts when a new bill arrives
+- 🔔 **Discovery Notifications**: Persistent notifications when new services are detected
+- 📱 **Service Configuration**: Configure detected services as individual devices
+- 📈 **Historical Data**: Track billing history over time
+- 📄 **PDF Analysis**: Enhanced extraction from PDF attachments (future enhancement)
 
 ---
 
@@ -61,7 +73,9 @@
 
 ## ⚙️ Configuration
 
-All configuration is done through the user interface.
+All configuration is done through the user interface in two simple steps:
+
+### Step 1: IMAP Credentials
 
 1. Go to **Settings** → **Devices & Services**
 2. Click the **+ Add Integration** button
@@ -71,6 +85,12 @@ All configuration is done through the user interface.
    - **IMAP Port**: The IMAP port (default: `993`)
    - **Email**: Your email address
    - **Password**: Your password or app password
+
+### Step 2: Finalize Setup
+
+After validating credentials, configure:
+- **Friendly Name**: A descriptive name for this integration (e.g., "Home Bills", "Casa Principal")
+- **Area**: Associate the integration with a specific area in your home (optional)
 
 ### Configuration Examples
 
@@ -94,51 +114,73 @@ All configuration is done through the user interface.
 
 ---
 
+## 📊 What Gets Created
+
+After configuration, the integration creates:
+
+### Main Device
+- **Name**: Your configured friendly name (e.g., "Casa Principal")
+- **Area**: Your selected area (if configured)
+- **Manufacturer**: Concierge Services
+- **Model**: Email Integration
+
+### Status Sensor
+- **Name**: "Concierge Services - Status"
+- **State**: "OK" or "Problem"
+- **Attributes**:
+  - Email address
+  - IMAP server
+  - IMAP port
+
+### Service Devices (Auto-detected)
+As the integration scans your inbox, it automatically detects utility services and will create:
+- Individual devices per service (e.g., "Aguas Andinas", "Enel")
+- Sensors with extracted billing information
+- Device hierarchy linked to the main integration
+
+---
+
 ## 🚀 Development Status
 
-### ✅ Phase 1: Credential Configuration (Completed)
-- IMAP account configuration through UI
-- Real-time credential validation
-- Secure credential storage
-- Interface in Spanish and English
-- HACS compatibility
+### ✅ Version 0.2.0 (Current)
+- ✅ IMAP account configuration through UI
+- ✅ Two-step configuration (credentials + friendly name/area)
+- ✅ Real-time credential validation
+- ✅ Secure credential storage
+- ✅ Interface in Spanish and English
+- ✅ HACS compatibility
+- ✅ Device architecture with proper device_info
+- ✅ Status sensor: "Concierge Services - Status"
+- ✅ Automatic service detection from inbox
+- ✅ Heuristic attribute extraction from emails
+- ✅ Support for detecting multiple service types
+- ✅ Flexible pattern matching for billing data
 
-### 🔜 Upcoming Phases
+### 🔜 Version 0.3.0 (Upcoming)
+- 🔜 Persistent notifications for detected services
+- 🔜 Service-specific device creation
+- 🔜 Individual sensors per configured service
+- 🔜 Enhanced attribute display in sensor states
+- 🔜 Service configuration UI flow
 
-#### Phase 2: Sensor Creation
-- Configure individual sensors per service
-- Specify service name (e.g., "Electricity", "Water", "Gas")
-- Define PDF fields to extract
-
-#### Phase 3: Email Reading
-- Connect to configured IMAP server
-- Filter emails from service accounts
-- Download attached PDF files
-- Identify new bills
-
-#### Phase 4: Data Extraction
-- Parse PDFs with OCR/parsing
-- Extract configurable information:
-  - Customer number
-  - Billing period
-  - Consumption
-  - Total amount due
-  - Due date
-
-#### Phase 5: Sensor Updates
-- Update sensor state with total amount due
-- Store additional data as attributes
-- Trigger events when new bill arrives
-- History of previous bills
+### 🔮 Future Enhancements
+- Enhanced PDF attachment processing
+- Historical billing data tracking
+- Consumption trends and analytics
+- Payment reminders and automations
+- Multi-account support improvements
 
 ---
 
 ## 📓 Notes
 
-- The integration currently only configures IMAP credentials
-- Subsequent phases will add sensor functionality and email reading
+- The integration currently detects services automatically from your inbox
+- Services are identified using heuristic analysis of email content
+- Works best with emails that have attachments (typical for bills)
+- No PDF processing required - extracts data directly from email text
 - All credentials are stored securely in Home Assistant
 - It is recommended to use app passwords instead of your main password
+- Multiple instances supported (different email accounts)
 
 ---
 

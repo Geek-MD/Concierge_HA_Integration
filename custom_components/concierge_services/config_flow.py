@@ -11,6 +11,7 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar
 
 from .const import (
     DOMAIN,
@@ -73,6 +74,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        """Initialize the config flow."""
+        self._imap_data: dict[str, Any] = {}
+
     async def async_step_user(  # type: ignore[override]
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -85,7 +90,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
             self._abort_if_unique_id_configured()
             
             try:
-                info = await validate_imap_connection(self.hass, user_input)
+                await validate_imap_connection(self.hass, user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
@@ -94,10 +99,57 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(title=info["title"], data=user_input)  # type: ignore[return-value]
+                # Store IMAP data and proceed to naming/area selection
+                self._imap_data = user_input
+                return await self.async_step_finalize()
 
         return self.async_show_form(  # type: ignore[return-value]
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        )
+
+    async def async_step_finalize(  # type: ignore[override]
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the finalization step with friendly name and area."""
+        errors: dict[str, str] = {}
+        
+        # Get available areas
+        area_registry = ar.async_get(self.hass)
+        areas = area_registry.async_list_areas()
+        area_options = {area.id: area.name for area in areas}
+        area_options[""] = "No area"
+        
+        if user_input is not None:
+            # Combine IMAP data with friendly name and area
+            config_data = {
+                **self._imap_data,
+                "friendly_name": user_input.get("friendly_name", self._imap_data[CONF_EMAIL]),
+                "area_id": user_input.get("area_id", ""),
+            }
+            
+            return self.async_create_entry(  # type: ignore[return-value]
+                title=user_input.get("friendly_name", self._imap_data[CONF_EMAIL]),
+                data=config_data,
+            )
+        
+        # Create schema for finalization
+        finalize_schema = vol.Schema(
+            {
+                vol.Optional(
+                    "friendly_name",
+                    default=self._imap_data[CONF_EMAIL]
+                ): str,
+                vol.Optional("area_id", default=""): vol.In(area_options),
+            }
+        )
+        
+        return self.async_show_form(  # type: ignore[return-value]
+            step_id="finalize",
+            data_schema=finalize_schema,
+            errors=errors,
+            description_placeholders={
+                "email": self._imap_data[CONF_EMAIL],
+            },
         )
 
 
