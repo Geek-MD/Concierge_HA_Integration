@@ -6,152 +6,146 @@
 [![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/Geek-MD/Concierge_Services/blob/main/LICENSE)
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom%20Repository-blue)](https://hacs.xyz/)
 
+[![Ruff + Mypy + Hassfest](https://github.com/Geek-MD/Concierge_Services/actions/workflows/ci.yaml/badge.svg)](https://github.com/Geek-MD/Concierge_Services/actions/workflows/ci.yaml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
+
 # Concierge Services
 
-**Concierge Services** es una integración personalizada para [Home Assistant](https://www.home-assistant.io) que te permite gestionar facturas de servicios (electricidad, agua, gas, etc.) recibidas por correo electrónico. La integración extrae automáticamente información de los PDFs adjuntos y crea sensores para cada servicio con el total a pagar y datos adicionales.
+**Concierge Services** is a custom integration for [Home Assistant](https://www.home-assistant.io) that allows you to manage utility bills (electricity, water, gas, etc.) received by email. The integration automatically extracts information from attached PDFs and creates sensors for each service with the total amount due and additional data.
 
 ---
 
-## ✨ Características
+## ✨ Features
 
-- 📧 **Configuración de correo IMAP**: Conecta tu cuenta de correo donde recibes las facturas de servicios
-- ✅ **Validación de credenciales**: Verifica automáticamente que las credenciales IMAP sean correctas
-- 🔒 **Almacenamiento seguro**: Las credenciales se guardan de forma segura en Home Assistant
-- 🌐 **Soporte multiidioma**: Interfaz completa en español e inglés
-- 🎯 **Configuración por UI**: No requiere edición de archivos YAML
+- 📧 **IMAP Email Configuration**: Connect your email account where you receive utility bills
+- ✅ **Credential Validation**: Automatically verifies that IMAP credentials are correct
+- 🔒 **Secure Storage**: Credentials are stored securely in Home Assistant
+- 🌐 **Multi-language Support**: Complete interface in Spanish and English
+- 🎯 **UI Configuration**: No YAML file editing required
 
-### 🚧 Próximamente
+### 🚧 Coming Soon
 
-- 📊 **Sensores por servicio**: Configura sensores individuales para cada servicio (electricidad, agua, gas, etc.)
-- 📄 **Extracción de PDFs**: Analiza automáticamente los PDFs de las facturas
-- 💰 **Total a pagar**: El sensor muestra el monto total a pagar
-- 📈 **Atributos detallados**: Consumo, número de cliente, período y otros datos como atributos del sensor
-- 🔔 **Notificaciones**: Alertas cuando llega una nueva factura
+- 📊 **Sensors per Service**: Configure individual sensors for each service (electricity, water, gas, etc.)
+- 📄 **PDF Extraction**: Automatically analyze bill PDFs
+- 💰 **Total Amount Due**: Sensor displays the total amount to pay
+- 📈 **Detailed Attributes**: Consumption, customer number, period, and other data as sensor attributes
+- 🔔 **Notifications**: Alerts when a new bill arrives
 
 ---
 
-## 📦 Instalación
+## 📦 Installation
 
-### Opción 1: HACS (Recomendado)
+### Option 1: HACS (Recommended)
 
-1. Abre HACS en Home Assistant
-2. Ve a **Integraciones → Repositorios Personalizados**
-3. Agrega este repositorio:
+1. Open HACS in Home Assistant
+2. Go to **Integrations → Custom Repositories**
+3. Add this repository:
    ```
    https://github.com/Geek-MD/Concierge_Services
    ```
-   Selecciona tipo: **Integration**
-4. Instala y reinicia Home Assistant
-5. Ve a **Configuración → Dispositivos y Servicios → Agregar Integración** y selecciona **Concierge Services**
+   Select type: **Integration**
+4. Install and restart Home Assistant
+5. Go to **Settings → Devices & Services → Add Integration** and select **Concierge Services**
 
 ---
 
-### Opción 2: Instalación Manual
+### Option 2: Manual Installation
 
-1. Descarga este repositorio
-2. Copia la carpeta `custom_components/concierge_services/` en el directorio `config/custom_components/` de tu Home Assistant
-3. Reinicia Home Assistant
-4. Agrega la integración mediante la UI
+1. Download this repository
+2. Copy the `custom_components/concierge_services/` folder to your Home Assistant `config/custom_components/` directory
+3. Restart Home Assistant
+4. Add the integration through the UI
 
 ---
 
-## ⚙️ Configuración
+## ⚙️ Configuration
 
-Toda la configuración se realiza a través de la interfaz de usuario.
+All configuration is done through the user interface.
 
-1. Ve a **Configuración** → **Dispositivos y Servicios**
-2. Haz clic en el botón **+ Agregar Integración**
-3. Busca **Concierge Services**
-4. Ingresa los datos de tu cuenta de correo:
-   - **Servidor IMAP**: El servidor de correo IMAP
-   - **Puerto IMAP**: El puerto IMAP (por defecto: `993`)
-   - **Correo Electrónico**: Tu dirección de correo
-   - **Contraseña**: Tu contraseña o contraseña de aplicación
+1. Go to **Settings** → **Devices & Services**
+2. Click the **+ Add Integration** button
+3. Search for **Concierge Services**
+4. Enter your email account details:
+   - **IMAP Server**: Your IMAP email server
+   - **IMAP Port**: The IMAP port (default: `993`)
+   - **Email**: Your email address
+   - **Password**: Your password or app password
 
-### Ejemplos de Configuración
+### Configuration Examples
 
 #### Gmail
-- **Servidor IMAP**: `imap.gmail.com`
-- **Puerto IMAP**: `993`
-- **Correo**: `tucorreo@gmail.com`
-- **Contraseña**: Usa una [contraseña de aplicación](https://support.google.com/accounts/answer/185833)
+- **IMAP Server**: `imap.gmail.com`
+- **IMAP Port**: `993`
+- **Email**: `youremail@gmail.com`
+- **Password**: Use an [app password](https://support.google.com/accounts/answer/185833)
 
 #### Outlook/Hotmail
-- **Servidor IMAP**: `outlook.office365.com`
-- **Puerto IMAP**: `993`
-- **Correo**: `tucorreo@outlook.com`
-- **Contraseña**: Tu contraseña de cuenta
+- **IMAP Server**: `outlook.office365.com`
+- **IMAP Port**: `993`
+- **Email**: `youremail@outlook.com`
+- **Password**: Your account password
 
 #### Yahoo Mail
-- **Servidor IMAP**: `imap.mail.yahoo.com`
-- **Puerto IMAP**: `993`
-- **Correo**: `tucorreo@yahoo.com`
-- **Contraseña**: Usa una [contraseña de aplicación](https://help.yahoo.com/kb/generate-manage-third-party-passwords-sln15241.html)
+- **IMAP Server**: `imap.mail.yahoo.com`
+- **IMAP Port**: `993`
+- **Email**: `youremail@yahoo.com`
+- **Password**: Use an [app password](https://help.yahoo.com/kb/generate-manage-third-party-passwords-sln15241.html)
 
 ---
 
-## 🚀 Estado del Desarrollo
+## 🚀 Development Status
 
-### ✅ Fase 1: Configuración de Credenciales (Completada)
-- Configuración de cuenta IMAP mediante UI
-- Validación de credenciales en tiempo real
-- Almacenamiento seguro de credenciales
-- Interfaz en español e inglés
-- Compatibilidad con HACS
+### ✅ Phase 1: Credential Configuration (Completed)
+- IMAP account configuration through UI
+- Real-time credential validation
+- Secure credential storage
+- Interface in Spanish and English
+- HACS compatibility
 
-### 🔜 Próximas Fases
+### 🔜 Upcoming Phases
 
-#### Fase 2: Creación de Sensores
-- Configurar sensores individuales por servicio
-- Especificar nombre del servicio (ej: "Electricidad", "Agua", "Gas")
-- Definir campos del PDF a extraer
+#### Phase 2: Sensor Creation
+- Configure individual sensors per service
+- Specify service name (e.g., "Electricity", "Water", "Gas")
+- Define PDF fields to extract
 
-#### Fase 3: Lectura de Correos
-- Conectar al servidor IMAP configurado
-- Filtrar correos de cuentas de servicio
-- Descargar archivos PDF adjuntos
-- Identificar nuevas facturas
+#### Phase 3: Email Reading
+- Connect to configured IMAP server
+- Filter emails from service accounts
+- Download attached PDF files
+- Identify new bills
 
-#### Fase 4: Extracción de Datos
-- Analizar PDFs con OCR/parsing
-- Extraer información configurable:
-  - Número de cliente
-  - Período de facturación
-  - Consumo
-  - Total a pagar
-  - Fecha de vencimiento
+#### Phase 4: Data Extraction
+- Parse PDFs with OCR/parsing
+- Extract configurable information:
+  - Customer number
+  - Billing period
+  - Consumption
+  - Total amount due
+  - Due date
 
-#### Fase 5: Actualización de Sensores
-- Actualizar estado del sensor con total a pagar
-- Guardar datos adicionales como atributos
-- Disparar eventos cuando llega nueva factura
-- Historial de facturas anteriores
-
----
-
-## 📓 Notas
-
-- La integración actualmente solo configura las credenciales IMAP
-- Las fases siguientes agregarán la funcionalidad de sensores y lectura de correos
-- Todas las credenciales se almacenan de forma segura en Home Assistant
-- Se recomienda usar contraseñas de aplicación en lugar de la contraseña principal
+#### Phase 5: Sensor Updates
+- Update sensor state with total amount due
+- Store additional data as attributes
+- Trigger events when new bill arrives
+- History of previous bills
 
 ---
 
-## 🙋‍♂️ Soporte
+## 📓 Notes
 
-Si encuentras algún problema o tienes sugerencias, por favor [abre un issue](https://github.com/Geek-MD/Concierge_Services/issues).
-
----
-
-## 📄 Licencia
-
-MIT © Edison Montes [_@GeekMD_](https://github.com/Geek-MD)
+- The integration currently only configures IMAP credentials
+- Subsequent phases will add sensor functionality and email reading
+- All credentials are stored securely in Home Assistant
+- It is recommended to use app passwords instead of your main password
 
 ---
 
-<div align="center">
-  
+## 📜 License
+
+MIT License. See [LICENSE](https://github.com/Geek-MD/Concierge_Services/blob/main/LICENSE) for details.
+
+---
+
 💻 **Proudly developed with GitHub Copilot** 🚀
-
-</div>

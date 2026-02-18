@@ -1,11 +1,11 @@
 {
   "domain": "concierge_services",
   "name": "Concierge Services",
-  "version": "0.1.0",
-  "documentation": "https://github.com/Geek-MD/Concierge_Services",
-  "issue_tracker": "https://github.com/Geek-MD/Concierge_Services/issues",
-  "requirements": [],
   "codeowners": ["@Geek-MD"],
   "config_flow": true,
-  "iot_class": "cloud_polling"
+  "documentation": "https://github.com/Geek-MD/Concierge_Services",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Geek-MD/Concierge_Services/issues",
+  "requirements": [],
+  "version": "0.1.0"
 }

@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure Concierge Services",
+        "description": "Enter the IMAP email credentials where you receive service bills (electricity, water, gas, etc.)",
+        "data": {
+          "imap_server": "IMAP Server",
+          "imap_port": "IMAP Port",
+          "email": "Email Address",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to IMAP server",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This email account is already configured"
+    }
+  }
+}
