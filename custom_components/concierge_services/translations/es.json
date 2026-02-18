@@ -9,6 +9,12 @@
           "imap_port": "Puerto IMAP",
           "email": "Correo Electrónico",
           "password": "Contraseña"
+        },
+        "data_description": {
+          "imap_server": "Ejemplo: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
+          "imap_port": "Puerto predeterminado para conexiones IMAP seguras",
+          "email": "Ejemplo: usuario@gmail.com",
+          "password": "Use una contraseña de aplicación para Gmail y Yahoo"
         }
       }
     },
