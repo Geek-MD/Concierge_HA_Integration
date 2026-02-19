@@ -185,24 +185,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
             # Proceed to service selection
             return await self.async_step_select_services()
             
-        except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.exception("Error detecting services: %s", err)
+        except imaplib.IMAP4.error as err:
+            _LOGGER.exception("IMAP error during service detection: %s", err)
             errors["base"] = "detection_failed"
-            
-            # If detection fails, still allow creating the entry without services
-            if user_input is not None and user_input.get("skip_detection"):
-                return await self._create_entry_with_services([])
-        
-        # Show form with option to skip detection if it failed
-        if errors:
-            return self.async_show_form(  # type: ignore[return-value]
-                step_id="detect_services",
-                data_schema=vol.Schema({}),
-                errors=errors,
-            )
-        
-        # This shouldn't be reached, but just in case
-        return await self.async_step_select_services()
+            # Allow user to continue without services
+            return await self._create_entry_with_services([])
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected error detecting services: %s", err)
+            errors["base"] = "detection_failed"
+            # Allow user to continue without services
+            return await self._create_entry_with_services([])
     
     async def async_step_select_services(  # type: ignore[override]
         self, user_input: dict[str, Any] | None = None
