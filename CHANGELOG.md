@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-19
+
+### Added
+- **Service Detection Flow**: Integration now automatically detects service accounts from inbox during setup
+- **Service Selection**: Users can now select which detected services to configure as devices
+- **MQTT-Style Architecture**: Following Home Assistant's MQTT integration pattern:
+  - Email account acts as the "service" (hub)
+  - Service accounts act as "devices" linked to the hub
+- **Multi-Step Configuration**: Enhanced setup flow with service detection and selection
+- **Service Metadata Storage**: Detected services are stored with metadata for future updates
+
+### Changed
+- **Configuration Flow**: Added two new steps after email setup:
+  1. Service detection (automatic scan of inbox)
+  2. Service selection (choose which services to configure)
+- **Device Creation**: Devices are now created for all selected services during initial setup
+- **Sensor Platform**: Updated to properly handle configured services from config entry
+
+### Fixed
+- **Service Detection Issue**: Previously detected services were not being converted into devices
+- **Device Creation**: Service devices are now properly created during integration setup
+
 ## [0.2.0] - 2026-02-18
 
 ### Added

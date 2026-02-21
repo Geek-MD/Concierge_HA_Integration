@@ -28,12 +28,24 @@
           "friendly_name": "A descriptive name for this email account",
           "area_id": "Associate this integration with a specific area (optional)"
         }
+      },
+      "detect_services": {
+        "title": "Detecting Services",
+        "description": "Scanning your inbox for service accounts..."
+      },
+      "select_services": {
+        "title": "Select Services",
+        "description": "Found {count} service(s) in your inbox. Select which ones to configure as devices:",
+        "data": {
+          "services": "Services"
+        }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to IMAP server",
       "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "detection_failed": "Failed to detect services. You can continue without service detection."
     },
     "abort": {
       "already_configured": "This email account is already configured"

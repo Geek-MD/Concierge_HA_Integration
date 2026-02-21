@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
+import homeassistant.helpers.config_validation as cv
 
 from .const import (
     DOMAIN,
@@ -19,8 +20,10 @@ from .const import (
     CONF_IMAP_PORT,
     CONF_EMAIL,
     CONF_PASSWORD,
+    CONF_SERVICES,
     DEFAULT_IMAP_PORT,
 )
+from .service_detector import detect_services_from_imap
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +80,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._imap_data: dict[str, Any] = {}
+        self._detected_services: list[Any] = []
+        self._services_metadata: dict[str, dict[str, Any]] = {}
 
     async def async_step_user(  # type: ignore[override]
         self, user_input: dict[str, Any] | None = None
@@ -120,17 +125,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
         area_options[""] = "No area"
         
         if user_input is not None:
-            # Combine IMAP data with friendly name and area
-            config_data = {
-                **self._imap_data,
-                "friendly_name": user_input.get("friendly_name", self._imap_data[CONF_EMAIL]),
-                "area_id": user_input.get("area_id", ""),
-            }
+            # Store friendly name and area, then move to service selection
+            self._imap_data["friendly_name"] = user_input.get("friendly_name", self._imap_data[CONF_EMAIL])
+            self._imap_data["area_id"] = user_input.get("area_id", "")
             
-            return self.async_create_entry(  # type: ignore[return-value]
-                title=user_input.get("friendly_name", self._imap_data[CONF_EMAIL]),
-                data=config_data,
-            )
+            # Proceed to service detection
+            return await self.async_step_detect_services()
         
         # Create schema for finalization
         finalize_schema = vol.Schema(
@@ -150,6 +150,126 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
             description_placeholders={
                 "email": self._imap_data[CONF_EMAIL],
             },
+        )
+    
+    async def async_step_detect_services(  # type: ignore[override]
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Detect services from the email account."""
+        errors: dict[str, str] = {}
+        
+        try:
+            # Run service detection
+            _LOGGER.info("Starting service detection for %s", self._imap_data[CONF_EMAIL])
+            self._detected_services = await self.hass.async_add_executor_job(
+                detect_services_from_imap,
+                self._imap_data[CONF_IMAP_SERVER],
+                self._imap_data[CONF_IMAP_PORT],
+                self._imap_data[CONF_EMAIL],
+                self._imap_data[CONF_PASSWORD],
+                100,  # Scan last 100 emails
+            )
+            
+            # Build services metadata
+            for service in self._detected_services:
+                self._services_metadata[service.service_id] = {
+                    "name": service.service_name,
+                    "sample_subject": service.sample_subject,
+                    "sample_from": service.sample_from,
+                    "email_count": service.email_count,
+                }
+            
+            _LOGGER.info("Detected %d services: %s", len(self._detected_services), 
+                        [s.service_name for s in self._detected_services])
+            
+            # Proceed to service selection
+            return await self.async_step_select_services()
+            
+        except imaplib.IMAP4.error as err:
+            _LOGGER.exception("IMAP error during service detection: %s", err)
+            errors["base"] = "detection_failed"
+            # Allow user to continue without services
+            return await self._create_entry_with_services([])
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected error detecting services: %s", err)
+            errors["base"] = "detection_failed"
+            # Allow user to continue without services
+            return await self._create_entry_with_services([])
+    
+    async def async_step_select_services(  # type: ignore[override]
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Let the user select which services to configure."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Get selected services
+            selected_service_ids = user_input.get(CONF_SERVICES, [])
+            
+            # Create the entry with selected services
+            return await self._create_entry_with_services(selected_service_ids)
+        
+        # Build options for service selection
+        if not self._detected_services:
+            # No services detected, create entry without services
+            _LOGGER.info("No services detected, creating entry without services")
+            return await self._create_entry_with_services([])
+        
+        # Create checkboxes for each detected service
+        service_options = {
+            service.service_id: f"{service.service_name} ({service.email_count} emails)"
+            for service in self._detected_services
+        }
+        
+        # Pre-select all services by default
+        default_services = [service.service_id for service in self._detected_services]
+        
+        select_schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_SERVICES,
+                    default=default_services
+                ): cv.multi_select(service_options),
+            }
+        )
+        
+        return self.async_show_form(  # type: ignore[return-value]
+            step_id="select_services",
+            data_schema=select_schema,
+            errors=errors,
+            description_placeholders={
+                "count": str(len(self._detected_services)),
+            },
+        )
+    
+    async def _create_entry_with_services(self, selected_service_ids: list[str]) -> FlowResult:
+        """Create the config entry with selected services."""
+        # Filter metadata to only include selected services
+        selected_metadata = {
+            service_id: self._services_metadata[service_id]
+            for service_id in selected_service_ids
+            if service_id in self._services_metadata
+        }
+        
+        # Combine all data
+        config_data = {
+            **self._imap_data,
+            CONF_SERVICES: selected_service_ids,
+            "services_metadata": selected_metadata,
+        }
+        
+        title = self._imap_data.get("friendly_name", self._imap_data[CONF_EMAIL])
+        
+        _LOGGER.info(
+            "Creating entry '%s' with %d services: %s",
+            title,
+            len(selected_service_ids),
+            selected_service_ids,
+        )
+        
+        return self.async_create_entry(  # type: ignore[return-value]
+            title=title,
+            data=config_data,
         )
 
 

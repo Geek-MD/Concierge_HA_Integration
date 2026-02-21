@@ -73,7 +73,7 @@
 
 ## ⚙️ Configuration
 
-All configuration is done through the user interface in two simple steps:
+All configuration is done through the user interface in four simple steps:
 
 ### Step 1: IMAP Credentials
 
@@ -91,6 +91,20 @@ All configuration is done through the user interface in two simple steps:
 After validating credentials, configure:
 - **Friendly Name**: A descriptive name for this integration (e.g., "Home Bills", "Casa Principal")
 - **Area**: Associate the integration with a specific area in your home (optional)
+
+### Step 3: Service Detection
+
+The integration automatically scans your inbox for service accounts (utility bills):
+- Scans the last 100 emails
+- Identifies billing emails (those with attachments)
+- Detects service providers automatically
+
+### Step 4: Service Selection
+
+Select which detected services to configure as devices:
+- All detected services are pre-selected by default
+- You can unselect services you don't want to track
+- Each service becomes a separate device in Home Assistant
 
 ### Configuration Examples
 
@@ -156,14 +170,17 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Support for detecting multiple service types
 - ✅ Flexible pattern matching for billing data
 
-### 🔜 Version 0.3.0 (Upcoming)
-- 🔜 Persistent notifications for detected services
-- 🔜 Service-specific device creation
-- 🔜 Individual sensors per configured service
-- 🔜 Enhanced attribute display in sensor states
-- 🔜 Service configuration UI flow
+### ✅ Version 0.3.0 (Current)
+- ✅ Automatic service detection from inbox during setup
+- ✅ Service selection UI - choose which services to configure
+- ✅ Service-specific device creation
+- ✅ Individual sensors per configured service
+- ✅ Enhanced configuration flow with multi-step setup
+- ✅ MQTT-style architecture: email as hub, services as devices
 
 ### 🔮 Future Enhancements
+- Persistent notifications for detected services
+- Enhanced attribute display in sensor states
 - Enhanced PDF attachment processing
 - Historical billing data tracking
 - Consumption trends and analytics

@@ -28,12 +28,24 @@
           "friendly_name": "Un nombre descriptivo para esta cuenta de correo",
           "area_id": "Asociar esta integración con un área específica (opcional)"
         }
+      },
+      "detect_services": {
+        "title": "Detectando Servicios",
+        "description": "Escaneando su bandeja de entrada en busca de cuentas de servicio..."
+      },
+      "select_services": {
+        "title": "Seleccionar Servicios",
+        "description": "Se encontraron {count} servicio(s) en su bandeja de entrada. Seleccione cuáles desea configurar como dispositivos:",
+        "data": {
+          "services": "Servicios"
+        }
       }
     },
     "error": {
       "cannot_connect": "No se pudo conectar al servidor IMAP",
       "invalid_auth": "Autenticación inválida",
-      "unknown": "Error inesperado"
+      "unknown": "Error inesperado",
+      "detection_failed": "No se pudieron detectar servicios. Puede continuar sin detección de servicios."
     },
     "abort": {
       "already_configured": "Esta cuenta de correo ya está configurada"
