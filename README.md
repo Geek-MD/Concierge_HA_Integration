@@ -159,7 +159,6 @@ As the integration scans your inbox, it automatically detects utility services a
 
 ## 🚀 Development Status
 
-### ✅ Version 0.2.0
 - ✅ IMAP account configuration through UI
 - ✅ Two-step configuration (credentials + friendly name/area)
 - ✅ Real-time credential validation
@@ -170,16 +169,12 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Status sensor: "Concierge Services - Status"
 - ✅ Automatic service detection from inbox
 - ✅ Support for detecting multiple service types
-
-### ✅ Version 0.3.0
 - ✅ Automatic service detection from inbox during setup
 - ✅ Service selection UI - choose which services to configure
 - ✅ Service-specific device creation
 - ✅ Individual sensors per configured service
 - ✅ Enhanced configuration flow with multi-step setup
 - ✅ MQTT-style architecture: email as hub, services as devices
-
-### ✅ Version 0.3.2 (Current)
 - ✅ Targeted attribute extraction (8 defined fields, no heuristic noise)
 - ✅ HTML email body stripping (prefers text/plain, strips text/html)
 - ✅ Folio extracted from subject, ready for PDF confirmation
