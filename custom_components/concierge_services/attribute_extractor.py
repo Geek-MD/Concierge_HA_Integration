@@ -1,7 +1,7 @@
 """Attribute extraction module for Concierge Services.
 
-Extracts billing attributes from email body using heuristic analysis.
-This module uses flexible pattern matching to discover any relevant attributes.
+Extracts billing attributes from email body using targeted field patterns.
+Only the fields required before PDF analysis are extracted.
 """
 from __future__ import annotations
 
@@ -13,47 +13,11 @@ from typing import Any
 _LOGGER = logging.getLogger(__name__)
 
 
-# Common field names that typically indicate relevant billing information
-FIELD_INDICATORS = [
-    # Spanish
-    "número", "numero", "nº", "n°", "folio", "cuenta", "cliente", "factura", "boleta",
-    "total", "monto", "importe", "pagar", "precio", "valor", "cargo", "subtotal",
-    "período", "periodo", "fecha", "vencimiento", "vence", "dirección", "direccion",
-    "domicilio", "rut", "consumo", "uso", "medidor", "lectura", "anterior", "actual",
-    "tarifa", "descuento", "recargo", "mora", "interés", "interes", "saldo",
-    "deuda", "pagado", "pendiente", "servicio", "plan", "contrato", "sucursal",
-    "comuna", "ciudad", "región", "region", "código", "codigo", "referencia",
-    # English
-    "number", "account", "customer", "invoice", "bill", "receipt", "total", "amount",
-    "due", "date", "period", "address", "consumption", "usage", "meter", "reading",
-    "rate", "tariff", "discount", "charge", "balance", "debt", "service", "plan",
-]
-
-# Patterns for structured data (key-value pairs)
-KEY_VALUE_PATTERNS = [
-    # Pattern: "Label: Value" or "Label = Value"
-    r"([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s\.]{2,30})\s*[:=]\s*([^\n\r]{1,100})",
-    # Pattern: "Label    Value" (multiple spaces/tabs)
-    r"([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s\.]{2,30})\s{2,}([^\n\r]{1,100})",
-]
-
-# Patterns for amounts/numbers with currency
-CURRENCY_PATTERNS = [
-    r"\$\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?)",
-    r"([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?)\s*(?:CLP|USD|EUR|pesos?)",
-]
-
-# Patterns for dates
+# Patterns for billing period dates (start and end)
 DATE_PATTERNS = [
     r"([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})",
     r"([0-9]{1,2}\s+de\s+[a-zA-Z]+\s+de\s+[0-9]{4})",
     r"([A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})",
-]
-
-# Patterns for IDs/numbers (account numbers, folios, etc.)
-ID_PATTERNS = [
-    r"\b([0-9]{6,})\b",
-    r"\b([0-9]{1,3}(?:[.-][0-9]{3}){2,}(?:-[0-9kK])?)\b",
 ]
 
 
@@ -295,7 +259,7 @@ def _extract_from_subject(subject: str) -> dict[str, str]:
     for pattern in folio_patterns:
         match = re.search(pattern, subject, re.IGNORECASE)
         if match:
-            attrs["_folio_from_subject"] = match.group(1)
+            attrs["folio"] = match.group(1)
             break
     
     # Extract RUT from subject if present
