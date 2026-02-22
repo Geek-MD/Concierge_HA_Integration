@@ -168,15 +168,16 @@ def _extract_dates(text: str) -> dict[str, str]:
     """Extract dates from text."""
     dates: dict[str, str] = {}
 
-    _DATE_KEYS = ["billing_period_start", "billing_period_end", "due_date"]
+    _DATE_KEYS = ["billing_period_start", "billing_period_end"]
 
     for pattern in DATE_PATTERNS:
         matches = re.finditer(pattern, text, re.IGNORECASE)
 
         for i, match in enumerate(matches):
+            if i >= len(_DATE_KEYS):
+                break
             date = match.group(1).strip()
-
-            key = _DATE_KEYS[i] if i < len(_DATE_KEYS) else f"date_{i + 1}"
+            key = _DATE_KEYS[i]
             if key not in dates:
                 dates[key] = date
 
