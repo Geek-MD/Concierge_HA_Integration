@@ -39,205 +39,143 @@ def _strip_html(html: str) -> str:
     return parser.get_text()
 
 
-def _normalize_key(key: str) -> str:
-    """Normalize a key name for storage."""
-    # Remove special characters and normalize
-    key = key.strip().lower()
-    key = re.sub(r'[^a-z0-9áéíóúñü\s]', '', key)
-    key = re.sub(r'\s+', '_', key)
-    # Limit length
-    if len(key) > 50:
-        key = key[:50]
-    return key
+# Label patterns that precede a total-amount value
+_TOTAL_LABELS = re.compile(
+    r"(?:total\s+a\s+pagar|monto\s+total|total\s+factura|importe\s+total"
+    r"|total\s+cuenta|valor\s+a\s+pagar|total)[:\s]+",
+    re.IGNORECASE,
+)
+
+# Label patterns that precede a customer/account number
+_CUSTOMER_LABELS = re.compile(
+    r"(?:n[úu]mero\s+de\s+(?:cuenta|cliente)|n[°º]\s*(?:cuenta|cliente)"
+    r"|cuenta\s+n[°º]?|cliente\s+n[°º]?|customer\s+(?:number|no\.?)|account\s+(?:number|no\.?))"
+    r"[:\s]+",
+    re.IGNORECASE,
+)
+
+# Label patterns that precede an address value
+_ADDRESS_LABELS = re.compile(
+    r"(?:direcci[oó]n(?:\s+de\s+suministro)?|domicilio|address)[:\s]+",
+    re.IGNORECASE,
+)
+
+# Currency amount pattern (reused by _extract_total_amount)
+_AMOUNT_RE = re.compile(
+    r"\$\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
+    r"|([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)\s*(?:CLP|USD|EUR|pesos?)",
+    re.IGNORECASE,
+)
 
 
-def _normalize_value(value: str) -> str:
-    """Normalize a value for storage."""
-    # Clean up whitespace
-    value = re.sub(r'\s+', ' ', value.strip())
-    # Limit length
-    if len(value) > 200:
-        value = value[:200]
-    return value
+def _extract_total_amount(text: str) -> str | None:
+    """Return the total amount due found in *text*, or None."""
+    for label_match in _TOTAL_LABELS.finditer(text):
+        rest = text[label_match.end():]
+        amount_match = _AMOUNT_RE.search(rest[:60])
+        if amount_match:
+            raw = (amount_match.group(1) or amount_match.group(2) or "").strip()
+            if raw:
+                return raw
+    # Fallback: first currency amount in the whole text
+    amount_match = _AMOUNT_RE.search(text)
+    if amount_match:
+        return (amount_match.group(1) or amount_match.group(2) or "").strip() or None
+    return None
 
 
-def _is_relevant_field(key: str) -> bool:
-    """Check if a field name seems relevant based on common indicators."""
-    key_lower = key.lower()
-
-    for indicator in FIELD_INDICATORS:
-        if indicator in key_lower:
-            return True
-
-    return False
-
-
-def _extract_key_value_pairs(text: str) -> dict[str, str]:
-    """Extract key-value pairs from text using heuristic patterns."""
-    pairs: dict[str, str] = {}
-
-    # Matches HTML entities — indicates unstripped HTML content that should be ignored
-    _html_entity_re = re.compile(r"&(?:amp|lt|gt|quot|nbsp|apos);", re.IGNORECASE)
-
-    for pattern in KEY_VALUE_PATTERNS:
-        matches = re.finditer(pattern, text, re.MULTILINE | re.IGNORECASE)
-
-        for match in matches:
-            key = match.group(1).strip()
-            value = match.group(2).strip()
-
-            if len(key) > 50:
-                continue
-
-            if len(value) < 1:
-                continue
-
-            # Skip values that contain HTML entities (raw HTML leaked through)
-            if _html_entity_re.search(value):
-                continue
-
-            # Skip values with repeated special characters (formatting noise)
-            if len(re.findall(r'[=\-_\*]{3,}', value)) > 0:
-                continue
-
-            if _is_relevant_field(key):
-                normalized_key = _normalize_key(key)
-                normalized_value = _normalize_value(value)
-
-                if normalized_key not in pairs and normalized_value:
-                    pairs[normalized_key] = normalized_value
-
-    return pairs
+def _extract_customer_number(text: str) -> str | None:
+    """Return the customer/account number found in *text*, or None."""
+    for label_match in _CUSTOMER_LABELS.finditer(text):
+        rest = text[label_match.end():]
+        # Grab first sequence of digits (possibly formatted with dots/dashes)
+        num_match = re.search(r"([0-9][0-9.\-]{0,19})", rest[:80])
+        if num_match:
+            return num_match.group(1).strip()
+    return None
 
 
-def _extract_currency_amounts(text: str) -> dict[str, str]:
-    """Extract currency amounts from text."""
-    amounts: dict[str, str] = {}
-    
-    for pattern in CURRENCY_PATTERNS:
-        matches = re.finditer(pattern, text, re.IGNORECASE)
-        
-        for i, match in enumerate(matches):
-            amount = match.group(1).strip()
-            
-            # Store with generic key if we find amounts
-            key = f"monto_{i + 1}" if i > 0 else "monto"
-            if key not in amounts:
-                amounts[key] = amount
-    
-    return amounts
+def _extract_address(text: str) -> str | None:
+    """Return the service address found in *text*, or None."""
+    for label_match in _ADDRESS_LABELS.finditer(text):
+        rest = text[label_match.end():]
+        # Take up to end-of-line, trimmed
+        line_match = re.search(r"([^\n\r]{5,120})", rest)
+        if line_match:
+            value = re.sub(r"\s+", " ", line_match.group(1)).strip()
+            if value:
+                return value
+    return None
 
 
 def _extract_dates(text: str) -> dict[str, str]:
-    """Extract dates from text."""
+    """Extract billing period start and end dates from *text*."""
     dates: dict[str, str] = {}
-
     _DATE_KEYS = ["billing_period_start", "billing_period_end"]
 
     for pattern in DATE_PATTERNS:
-        matches = re.finditer(pattern, text, re.IGNORECASE)
-
-        for i, match in enumerate(matches):
+        for i, match in enumerate(re.finditer(pattern, text, re.IGNORECASE)):
             if i >= len(_DATE_KEYS):
                 break
-            date = match.group(1).strip()
             key = _DATE_KEYS[i]
             if key not in dates:
-                dates[key] = date
+                dates[key] = match.group(1).strip()
 
     return dates
-
-
-def _extract_ids(text: str) -> dict[str, str]:
-    """Extract ID numbers from text."""
-    ids: dict[str, str] = {}
-    
-    for pattern in ID_PATTERNS:
-        matches = re.finditer(pattern, text)
-        
-        # Limit to first few IDs to avoid noise
-        for i, match in enumerate(matches):
-            if i >= 5:  # Max 5 IDs
-                break
-            
-            id_value = match.group(1).strip()
-            
-            # Skip very long numbers (probably not IDs)
-            if len(id_value) > 20:
-                continue
-            
-            key = f"numero_{i + 1}" if i > 0 else "numero"
-            if key not in ids:
-                ids[key] = id_value
-    
-    return ids
 
 
 def extract_attributes_from_email_body(
     subject: str, body: str
 ) -> dict[str, Any]:
-    """
-    Extract billing attributes from email subject and body using heuristics.
-    
-    This function uses flexible pattern matching to discover any relevant
-    attributes without being limited to predefined fields.
-    
+    """Extract billing attributes from email subject and body.
+
+    Extracts exactly the fields needed before PDF analysis:
+    folio, billing_period_start, billing_period_end,
+    total_amount, customer_number, address.
+
     Args:
-        subject: Email subject line
-        body: Email body text
-    
+        subject: Email subject line (decoded).
+        body:    Plain-text email body.
+
     Returns:
-        Dictionary with extracted attributes
+        Dictionary with extracted attributes.
     """
     attributes: dict[str, Any] = {}
-    
+
     try:
-        # First, extract attributes specifically from subject line
-        # These often contain important identifiers like folio numbers
+        # Folio — from subject line (confirmed later against PDF)
         subject_attrs = _extract_from_subject(subject)
         attributes.update(subject_attrs)
-        
-        # Then process subject and body together for comprehensive extraction
-        combined_text = f"{subject}\n\n{body}"
-        
-        # Limit text length for performance
-        if len(combined_text) > 15000:
-            combined_text = combined_text[:15000]
-        
-        # Extract structured key-value pairs (most important)
-        key_value_pairs = _extract_key_value_pairs(combined_text)
-        # Merge without overwriting subject-specific attributes
-        for key, value in key_value_pairs.items():
-            if key not in attributes:
-                attributes[key] = value
-        
-        # Extract currency amounts
-        amounts = _extract_currency_amounts(combined_text)
-        for key, value in amounts.items():
-            if key not in attributes:
-                attributes[key] = value
-        
-        # Extract dates
-        dates = _extract_dates(combined_text)
-        for key, value in dates.items():
-            if key not in attributes:
-                attributes[key] = value
-        
-        # Extract ID numbers
-        ids = _extract_ids(combined_text)
-        for key, value in ids.items():
-            if key not in attributes:
-                attributes[key] = value
-        
-        # Add metadata about extraction
-        attributes["_extraction_method"] = "heuristic"
-        attributes["_attributes_found"] = len([k for k in attributes.keys() if not k.startswith("_")])
-        
+
+        # Combine subject + body for field search; cap for performance
+        combined = f"{subject}\n\n{body}"
+        if len(combined) > 15000:
+            combined = combined[:15000]
+
+        # Billing period dates
+        dates = _extract_dates(combined)
+        attributes.update(dates)
+
+        # Total amount
+        total = _extract_total_amount(combined)
+        if total:
+            attributes["total_amount"] = total
+
+        # Customer / account number
+        customer = _extract_customer_number(combined)
+        if customer:
+            attributes["customer_number"] = customer
+
+        # Service address
+        address = _extract_address(combined)
+        if address:
+            attributes["address"] = address
+
     except Exception as err:
         _LOGGER.debug("Error extracting attributes: %s", err)
-        attributes["_extraction_error"] = str(err)
-    
+
     return attributes
+
 
 
 def _extract_from_subject(subject: str) -> dict[str, str]:

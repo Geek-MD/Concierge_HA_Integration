@@ -91,12 +91,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _fetch_service_data(self) -> dict[str, Any]:
         """Fetch service data from IMAP."""
+        assert self.config_entry is not None
         imap = None
         result: dict[str, Any] = {
             "connection_status": "Problem",
             "services": {},
         }
-        
+
         try:
             data = self.config_entry.data
             imap = imaplib.IMAP4_SSL(data[CONF_IMAP_SERVER], data[CONF_IMAP_PORT])
@@ -464,6 +465,7 @@ class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoord
     @property
     def extra_state_attributes(self) -> dict[str, str]:
         """Return additional state attributes."""
+        assert self.coordinator.config_entry is not None
         return {
             "email": self.coordinator.config_entry.data[CONF_EMAIL],
             "imap_server": self.coordinator.config_entry.data[CONF_IMAP_SERVER],

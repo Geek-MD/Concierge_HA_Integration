@@ -7,16 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.2] - 2026-02-22
 
+### Changed
+- **Targeted Attribute Extraction**: Replaced broad heuristic email parsing with a
+  focused extractor that produces exactly the fields needed before PDF analysis:
+
+  | Attribute | Description |
+  |---|---|
+  | `service_name` | Utility company name (from sensor metadata) |
+  | `folio` | Invoice/folio number (extracted from subject; confirmed later by PDF) |
+  | `billing_period_start` | Start date of the billing period |
+  | `billing_period_end` | End date of the billing period |
+  | `total_amount` | Total amount due |
+  | `customer_number` | Customer / account number |
+  | `address` | Service address |
+  | `last_updated_datetime` | Date the company sent the email (from `Date` header) |
+
+- **HTML Body Handling**: Email body extractor now prefers `text/plain` parts;
+  falls back to `text/html` only after stripping tags via stdlib `html.parser`.
+
+### Removed
+- Generic heuristic extractors (`_extract_key_value_pairs`, `_extract_currency_amounts`,
+  `_extract_ids`, `FIELD_INDICATORS`, `KEY_VALUE_PATTERNS`, etc.) — replaced by
+  targeted extractors (`_extract_total_amount`, `_extract_customer_number`, `_extract_address`).
+- Redundant `empresa` attribute (covered by `service_name`).
+
 ### Fixed
-- **Garbage Attribute Extraction**: Emails with HTML bodies no longer produce spurious
-  attributes such as `https`, `lifecycle`, `javaxportletaction`, or `strong_class`.
-  The email body extractor now prefers `text/plain` parts; when only `text/html` is
-  available, HTML tags and attributes are stripped before attribute extraction.
-- **HTML Entity Leakage**: Key-value pairs whose values contain raw HTML entities
-  (`&amp;`, `&gt;`, `&lt;`, etc.) are now discarded as unstripped-HTML artefacts.
-- **Over-broad Field Matching**: `_is_relevant_field()` no longer accepts every short
-  key as relevant; a key must now contain at least one billing-domain indicator term
-  from `FIELD_INDICATORS` to be included.
+- `mypy` errors: added `assert config_entry is not None` guards in
+  `_fetch_service_data` and `ConciergeServicesConnectionSensor.extra_state_attributes`.
 
 ## [0.3.0] - 2026-02-21
 
