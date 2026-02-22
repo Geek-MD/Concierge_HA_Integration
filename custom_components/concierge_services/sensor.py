@@ -427,12 +427,13 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
                 # Add extracted attributes from email
                 extracted_attrs = service_data.get("attributes", {})
                 if extracted_attrs:
-                    # Add all extracted attributes with a prefix to identify them
+                    # Add all extracted attributes; skip internal fields and
+                    # None values (None signals "not available" — type-specific
+                    # extractors use it to clear wrong generic extractor output)
                     for key, value in extracted_attrs.items():
-                        # Skip internal metadata fields
-                        if not key.startswith("_"):
+                        if not key.startswith("_") and value is not None:
                             attrs[key] = value
-                    
+
                     # Add extraction metadata
                     if "_attributes_found" in extracted_attrs:
                         attrs["attributes_extracted_count"] = extracted_attrs["_attributes_found"]

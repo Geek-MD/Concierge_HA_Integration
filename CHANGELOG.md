@@ -18,67 +18,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   | Service type  | Extra attributes extracted |
   |---|---|
-  | `water`       | `consumption_m3`, `meter_reading`, `meter_number` |
-  | `gas`         | `total_amount` (plain-number override), `metropuntos`, `consumption_m3` (label-based only) |
-  | `electricity` | `consumption_kwh`, `contracted_power_kw` *(skeleton — patterns refined once email samples arrive)* |
-
-  The water extractor is tuned for Aguas Andinas.
-  The gas extractor is tuned for Metrogas (January 2026 reference email).
-  The electricity extractor uses generic patterns as placeholders.
+  | `water`       | `address` + `customer_number` (packed-values), `consumption_m3`, `meter_reading`, `meter_number` |
+  | `gas`         | `total_amount` (plain-number override), `metropuntos`, `consumption_m3` (label-based) |
+  | `electricity` | `folio`, `boleta_date`, `address` (from `ubicado en`), `consumption_kwh`, `consumption_type`, `next_billing_period_start/end` |
 
 - **`due_date` extraction** (`attribute_extractor.py`): New generic extractor
-  (`_extract_due_date`) searches for `Fecha de vencimiento` label, adding a
-  `due_date` attribute to all service types.  Confirmed present in Metrogas emails.
+  (`_extract_due_date`) searches for `Fecha de vencimiento` label — confirmed in
+  both Metrogas and Enel emails.
 
 - **`_extract_type_specific_attributes` routing helper** (`attribute_extractor.py`):
   Dispatches to the correct type-specific extractor based on `service_type`.
 
 - **`classify_service_type` utility** (`service_detector.py`): Public function that
-  infers the service type from the email `From` address and `Subject` line.  Used as
-  a fallback for services whose metadata pre-dates this release.
+  infers the service type from the email `From` address and `Subject` line.
 
 ### Changed
-- **`_CUSTOMER_LABELS`** (`attribute_extractor.py`): Made `de` optional in
-  `Número de Cliente` / `Número Cliente` so both forms are matched
-  (Metrogas uses `Número Cliente:` without `de`).
+- **`_strip_html`** (`attribute_extractor.py`): Now applies `html.unescape()` a second
+  time after the HTML parser so that double-encoded entities (`&amp;oacute;` →
+  `&oacute;` → `ó`) found in Aguas Andinas emails are fully decoded.
+
+- **`_CUSTOMER_LABELS`** (`attribute_extractor.py`): Made `de` optional so both
+  `Número de Cliente:` and `Número Cliente:` (Metrogas) are matched.
 
 - **`_extract_from_subject` folio patterns** (`attribute_extractor.py`): Added
-  `r"nro\.?\s+([0-9]{6,})"` to capture Metrogas subject format
-  `Boleta Metrogas Nro. 0000000061778648`.
+  `r"nro\.?\s+([0-9]{6,})"` for the Metrogas `Boleta Metrogas Nro. NNNNNN` format.
 
-- **`SERVICE_PATTERNS`** (`service_detector.py`): Each tuple now carries a third element —
-  the service type — so the type is known at detection time rather than being inferred
-  later.  Generic company patterns split by utility type for accurate classification.
+- **`SERVICE_PATTERNS`** (`service_detector.py`): 3-tuples with service type added.
 
 - **`DetectedService` dataclass** (`service_detector.py`): Added `service_type` field.
 
-- **`_extract_service_name`** (`service_detector.py`): Returns a 3-tuple
-  `(service_name, service_id, service_type)` instead of a 2-tuple.
+- **`ConciergeServiceSensor.extra_state_attributes`** (`sensor.py`): Exposes
+  `service_type`; also filters `None` attribute values so fields cleared by
+  type-specific extractors are omitted from the HA UI rather than shown as `null`.
 
-- **`extract_attributes_from_email_body`** (`attribute_extractor.py`): Accepts an
-  optional `service_type` parameter (default `"unknown"`).  When provided, the
-  appropriate type-specific extractor runs and its results are merged into the output.
+- **Config flow** (`config_flow.py`): Stores `service_type` in `services_metadata`.
 
-- **`ConciergeServiceSensor.extra_state_attributes`** (`sensor.py`): Now exposes
-  `service_type` as a state attribute so it is visible in the Home Assistant UI.
+### Water extractor — Aguas Andinas (reference email: February 2026)
+The Aguas Andinas HTML-only email uses a two-column table layout: labels
+(`Dirección:`, `Número de Cuenta:`, `Período de Facturación:`) are in the left `<td>`;
+all values are packed in the right `<td>` as a single paragraph:
+`ADDRESS    ACCOUNT_NUM    DATE al DATE`.
 
-- **`ConciergeServicesCoordinator._find_latest_email_for_service`** (`sensor.py`):
-  Reads `service_type` from stored metadata; falls back to `classify_service_type` for
-  legacy entries that were configured before this release.
+| Root cause | Fix |
+|---|---|
+| `&amp;oacute;` double-encoded HTML entities | `_strip_html` applies `html.unescape()` twice |
+| Labels and values in separate `<td>` — generic label extractor gives wrong results | `_WATER_AA_PACKED_RE` detects the ALL-CAPS address + `\d{5,}-\d` account pattern; results override generic values via `update()` |
 
-- **Config flow `async_step_detect_services`** (`config_flow.py`): Stores `service_type`
-  in `services_metadata` alongside the existing name and sample headers.
+Fields now correctly extracted: `billing_period_start/end` ✓ `total_amount` ✓
+`address` ✓ (was `'Número de Cuenta:'`) `customer_number` ✓ (was street number `'385-515'`)
 
-### Gas extractor details (Metrogas reference email)
-The Metrogas HTML-only email (`pagoenlinea@emailmetrogas.cl`) carries:
-- Folio in subject as `Boleta Metrogas Nro. <number>` (no `$` sign on totals)
-- `Número Cliente:` label (without `de`)
-- `Dirección:` address
-- `Período de consumo: dd/mm/yyyy al dd/mm/yyyy`
-- `Total a pagar: <plain number>` — no `$` prefix
-- `Fecha de vencimiento: dd/mm/yyyy`
-- `Metropuntos: <number>` — loyalty points balance
-- Gas consumption (m³) is **not** in the email body; it lives only in the PDF
+### Gas extractor — Metrogas (reference email: January 2026)
+- Folio from subject `Nro.` pattern, plain-number total, `metropuntos` loyalty points.
+- Gas consumption (m³) is not in the email body — only in the PDF attachment.
+
+### Electricity extractor — Enel Distribución Chile (reference email: February 2026)
+The Enel email has both `text/plain` and `text/html` parts; extractor uses plain text.
+
+| What we learned | How it's handled |
+|---|---|
+| Invoice number in body: `N° Boleta 361692435 del 02-02-2026` | `_ELEC_ENEL_FOLIO_RE` + `_ELEC_ENEL_BOLETA_DATE_RE` → `folio` + `boleta_date` |
+| Address follows `ubicado en` (not `Dirección:`) | `_ELEC_ENEL_ADDRESS_RE` → `address` |
+| No current billing period in email; first two dates are boleta date + due date (WRONG) | Electricity extractor sets `billing_period_start/end = None`; sensor filters `None` values |
+| `Próximo periodo de facturación` = NEXT billing period | `_ELEC_ENEL_NEXT_PERIOD_RE` → `next_billing_period_start/end` |
+| `Consumo real` / `Consumo estimado` quality flag | `_ELEC_ENEL_CONSUMPTION_TYPE_RE` → `consumption_type` |
+| `505 kWh` in email body | bare-kWh fallback → `consumption_kwh` |
 
 ## [0.3.2] - 2026-02-22
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+from html import unescape as _html_unescape
 from html.parser import HTMLParser
 from typing import Any
 
@@ -34,8 +35,14 @@ DATE_PATTERNS = [
 ]
 
 
-def _strip_html(html: str) -> str:
-    """Strip HTML tags and decode entities, returning only visible text."""
+def _strip_html(html_text: str) -> str:
+    """Strip HTML tags and decode entities, returning only visible text.
+
+    Applies ``html.unescape()`` a second time after the parser so that
+    double-encoded entities (e.g. ``&amp;oacute;`` → ``&oacute;`` → ``ó``)
+    found in some utility company emails (e.g. Aguas Andinas) are fully
+    decoded.
+    """
     class _TextExtractor(HTMLParser):
         def __init__(self) -> None:
             super().__init__()
@@ -48,8 +55,8 @@ def _strip_html(html: str) -> str:
             return "\n".join(self._parts)
 
     parser = _TextExtractor()
-    parser.feed(html)
-    return parser.get_text()
+    parser.feed(html_text)
+    return _html_unescape(parser.get_text())
 
 
 # Label patterns that precede a total-amount value
@@ -177,25 +184,57 @@ _WATER_METER_LABELS = re.compile(
     r"(?:n[úu]mero\s+de\s+medidor|medidor\s+n[°º]?)[:\s]+",
     re.IGNORECASE,
 )
+# Aguas Andinas packs all billing info in one <td>:
+# "ADDRESS    ACCOUNT_NUM    DATE al DATE"
+# The ALL-CAPS address precedes the account number (5+ digits + dash + 1 digit).
+# Requires 2+ spaces as separator so street numbers like "385-515" are not
+# mistaken for account numbers (only 3 digits before the dash).
+_WATER_AA_PACKED_RE = re.compile(
+    r"([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9 ,\.\-/#]{5,}?)"
+    r"\s{2,}"
+    r"(\d{5,}-\d)\b",
+)
 
 
 def _extract_water_attributes(text: str) -> dict[str, Any]:
     """Extract water-service-specific attributes.
 
-    Currently tuned for Aguas Andinas email format.
-    Additional water companies can be supported by extending the patterns above.
+    Tuned for Aguas Andinas (reference email: February 2026).
+    Key observations:
+    - HTML-only email with double-encoded entities (fixed by ``_strip_html``).
+    - Labels (Dirección, Número de Cuenta, Período) are in the left-hand
+      ``<td>``; all values are packed in the right-hand ``<td>`` separated
+      by multiple spaces: ``ADDRESS    ACCOUNT_NUM    DATE al DATE``.
+    - Generic label-based extractors fail for this layout; the packed-values
+      pattern below handles it.
+    - Consumption (m³) is not in the email — only in the PDF attachment.
 
     Extracted fields (all optional):
-        ``consumption_m3``   – volume consumed in m³
-        ``meter_reading``    – meter reading value(s) found after a reading label
-        ``meter_number``     – water meter identifier
+        ``address``        – service address from packed-values paragraph
+        ``customer_number``– account number (overrides wrong generic value)
+        ``consumption_m3`` – volume consumed in m³ (label-based only)
+        ``meter_reading``  – meter reading value(s) found after a reading label
+        ``meter_number``   – water meter identifier
     """
     attrs: dict[str, Any] = {}
 
-    # Consumption volume
-    consumption_match = _WATER_CONSUMPTION_RE.search(text)
-    if consumption_match:
-        attrs["consumption_m3"] = consumption_match.group(1).strip()
+    # Aguas Andinas packed-values: address + account number in one paragraph.
+    # This overrides any wrong values the generic extractor may have produced
+    # due to the table layout separating labels from values.
+    aa_match = _WATER_AA_PACKED_RE.search(text)
+    if aa_match:
+        addr = re.sub(r"\s+", " ", aa_match.group(1)).strip()
+        if addr:
+            attrs["address"] = addr
+        acct = aa_match.group(2).strip()
+        if acct:
+            attrs["customer_number"] = acct
+
+    # Consumption volume (label-based; bare m³ fallback omitted to avoid
+    # false positives — Aguas Andinas does not include consumption in the email)
+    for label_match in _WATER_CONSUMPTION_RE.finditer(text):
+        attrs["consumption_m3"] = label_match.group(1).strip()
+        break
 
     # Meter readings (anterior / actual)
     readings: list[str] = []
@@ -299,7 +338,7 @@ def _extract_gas_attributes(text: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Electricity-service extractor (skeleton — patterns to be refined with real emails)
+# Electricity-service extractor (tuned for Enel Distribución Chile; Feb 2026)
 # ---------------------------------------------------------------------------
 _ELEC_CONSUMPTION_RE = re.compile(
     r"([0-9]+(?:[.,][0-9]+)?)\s*kWh",
@@ -313,21 +352,71 @@ _ELEC_POWER_LABELS = re.compile(
     r"(?:potencia\s+contratada|potencia)[:\s]+",
     re.IGNORECASE,
 )
+# Enel: address follows "suministro ubicado en … ya está disponible"
+_ELEC_ENEL_ADDRESS_RE = re.compile(
+    r"ubicado\s+en\s+([\s\S]{10,120}?)\s+ya\s+est[aá]",
+    re.IGNORECASE,
+)
+# Enel: invoice number in body as "N° Boleta NNNNNN del …"
+_ELEC_ENEL_FOLIO_RE = re.compile(
+    r"n[°º]\s*boleta\s+(\d{5,})",
+    re.IGNORECASE,
+)
+# Enel: boleta issue date as "N° Boleta NNNNNN del DD-MM-YYYY"
+_ELEC_ENEL_BOLETA_DATE_RE = re.compile(
+    r"n[°º]\s*boleta\s+\d+\s+del\s+(\d{1,2}-\d{1,2}-\d{4})",
+    re.IGNORECASE,
+)
+# Enel: next billing period as "Próximo periodo de facturación\n DATE - DATE"
+_ELEC_ENEL_NEXT_PERIOD_RE = re.compile(
+    r"pr[oó]ximo\s+periodo\s+de\s+facturaci[oó]n\s+"
+    r"(\d{1,2}-\d{1,2}-\d{4})\s*-\s*(\d{1,2}-\d{1,2}-\d{4})",
+    re.IGNORECASE,
+)
+# Enel: meter-reading quality flag ("Consumo real" / "Consumo estimado")
+_ELEC_ENEL_CONSUMPTION_TYPE_RE = re.compile(
+    r"consumo\s+(real|estimado)",
+    re.IGNORECASE,
+)
 
 
 def _extract_electricity_attributes(text: str) -> dict[str, Any]:
     """Extract electricity-service-specific attributes.
 
-    This is a skeleton extractor.  Patterns will be refined once real
-    electricity company email samples are available.
+    Tuned for Enel Distribución Chile (reference email: February 2026).
+    Key observations:
+    - ``multipart/alternative`` with both text/plain and text/html parts;
+      the extractor runs on plain text (preferred by the sensor).
+    - Customer number in subject (``NNN-D``) and in body (``N° Cliente``);
+      the generic ``_CUSTOMER_LABELS`` extractor handles the body match.
+    - Invoice number in body: ``N° Boleta NNNNNN del DD-MM-YYYY``
+      (not in subject, unlike Metrogas).
+    - Address follows ``ubicado en`` (not a ``Dirección:`` label).
+    - Total ``$ NNN.NNN`` is preceded by ``¿Cuánto debo pagar?`` which does
+      not match generic total labels; the ``_AMOUNT_RE`` fallback finds it.
+    - Consumption ``NNN kWh`` followed by ``Consumo real`` or ``estimado``.
+    - ``Próximo periodo de facturación DATE - DATE`` is the **next** period;
+      the email does **not** show the current billing period.
+    - The generic ``_extract_dates`` assigns the boleta issue date and due
+      date to ``billing_period_start/end`` — both wrong.  Those fields are
+      explicitly cleared here (set to ``None``) so they are omitted from
+      the HA state attributes rather than showing misleading values.
 
     Extracted fields (all optional):
-        ``consumption_kwh``       – energy consumed in kWh
-        ``contracted_power_kw``   – contracted power in kW (if present)
+        ``folio``                    – invoice (boleta) number from body
+        ``boleta_date``              – date the boleta was issued
+        ``address``                  – service address (from ``ubicado en``)
+        ``consumption_kwh``          – energy consumed in kWh
+        ``consumption_type``         – ``"real"`` or ``"estimado"``
+        ``contracted_power_kw``      – contracted power in kW (if present)
+        ``next_billing_period_start``– start of the next billing period
+        ``next_billing_period_end``  – end of the next billing period
+        ``billing_period_start``     – ``None`` (not in email; clears wrong generic value)
+        ``billing_period_end``       – ``None`` (not in email; clears wrong generic value)
     """
     attrs: dict[str, Any] = {}
 
-    # Energy consumption — label-preceded first, then bare kWh value
+    # Energy consumption — label-preceded first, then bare kWh fallback
     for label_match in _ELEC_CONSUMPTION_LABELS.finditer(text):
         rest = text[label_match.end():]
         val_match = _ELEC_CONSUMPTION_RE.search(rest[:80])
@@ -339,7 +428,7 @@ def _extract_electricity_attributes(text: str) -> dict[str, Any]:
         if val_match:
             attrs["consumption_kwh"] = val_match.group(1).strip()
 
-    # Contracted power (kW)
+    # Contracted power (kW) — present in some tariff types
     for label_match in _ELEC_POWER_LABELS.finditer(text):
         rest = text[label_match.end():]
         kw_match = re.search(
@@ -350,6 +439,38 @@ def _extract_electricity_attributes(text: str) -> dict[str, Any]:
         if kw_match:
             attrs["contracted_power_kw"] = kw_match.group(1).strip()
             break
+
+    # Enel: invoice number from body "N° Boleta NNNNNN del …"
+    folio_match = _ELEC_ENEL_FOLIO_RE.search(text)
+    if folio_match:
+        attrs["folio"] = folio_match.group(1).strip()
+
+    # Enel: boleta issue date
+    boleta_date_match = _ELEC_ENEL_BOLETA_DATE_RE.search(text)
+    if boleta_date_match:
+        attrs["boleta_date"] = boleta_date_match.group(1).strip()
+
+    # Enel: service address from "ubicado en ADDRESS ya está disponible"
+    addr_match = _ELEC_ENEL_ADDRESS_RE.search(text)
+    if addr_match:
+        addr = re.sub(r"\s+", " ", addr_match.group(1)).strip()
+        if addr:
+            attrs["address"] = addr
+
+    # Enel: next billing period
+    next_period_match = _ELEC_ENEL_NEXT_PERIOD_RE.search(text)
+    if next_period_match:
+        attrs["next_billing_period_start"] = next_period_match.group(1).strip()
+        attrs["next_billing_period_end"] = next_period_match.group(2).strip()
+        # The email does not include the current billing period.  Clear the
+        # wrong dates the generic extractor would have inserted.
+        attrs["billing_period_start"] = None
+        attrs["billing_period_end"] = None
+
+    # Enel: consumption quality ("Consumo real" vs "Consumo estimado")
+    cons_type_match = _ELEC_ENEL_CONSUMPTION_TYPE_RE.search(text)
+    if cons_type_match:
+        attrs["consumption_type"] = cons_type_match.group(1).lower()
 
     return attrs
 
