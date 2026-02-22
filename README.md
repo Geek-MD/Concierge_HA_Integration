@@ -12,7 +12,10 @@
 
 # Concierge Services
 
-**Concierge Services** is a custom integration for [Home Assistant](https://www.home-assistant.io) that allows you to manage utility bills (electricity, water, gas, etc.) received by email. The integration automatically detects services, extracts information from emails using heuristic analysis, and creates devices and sensors for each service with billing data.
+**Concierge Services** is a custom integration for [Home Assistant](https://www.home-assistant.io) that allows you to manage utility bills (electricity, water, gas, etc.) received by email. The integration automatically detects services, extracts information from emails, and creates devices and sensors for each service with billing data.
+
+> **🇨🇱 Geographic scope — Chile only (for now)**
+> Concierge Services is currently designed and tested exclusively for Chilean utility service accounts (Aguas Andinas, Enel, etc.). Billing email formats, field labels, and patterns are tuned for Chilean providers. Support for other countries may be added in the future.
 
 ---
 
@@ -26,14 +29,14 @@
 - 🏠 **Friendly Names**: Set custom names for your integrations
 - 📍 **Area Assignment**: Associate integrations with specific areas in your home
 - 🔍 **Automatic Service Detection**: Detects utility services from your inbox automatically
-- 🤖 **Heuristic Attribute Extraction**: Intelligently extracts billing data from email content
-  - Account/customer numbers
-  - Invoice/folio numbers
-  - Total amounts due
-  - Due dates and billing periods
-  - Consumption data
-  - Addresses and company information
-  - Any structured data found in emails
+- 🤖 **Targeted Attribute Extraction**: Extracts exactly the billing fields needed before PDF analysis:
+  - Company name (`service_name`)
+  - Invoice/folio number (`folio`)
+  - Billing period start & end (`billing_period_start`, `billing_period_end`)
+  - Total amount due (`total_amount`)
+  - Customer / account number (`customer_number`)
+  - Service address (`address`)
+  - Email send date (`last_updated_datetime`)
 - 🔧 **Device Architecture**: Each service appears as a separate device
 - 📊 **Status Sensor**: Monitor email connection status in real-time
 
@@ -156,7 +159,7 @@ As the integration scans your inbox, it automatically detects utility services a
 
 ## 🚀 Development Status
 
-### ✅ Version 0.2.0 (Current)
+### ✅ Version 0.2.0
 - ✅ IMAP account configuration through UI
 - ✅ Two-step configuration (credentials + friendly name/area)
 - ✅ Real-time credential validation
@@ -166,17 +169,22 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Device architecture with proper device_info
 - ✅ Status sensor: "Concierge Services - Status"
 - ✅ Automatic service detection from inbox
-- ✅ Heuristic attribute extraction from emails
 - ✅ Support for detecting multiple service types
-- ✅ Flexible pattern matching for billing data
 
-### ✅ Version 0.3.0 (Current)
+### ✅ Version 0.3.0
 - ✅ Automatic service detection from inbox during setup
 - ✅ Service selection UI - choose which services to configure
 - ✅ Service-specific device creation
 - ✅ Individual sensors per configured service
 - ✅ Enhanced configuration flow with multi-step setup
 - ✅ MQTT-style architecture: email as hub, services as devices
+
+### ✅ Version 0.3.2 (Current)
+- ✅ Targeted attribute extraction (8 defined fields, no heuristic noise)
+- ✅ HTML email body stripping (prefers text/plain, strips text/html)
+- ✅ Folio extracted from subject, ready for PDF confirmation
+- ✅ Billing period start/end, total amount, customer number, address
+- ✅ Passes ruff, mypy and hassfest checks
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services
@@ -192,9 +200,9 @@ As the integration scans your inbox, it automatically detects utility services a
 ## 📓 Notes
 
 - The integration currently detects services automatically from your inbox
-- Services are identified using heuristic analysis of email content
+- Services are identified using targeted pattern matching on billing emails
 - Works best with emails that have attachments (typical for bills)
-- No PDF processing required - extracts data directly from email text
+- No PDF processing required — targeted data extracted directly from email text and subject
 - All credentials are stored securely in Home Assistant
 - It is recommended to use app passwords instead of your main password
 - Multiple instances supported (different email accounts)
