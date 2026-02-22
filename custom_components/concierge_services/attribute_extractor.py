@@ -302,12 +302,6 @@ def _extract_from_subject(subject: str) -> dict[str, str]:
     if match:
         attrs["rut_from_subject"] = match.group(1)
     
-    # Extract company name from subject (usually in uppercase)
-    company_pattern = r"\b([A-ZÁÉÍÓÚÑ]{3,}(?:\s+[A-ZÁÉÍÓÚÑ]{2,}){0,3})\s+S\.?A\.?"
-    match = re.search(company_pattern, subject)
-    if match:
-        attrs["empresa"] = match.group(1).strip()
-    
     return attrs
 
 
