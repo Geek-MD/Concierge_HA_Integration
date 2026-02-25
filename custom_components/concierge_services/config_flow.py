@@ -245,7 +245,8 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
 
         # Scan inbox on the first pass (before showing the form)
         if not self._available_services:
-            cfg = {**self._config_entry.data, **self._config_entry.options}
+            entry = self._get_entry()  # type: ignore[attr-defined]
+            cfg = {**entry.data, **entry.options}
             try:
                 all_services = await self.hass.async_add_executor_job(
                     detect_services_from_imap,
@@ -262,7 +263,7 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
             # Remove services that are already configured as subentries
             existing_ids = {
                 subentry.data.get(CONF_SERVICE_ID)
-                for subentry in self._config_entry.subentries.values()
+                for subentry in entry.subentries.values()
             }
             self._available_services = [
                 s for s in all_services if s.service_id not in existing_ids
@@ -290,7 +291,7 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
     ) -> FlowResult:
         """Reconfigure an existing service subentry (rename it)."""
         errors: dict[str, str] = {}
-        subentry = self._config_entry.subentries[self._subentry_id]
+        subentry = self._get_reconfigure_subentry()  # type: ignore[attr-defined]
         current = subentry.data
 
         if user_input is not None:
