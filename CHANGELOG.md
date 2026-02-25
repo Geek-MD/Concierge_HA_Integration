@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-02-25
+
+### Fixed
+- **`AttributeError` when adding a service device** (`config_flow.py`): `ServiceSubentryFlowHandler`
+  was accessing `self._config_entry`, a private attribute that does not exist on Home Assistant's
+  `ConfigSubentryFlow` base class. This caused a 500 error every time the **ADD DEVICE** button
+  was clicked.
+  - `async_step_user`: replaced `self._config_entry` with `self._get_entry()`.
+  - `async_step_reconfigure`: replaced `self._config_entry.subentries[self._subentry_id]` with
+    `self._get_reconfigure_subentry()`.
+
+### Changed
+- **`manifest.json`**: Version bumped to `0.4.3`.
+
 ## [0.4.2] - 2026-02-23
 
 ### Added

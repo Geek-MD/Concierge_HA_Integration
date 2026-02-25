@@ -78,7 +78,7 @@
 
 ## ⚙️ Configuration
 
-All configuration is done through the user interface in four simple steps:
+All configuration is done through the user interface:
 
 ### Step 1: IMAP Credentials
 
@@ -95,21 +95,19 @@ All configuration is done through the user interface in four simple steps:
 
 After validating credentials, configure:
 - **Friendly Name**: A descriptive name for this integration (e.g., "Home Bills", "Casa Principal")
-- **Area**: Associate the integration with a specific area in your home (optional)
 
-### Step 3: Service Detection
+### Step 3: Add Service Devices
 
-The integration automatically scans your inbox for service accounts (utility bills):
-- Scans the last 100 emails
-- Identifies billing emails (those with attachments)
-- Detects service providers automatically
+Once the integration is set up, add utility services one by one using the **ADD DEVICE** button
+on the integration card:
+- The integration scans your inbox and detects available service providers
+- Select a service to add it as a device
+- Repeat for each service you want to track
+- Each service can be reconfigured later via its device page
 
-### Step 4: Service Selection
-
-Select which detected services to configure as devices:
-- All detected services are pre-selected by default
-- You can unselect services you don't want to track
-- Each service becomes a separate device in Home Assistant
+> **Note**: Only one Concierge Services instance is allowed per Home Assistant installation
+> (`single_config_entry`). To monitor a different email account, reconfigure the existing
+> entry using the **CONFIGURE** button.
 
 ### Configuration Examples
 
@@ -162,7 +160,7 @@ As the integration scans your inbox, it automatically detects utility services a
 ## 🚀 Development Status
 
 - ✅ IMAP account configuration through UI
-- ✅ Two-step configuration (credentials + friendly name/area)
+- ✅ Two-step configuration (credentials + friendly name)
 - ✅ Real-time credential validation
 - ✅ Secure credential storage
 - ✅ Interface in Spanish and English
@@ -171,16 +169,16 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Status sensor: "Concierge Services - Status"
 - ✅ Automatic service detection from inbox
 - ✅ Support for detecting multiple service types
-- ✅ Automatic service detection from inbox during setup
-- ✅ Service selection UI - choose which services to configure
-- ✅ Service-specific device creation
+- ✅ Service-specific device creation via ADD DEVICE button
 - ✅ Individual sensors per configured service
-- ✅ Enhanced configuration flow with multi-step setup
 - ✅ MQTT-style architecture: email as hub, services as devices
+- ✅ Options flow: CONFIGURE button to update IMAP credentials without reinstalling
+- ✅ Subentry reconfigure: update service name from the device page
 - ✅ Targeted attribute extraction (8 defined fields, no heuristic noise)
 - ✅ HTML email body stripping (prefers text/plain, strips text/html)
 - ✅ Folio extracted from subject, ready for PDF confirmation
 - ✅ Billing period start/end, total amount, customer number, address
+- ✅ Fix: AttributeError when clicking ADD DEVICE button (v0.4.3)
 - ✅ Passes ruff, mypy and hassfest checks
 
 ### 🔮 Future Enhancements
@@ -190,7 +188,6 @@ As the integration scans your inbox, it automatically detects utility services a
 - Historical billing data tracking
 - Consumption trends and analytics
 - Payment reminders and automations
-- Multi-account support improvements
 
 ---
 
@@ -202,7 +199,7 @@ As the integration scans your inbox, it automatically detects utility services a
 - No PDF processing required — targeted data extracted directly from email text and subject
 - All credentials are stored securely in Home Assistant
 - It is recommended to use app passwords instead of your main password
-- Multiple instances supported (different email accounts)
+- Only one instance is allowed per Home Assistant installation — use the **CONFIGURE** button to change the monitored email account
 
 ---
 
