@@ -1,0 +1,99 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure Concierge Services",
+        "description": "Enter the IMAP email credentials where you receive service bills (electricity, water, gas, etc.)",
+        "data": {
+          "imap_server": "IMAP Server",
+          "imap_port": "IMAP Port",
+          "email": "Email Address",
+          "password": "Password"
+        },
+        "data_description": {
+          "imap_server": "Example: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
+          "imap_port": "Default port for secure IMAP connections",
+          "email": "Example: user@gmail.com",
+          "password": "Use an app password for Gmail and Yahoo"
+        }
+      },
+      "finalize": {
+        "title": "Finalize Configuration",
+        "description": "Set a friendly name for this email account ({email})",
+        "data": {
+          "friendly_name": "Friendly Name"
+        },
+        "data_description": {
+          "friendly_name": "A descriptive name for this email account"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to IMAP server",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This integration is already configured. Use the CONFIGURE button to update settings.",
+      "single_instance_allowed": "Only one instance of Concierge Services is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Reconfigure Concierge Services",
+        "description": "Update the IMAP email credentials",
+        "data": {
+          "imap_server": "IMAP Server",
+          "imap_port": "IMAP Port",
+          "email": "Email Address",
+          "password": "Password",
+          "friendly_name": "Friendly Name"
+        },
+        "data_description": {
+          "imap_server": "Example: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
+          "imap_port": "Default port for secure IMAP connections",
+          "email": "Example: user@gmail.com",
+          "password": "Use an app password for Gmail and Yahoo",
+          "friendly_name": "A descriptive name for this email account"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to IMAP server",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    }
+  },
+  "config_subentries": {
+    "service": {
+      "initiate_flow": {
+        "user": "Add Service Device"
+      },
+      "entry_type": "Service Device",
+      "step": {
+        "user": {
+          "title": "Add Service Device",
+          "description": "Found {count} service account(s) available to add. Select which one to configure as a device:",
+          "data": {
+            "service_id": "Service"
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigure {service_name}",
+          "description": "Update the settings for this service device",
+          "data": {
+            "service_name": "Service Name"
+          }
+        }
+      },
+      "error": {
+        "service_not_found": "Selected service not found. Please try again."
+      },
+      "abort": {
+        "detection_failed": "Failed to scan the inbox for services. Check your email credentials.",
+        "no_services_available": "No new service accounts were found in the inbox. All detected services may already be configured."
+      }
+    }
+  }
+}
