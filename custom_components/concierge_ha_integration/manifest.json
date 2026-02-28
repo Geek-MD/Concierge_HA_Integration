@@ -1,0 +1,13 @@
+{
+  "domain": "concierge_ha_integration",
+  "name": "Concierge HA Integration",
+  "codeowners": ["@Geek-MD"],
+  "config_flow": true,
+  "documentation": "https://github.com/Geek-MD/Concierge_HA_Integration",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Geek-MD/Concierge_HA_Integration/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.4.5"
+}
