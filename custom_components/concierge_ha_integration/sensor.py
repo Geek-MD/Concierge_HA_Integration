@@ -40,6 +40,24 @@ _LOGGER = logging.getLogger(__name__)
 # Update interval for checking mail server connection
 SCAN_INTERVAL = timedelta(minutes=30)
 
+# Webmail provider domains that are too generic for sender-domain matching.
+# Emails forwarded through these services carry the forwarder's address, not
+# the original utility company's address.
+_GENERIC_WEBMAIL_DOMAINS = frozenset({
+    "gmail", "hotmail", "yahoo", "outlook", "live", "icloud", "protonmail",
+})
+
+# Words that are too common in billing-email subjects to be useful as unique
+# service identifiers.  Only alphabetic words with 4+ characters are
+# considered; month names are included because they appear in every monthly
+# bill regardless of the service provider.
+_SUBJECT_SKIP_WORDS = frozenset({
+    "fwd", "cuenta", "factura", "boleta", "pago", "este", "esta",
+    "mes", "del", "para", "con", "las", "los", "que", "reenvio",
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+})
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -187,9 +205,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     raw_email = msg_data[0][1]  # type: ignore[index]
                     msg = email.message_from_bytes(raw_email)  # type: ignore[arg-type]
 
-                    if not self._has_attachments(msg):
-                        continue
-
                     from_header = msg.get("From", "")
                     subject_header = msg.get("Subject", "")
                     date_header = msg.get("Date", "")
@@ -331,26 +346,41 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         combined_text = f"{from_addr} {subject} {body}".lower()
 
-        # Match by sender domain from sample_from
+        # Match by sender domain from sample_from (skip generic webmail providers)
         if sample_from:
             domain_match = re.search(r'@([a-zA-Z0-9\-]+)\.[a-zA-Z]+', sample_from)
             if domain_match:
-                domain = domain_match.group(1)
-                if domain.lower() in from_addr.lower():
+                domain = domain_match.group(1).lower()
+                if domain not in _GENERIC_WEBMAIL_DOMAINS and domain in from_addr.lower():
                     return True
 
-        # Match by service name keywords
+        # Match by service name keywords (only when there are significant words)
         if service_name:
             words = service_name.lower().split()
-            if len(words) > 0:
-                matches = sum(1 for word in words if len(word) > 3 and word in combined_text)
-                if matches >= len([w for w in words if len(w) > 3]):
+            significant_words = [w for w in words if len(w) > 3]
+            if significant_words:
+                matches = sum(1 for word in significant_words if word in combined_text)
+                if matches >= len(significant_words):
                     return True
 
         # Match by service_id pattern
         service_pattern = service_id.replace('_', '.*')
         if re.search(service_pattern, combined_text, re.IGNORECASE):
             return True
+
+        # Match by unique keywords from sample_subject.
+        # This covers forwarded emails where the From domain is a generic webmail
+        # provider (e.g. Gmail).  We extract alphabetic words that are specific to
+        # the service (filtering out generic billing terms and month names) and
+        # require at least one of them to appear in the email being checked.
+        if sample_subject:
+            unique_words = [
+                w.lower()
+                for w in re.findall(r"[a-zA-ZáéíóúñÁÉÍÓÚÑ]{4,}", sample_subject)
+                if w.lower() not in _SUBJECT_SKIP_WORDS
+            ]
+            if unique_words and any(w in combined_text for w in unique_words):
+                return True
 
         return False
 

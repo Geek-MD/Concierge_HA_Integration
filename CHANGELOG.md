@@ -19,6 +19,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flow handler by `DOMAIN`, so the mismatch between `const.py` and
   `manifest.json` / the component folder caused the config flow to fail to
   load.  Updated `DOMAIN` in `const.py` to `"concierge_ha_integration"`.
+- **Enel and Metrogas not detected during service discovery**
+  (`service_detector.py`, `sensor.py`): The integration required emails to
+  have file attachments before evaluating them as billing emails.  Both Enel
+  and Metrogas send HTML notification emails *without* PDF attachments (the
+  bill is downloaded via a link); only Aguas Andinas attaches the PDF
+  directly.  Removed the `_has_attachments` gate from the service detector
+  and from the sensor's email-matching loop so that attachment-free billing
+  emails are evaluated correctly.
+- **Enel and Metrogas emails not matched by sensor after detection**
+  (`sensor.py` `_matches_service`): Both emails arrive as Gmail-forwarded
+  messages (`From: user@gmail.com`), so the sender-domain check was
+  matching the generic domain `"gmail"` against *every* forwarded email,
+  causing cross-service matches and missing matches.  Three targeted fixes:
+  1. Domain matching now skips known generic webmail providers (gmail,
+     hotmail, yahoo, outlook, live, icloud, protonmail).
+  2. Service-name matching now correctly handles short names like `"Gas"`
+     (previously the `0 >= 0` condition always returned `True`, matching
+     every email regardless of content).
+  3. A new subject-keyword check extracts company-specific words from the
+     stored `sample_subject` (e.g. `"enel"` from
+     `"Fwd: Cuenta Enel de este mes …"` or `"metrogas"` from
+     `"Fwd: Boleta Metrogas Nro. …"`) and requires at least one of them to
+     appear in the candidate email, reliably distinguishing Enel from
+     Metrogas even when both are forwarded from the same Gmail account.
 
 ### Changed
 - **`manifest.json`**: Version bumped to `0.4.7`.
