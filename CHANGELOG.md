@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`manifest.json`**: Version bumped to `0.4.7`.
 
+## [0.4.6] - 2026-03-01
+
+### Changed
+- **`manifest.json`**: Version bumped to `0.4.6`.
+- Integration name revamped to **Concierge HA Integration**
+
 ## [0.4.5] - 2026-02-26
 
 ### Fixed
