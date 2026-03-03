@@ -253,10 +253,6 @@ def detect_services_from_imap(
                 raw_email = msg_data[0][1]  # type: ignore[index]
                 msg = email.message_from_bytes(raw_email)  # type: ignore[arg-type]
                 
-                # Check if email has attachments (requirement: bills usually come as attachments)
-                if not _has_attachments(msg):
-                    continue
-                
                 # Get from and subject
                 from_header = msg.get("From", "")
                 subject_header = msg.get("Subject", "")
