@@ -5,20 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.7] - 2026-03-03
+## [0.4.8] - 2026-03-03
 
 ### Fixed
-- **Duplicate sensors per service account**: `manifest.json` declared
-  `"integration_type": "hub"`, which caused Home Assistant to register
-  two sensor entities for every service account subentry.  Changed to
-  `"integration_type": "service"` (matching the MQTT integration pattern
-  described in the architecture).
-- **"Invalid handler specified" error on config flow**: `const.py` still
-  contained the old domain `"concierge_services"` after the integration was
-  renamed to `"concierge_ha_integration"`.  Home Assistant looks up the config
-  flow handler by `DOMAIN`, so the mismatch between `const.py` and
-  `manifest.json` / the component folder caused the config flow to fail to
-  load.  Updated `DOMAIN` in `const.py` to `"concierge_ha_integration"`.
 - **Enel and Metrogas not detected during service discovery**
   (`service_detector.py`, `sensor.py`): The integration required emails to
   have file attachments before evaluating them as billing emails.  Both Enel
@@ -43,6 +32,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      `"Fwd: Boleta Metrogas Nro. …"`) and requires at least one of them to
      appear in the candidate email, reliably distinguishing Enel from
      Metrogas even when both are forwarded from the same Gmail account.
+
+### Changed
+- **`manifest.json`**: Version bumped to `0.4.8`.
+
+## [0.4.7] - 2026-03-03
+
+### Fixed
+- **Duplicate sensors per service account**: `manifest.json` declared
+  `"integration_type": "hub"`, which caused Home Assistant to register
+  two sensor entities for every service account subentry.  Changed to
+  `"integration_type": "service"` (matching the MQTT integration pattern
+  described in the architecture).
+- **"Invalid handler specified" error on config flow**: `const.py` still
+  contained the old domain `"concierge_services"` after the integration was
+  renamed to `"concierge_ha_integration"`.  Home Assistant looks up the config
+  flow handler by `DOMAIN`, so the mismatch between `const.py` and
+  `manifest.json` / the component folder caused the config flow to fail to
+  load.  Updated `DOMAIN` in `const.py` to `"concierge_ha_integration"`.
 
 ### Changed
 - **`manifest.json`**: Version bumped to `0.4.7`.
