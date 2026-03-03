@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.7] - 2026-03-03
+## [0.4.8] - 2026-03-03
 
 ### Fixed
 - **Duplicate sensors per service account**: `manifest.json` declared
@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      Metrogas even when both are forwarded from the same Gmail account.
 
 ### Changed
-- **`manifest.json`**: Version bumped to `0.4.7`.
+- **`manifest.json`**: Version bumped to `0.4.8`.
 
 ## [0.4.6] - 2026-03-01
 
