@@ -1,6 +1,6 @@
 """Constants for the Concierge Services integration."""
 
-DOMAIN = "concierge_services"
+DOMAIN = "concierge_ha_integration"
 
 # Configuration keys
 CONF_IMAP_SERVER = "imap_server"
