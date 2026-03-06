@@ -4,8 +4,10 @@ from __future__ import annotations
 import email
 import imaplib
 import logging
+import re
 from datetime import timedelta
 from email.header import decode_header
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -229,7 +231,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     ):
                         if date_header:
                             try:
-                                from email.utils import parsedate_to_datetime
                                 email_date = parsedate_to_datetime(date_header)
                                 if latest_date is None or email_date > latest_date:
                                     latest_date = email_date
@@ -368,8 +369,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         body: str,
     ) -> bool:
         """Check if email matches a service based on flexible patterns."""
-        import re
-
         combined_text = f"{from_addr} {subject} {body}".lower()
 
         # Match by sender domain from sample_from (skip generic webmail providers)
