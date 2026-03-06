@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`manifest.json`**: Version bumped to `0.4.10`.
 
-
+## [0.4.8] - 2026-03-03
 
 ### Fixed
 - **Enel and Metrogas not detected during service discovery**
