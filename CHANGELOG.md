@@ -5,7 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.8] - 2026-03-03
+## [0.4.10] - 2026-03-06
+
+### Added
+- **Heuristic PDF downloader** (`pdf_downloader.py`): New module that locates
+  and saves the billing PDF for each matched email using a two-strategy
+  heuristic:
+  1. **PDF attachment** — walks MIME parts looking for `application/pdf`
+     content-type or a filename ending in `.pdf`; saves the raw bytes.
+  2. **Link in HTML body** — if no attachment is found, parses `text/html`
+     parts with a lightweight `HTMLParser` subclass and collects `<a href>`
+     candidates. Priority is given to links whose visible text matches
+     Spanish/English billing keywords (*"ver boleta"*, *"descargue su
+     boleta"*, *"ver factura"*, *"descargar pdf"*, etc.). A secondary pass
+     collects links whose `href` ends in `.pdf`. Each candidate URL is
+     fetched; the response is validated by magic-byte check (`%PDF`) and/or
+     `Content-Type` header before the file is written.
+- **Intelligent filename scheme**: Downloaded PDFs follow a deterministic
+  naming convention so that re-running on the same bill produces the same
+  filename and the download is skipped if the file already exists:
+  ```
+  {service_id}_{YYYY}-{MM}_{folio}.pdf   # folio available
+  {service_id}_{YYYY}-{MM}.pdf           # folio not extracted
+  ```
+  `YYYY-MM` comes from `billing_period_start` (extracted by the attribute
+  extractor) with a fallback to the email's `Date` header.
+- **Automatic PDF purge**: `purge_old_pdfs()` removes files older than
+  `PDF_MAX_AGE_DAYS` (365 days) from the download directory. It is called
+  automatically once per coordinator update cycle (every 30 minutes).
+- **PDF storage constants** (`const.py`): `PDF_SUBDIR` and `PDF_MAX_AGE_DAYS`
+  centralise configuration. PDFs are stored under
+  `{ha_config_dir}/concierge_ha_integration/pdfs/`.
+- **`pdf_path` sensor attribute** (`sensor.py`): When a PDF is successfully
+  downloaded its absolute path is exposed as the `pdf_path` extra-state
+  attribute on the service sensor.
+
+### Changed
+- **`manifest.json`**: Version bumped to `0.4.10`.
+
+
 
 ### Fixed
 - **Enel and Metrogas not detected during service discovery**
