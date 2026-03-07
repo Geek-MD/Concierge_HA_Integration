@@ -45,6 +45,20 @@ _LOGGER = logging.getLogger(__name__)
 # Update interval for checking mail server connection
 SCAN_INTERVAL = timedelta(minutes=30)
 
+# Standard attributes exposed by each service sensor.
+# Any attribute not extractable from the email defaults to 0.
+_STANDARD_ATTRS: tuple[str, ...] = (
+    "folio",
+    "billing_period_start",
+    "billing_period_end",
+    "customer_number",
+    "address",
+    "due_date",
+    "total_amount",
+    "consumption",
+    "consumption_unit",
+)
+
 # Webmail provider domains that are too generic for sender-domain matching.
 # Emails forwarded through these services carry the forwarder's address, not
 # the original utility company's address.
@@ -72,7 +86,9 @@ async def async_setup_entry(
     """Set up Concierge Services sensors.
 
     One connection sensor is created for the main entry (hub device).
-    One service sensor is created for every subentry (service device).
+    One service sensor is created for every subentry (service device),
+    each associated with its own subentry so it appears correctly grouped
+    in the Home Assistant device registry.
     """
     # Effective config merges original data with any options overrides
     effective_cfg = {**config_entry.data, **config_entry.options}
@@ -84,18 +100,17 @@ async def async_setup_entry(
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][config_entry.entry_id] = coordinator
 
-    entities: list[SensorEntity] = []
+    # Main connection sensor (hub device) — not linked to any subentry
+    async_add_entities([ConciergeServicesConnectionSensor(coordinator, config_entry)])
 
-    # Main connection sensor (hub device)
-    entities.append(ConciergeServicesConnectionSensor(coordinator, config_entry))
-
-    # One service sensor per subentry
+    # One service sensor per subentry, each linked to its own subentry so
+    # devices appear grouped under the subentry in the HA UI (not under
+    # "Dispositivos que no pertenecen a una subentrada").
     for subentry_id, subentry in config_entry.subentries.items():  # type: ignore[attr-defined]
-        entities.append(
-            ConciergeServiceSensor(coordinator, config_entry, subentry_id, subentry.data)
+        async_add_entities(
+            [ConciergeServiceSensor(coordinator, config_entry, subentry_id, subentry.data)],
+            config_subentry_id=subentry_id,  # type: ignore[call-arg]
         )
-
-    async_add_entities(entities)
 
 
 class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -462,11 +477,30 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
+        """Return additional state attributes.
+
+        All standard attributes are always present.  If the value could not be
+        extracted from the email the attribute defaults to ``0``.
+        """
+        service_type = self._subentry_data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
+
+        # Initialise every standard attribute with its default value (0)
         attrs: dict[str, Any] = {
             "service_id": self._service_id,
             "service_name": self._service_name,
-            "service_type": self._subentry_data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN),
+            "service_type": service_type,
+            "last_updated_datetime": 0,
+            "folio": 0,
+            "billing_period_start": 0,
+            "billing_period_end": 0,
+            "customer_number": 0,
+            "address": 0,
+            "due_date": 0,
+            "icon": "mdi:file-document-outline",
+            "friendly_name": self._service_name,
+            "total_amount": 0,
+            "consumption": 0,
+            "consumption_unit": 0,
         }
 
         if self.coordinator.data:
@@ -478,13 +512,15 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
 
                 extracted_attrs = service_data.get("attributes", {})
                 if extracted_attrs:
-                    # Add extracted attributes; skip internal fields and None values
-                    for key, value in extracted_attrs.items():
-                        if not key.startswith("_") and value is not None:
+                    # Override standard attributes with extracted values
+                    for key in _STANDARD_ATTRS:
+                        value = extracted_attrs.get(key)
+                        if value is not None:
                             attrs[key] = value
 
-                    if "_attributes_found" in extracted_attrs:
-                        attrs["attributes_extracted_count"] = extracted_attrs["_attributes_found"]
+                    # Include pdf_path when a bill PDF was downloaded
+                    if pdf_path := extracted_attrs.get("pdf_path"):
+                        attrs["pdf_path"] = pdf_path
 
         return attrs
 

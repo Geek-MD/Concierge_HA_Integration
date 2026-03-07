@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-07
+
+### Added
+- **Standard attributes with default values** (`sensor.py`): Every service
+  sensor now exposes the full set of standard attributes on every update.
+  If a value cannot be extracted from the email the attribute defaults to
+  `0`, so automations and dashboards never see a missing key:
+  `service_id`, `service_name`, `service_type`, `last_updated_datetime`,
+  `folio`, `billing_period_start`, `billing_period_end`, `customer_number`,
+  `address`, `due_date`, `icon`, `friendly_name`, `total_amount`,
+  `consumption`, `consumption_unit`.
+- **`icon` and `friendly_name` attributes** (`sensor.py`): Both are now
+  included as extra-state attributes on every service sensor.
+  `icon` is always `mdi:file-document-outline`; `friendly_name` mirrors
+  the configured service name.
+
+### Changed
+- **`total_amount` is now an integer** (`attribute_extractor.py`): The
+  extracted amount is converted to a plain integer, removing thousands
+  separators regardless of locale format (e.g. Chilean `12.013` → `12013`,
+  `1.234,56` → `1234`).
+- **Unified consumption attributes** (`attribute_extractor.py`): Service-type
+  specific fields (`consumption_m3`, `consumption_kwh`) have been replaced
+  by the standard attributes `consumption` and `consumption_unit` (`"m3"` or
+  `"kWh"` depending on the service type).
+- **Removed non-standard attributes** (`attribute_extractor.py`): The
+  following service-specific fields are no longer extracted or exposed as
+  they will be re-introduced as typed specific attributes in a future
+  version: `next_billing_period_start`, `next_billing_period_end`,
+  `consumption_type`, `boleta_date`, `metropuntos`, `contracted_power_kw`,
+  `rut_from_subject`.
+- **Fixed duplicate device registration** (`sensor.py`): Service sensor
+  entities are now registered with their respective `config_subentry_id` via
+  `async_add_entities(..., config_subentry_id=subentry_id)`.  This causes
+  each service device to appear correctly nested under its subentry in the
+  Home Assistant device registry (matching the MQTT integration layout
+  shown in screenshot-02) and eliminates the "Dispositivos que no
+  pertenecen a una subentrada" grouping.
+
+### Removed
+- `attributes_extracted_count` debug attribute from service sensors.
+
 ## [0.4.10] - 2026-03-06
 
 ### Added
