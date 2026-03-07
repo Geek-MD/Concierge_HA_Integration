@@ -32,6 +32,7 @@
 - 🏠 **Friendly Names**: Set custom names for your integrations
 - 📍 **Area Assignment**: Associate integrations with specific areas in your home
 - 🔍 **Automatic Service Detection**: Detects utility services from your inbox automatically
+- 🔎 **IMAP Discovery**: After setup, the integration automatically scans the inbox every hour for new services and surfaces them in **Configuration → Integrations** as devices available to be added — no manual "Add Device" click needed for discovered services (requires HA 2025.4 or newer)
 - 🤖 **Standard Attribute Set**: Every service sensor always exposes the full
   set of standard attributes.  Missing values default to `0`:
   - Service identity: `service_id`, `service_name`, `service_type`,
@@ -51,8 +52,7 @@
 
 ### 🚧 Coming Soon
 
-- 🔔 **Discovery Notifications**: Persistent notifications when new services are detected
-- 📱 **Service Configuration**: Configure detected services as individual devices
+- 📱 **Service Configuration UI**: Edit detected services after initial discovery
 - 📈 **Historical Data**: Track billing history over time
 - 📑 **PDF Analysis**: Extract structured billing data directly from downloaded PDFs
 
@@ -105,9 +105,17 @@ After validating credentials, configure:
 
 ### Step 3: Add Service Devices
 
-Once the integration is set up, add utility services one by one using the **ADD DEVICE** button
-on the integration card:
-- The integration scans your inbox and detects available service providers
+Once the integration is set up, service devices can be added in two ways:
+
+#### 🔎 Automatic Discovery (recommended — requires HA 2025.4+)
+Right after setup the integration scans your inbox for service providers.
+Discovered services appear on the **Concierge Services** integration card as
+**"Discovered: {service_name}"** — click the card to confirm and the device is added
+automatically.  The scan repeats every hour so newly-arrived bills are noticed.
+
+#### ➕ Manual Addition
+Use the **ADD DEVICE** button on the integration card:
+- The integration scans your inbox and shows available service providers
 - Select a service to add it as a device
 - Repeat for each service you want to track
 - Each service can be reconfigured later via its device page

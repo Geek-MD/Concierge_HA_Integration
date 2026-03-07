@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import imaplib
 import logging
+from types import MappingProxyType
 from typing import Any
 
 import voluptuous as vol
@@ -216,6 +217,7 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
     def __init__(self) -> None:
         """Initialize the subentry flow."""
         self._available_services: list[Any] = []
+        self._discovery_data: dict[str, Any] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -285,6 +287,70 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
             ),
             errors=errors,
             description_placeholders={"count": str(len(self._available_services))},
+        )
+
+    async def async_step_discovery(  # type: ignore[override]
+        self, discovery_info: dict[str, Any]
+    ) -> FlowResult:
+        """Handle a service account discovered via IMAP scan.
+
+        This step is triggered programmatically (not by the user) when a new
+        service is detected in the inbox.  It stores the discovery payload and
+        presents a simple confirmation form so the user can decide whether to
+        add the device.
+        """
+        service_id = discovery_info.get(CONF_SERVICE_ID, "")
+
+        # Abort if the service is already configured as a subentry.
+        entry = self._get_entry()  # type: ignore[attr-defined]
+        existing_ids = {
+            sub.data.get(CONF_SERVICE_ID)
+            for sub in entry.subentries.values()  # type: ignore[attr-defined]
+        }
+        if service_id in existing_ids:
+            return self.async_abort(reason="already_configured")  # type: ignore[return-value]
+
+        self._discovery_data = discovery_info
+
+        return self.async_show_form(  # type: ignore[return-value]
+            step_id="discovery_confirm",
+            description_placeholders={
+                "service_name": discovery_info.get(CONF_SERVICE_NAME, ""),
+                "email_count": str(discovery_info.get("email_count", 0)),
+            },
+            data_schema=vol.Schema({}),
+        )
+
+    async def async_step_discovery_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Confirm adding the discovered service as a device.
+
+        When the user submits the confirmation form we add the subentry
+        directly via ``async_add_subentry`` and then abort (because
+        ``async_create_entry`` is restricted to ``SOURCE_USER`` flows by the
+        HA framework).
+        """
+        if user_input is not None:
+            entry = self._get_entry()  # type: ignore[attr-defined]
+            subentry = config_entries.ConfigSubentry(  # type: ignore[attr-defined]
+                data=MappingProxyType(self._discovery_data),
+                subentry_type="service",
+                title=self._discovery_data.get(CONF_SERVICE_NAME, ""),
+                unique_id=self._discovery_data.get(CONF_SERVICE_ID),
+            )
+            self.hass.config_entries.async_add_subentry(  # type: ignore[attr-defined]
+                entry, subentry
+            )
+            return self.async_abort(reason="subentry_added")  # type: ignore[return-value]
+
+        return self.async_show_form(  # type: ignore[return-value]
+            step_id="discovery_confirm",
+            description_placeholders={
+                "service_name": self._discovery_data.get(CONF_SERVICE_NAME, ""),
+                "email_count": str(self._discovery_data.get("email_count", 0)),
+            },
+            data_schema=vol.Schema({}),
         )
 
     async def async_step_reconfigure(

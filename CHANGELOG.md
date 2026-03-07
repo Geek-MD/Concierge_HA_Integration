@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-03-07
+
+### Added
+- **IMAP-based service discovery** (`__init__.py`, `config_flow.py`): Service
+  accounts are now detected automatically via "discovery" and surface in
+  **Configuration → Integrations** as devices available to be added — similar
+  to how MQTT component discovery works.
+
+  *How it works*:
+  1. After the integration is set up, a background task scans the IMAP inbox
+     immediately and then repeats every **hour**.
+  2. For each detected service that is not already configured as a subentry, the
+     integration initiates a subentry discovery flow
+     (`hass.config_entries.subentries.async_init`).  Requires **HA 2025.4 or
+     newer** (the subentry discovery API was added in that release); on older
+     versions the background scan runs silently without triggering flows.
+  3. The user sees the discovered device in the integration card and can confirm
+     or dismiss it with a single click via the new **"Discovered: {service_name}"**
+     confirmation step (`async_step_discovery_confirm`).
+  4. Confirming adds the subentry directly using `async_add_subentry` (the
+     HA-recommended path for discovery-initiated subentries) and reloads the
+     entry so the sensor appears immediately.
+
+- **`async_step_discovery` / `async_step_discovery_confirm`** steps added to
+  `ServiceSubentryFlowHandler` (`config_flow.py`): handle the discovery source
+  context, check for duplicates (already-configured and already-pending
+  discoveries are silently aborted), and confirm the addition with a
+  description that includes the service name and e-mail count.
+
+- New string keys (`strings.json`, `translations/en.json`,
+  `translations/es.json`):
+  - `config_subentries.service.initiate_flow.discovery` — label for the
+    discovery-triggered flow card.
+  - `config_subentries.service.step.discovery_confirm` — confirmation form.
+  - `config_subentries.service.abort.already_configured` — shown when the
+    service is already set up.
+  - `config_subentries.service.abort.subentry_added` — shown after a
+    successful discovery confirmation.
+
 ## [0.5.1] - 2026-03-07
 
 ### Fixed
