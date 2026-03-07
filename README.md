@@ -187,6 +187,8 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Fix: AttributeError when clicking ADD DEVICE button (v0.4.3)
 - ✅ Standard attribute set with defaults (v0.5.0): `folio`, `billing_period_start`, `billing_period_end`, `total_amount` (int), `customer_number`, `address`, `due_date`, `consumption`, `consumption_unit`, `icon`, `friendly_name`
 - ✅ Device grouping fix (v0.5.0): service devices now appear correctly grouped under their subentry (no more "Dispositivos que no pertenecen a una subentrada")
+- ✅ Hub device removed (v0.5.1): the connection/status sensor is now a standalone entity with no device, eliminating the "Dispositivos que no pertenecen a una subentrada" section entirely
+- ✅ Automatic migration (v0.5.1): upgrading from v0.4.x no longer requires deleting and re-adding the integration; entity/device registry is migrated automatically on first startup
 - ✅ Heuristic PDF download: attachment → billing link in HTML body (v0.4.10)
 - ✅ Deterministic PDF filename: `{service_id}_{YYYY-MM}_{folio}.pdf` (v0.4.10)
 - ✅ Automatic purge of PDFs older than 1 year (v0.4.10)

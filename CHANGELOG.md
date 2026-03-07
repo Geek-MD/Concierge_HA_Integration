@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-07
+
+### Fixed
+- **"Dispositivos que no pertenecen a una subentrada" grouping** (`sensor.py`):
+  The connection/status sensor no longer creates a hub device associated with
+  the main config entry.  Removing `device_info` from
+  `ConciergeServicesConnectionSensor` means no device is registered for the
+  main entry, so the "Devices that don't belong to a sub-entry" section is
+  no longer shown in the integration page.  The status sensor remains fully
+  functional as a standalone entity.
+- **Removed `via_device` from service sensors** (`sensor.py`): Each service
+  sensor device now stands independently under its own subentry without
+  being linked to a (now-removed) hub device.
+
+### Added
+- **Automatic migration from v0.4.x** (`__init__.py`, `config_flow.py`):
+  Upgrading from v0.4.x no longer requires deleting and re-adding the
+  integration.  A `async_migrate_entry` migration (config entry minor
+  version 1.1 → 1.2) runs automatically on first startup after the upgrade
+  and performs three steps:
+  1. Assigns the correct `config_subentry_id` to each service entity already
+     in the entity registry.
+  2. Removes the legacy hub device (previously associated with the main
+     config entry).
+  3. Moves each service device's registry association from the main config
+     entry to its own subentry, so devices appear under the correct subentry
+     group in the HA UI without any manual reconfiguration.
+
 ## [0.5.0] - 2026-03-07
 
 ### Added
