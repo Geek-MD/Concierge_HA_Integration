@@ -68,7 +68,8 @@
   "config_subentries": {
     "service": {
       "initiate_flow": {
-        "user": "Agregar Dispositivo de Servicio"
+        "user": "Agregar Dispositivo de Servicio",
+        "discovery": "Dispositivo de Servicio Detectado"
       },
       "entry_type": "Dispositivo de Servicio",
       "step": {
@@ -78,6 +79,10 @@
           "data": {
             "service_id": "Servicio"
           }
+        },
+        "discovery_confirm": {
+          "title": "Detectado: {service_name}",
+          "description": "Se detectó {service_name} en la bandeja de entrada ({email_count} correo(s)). ¿Desea agregarlo como dispositivo de servicio?"
         },
         "reconfigure": {
           "title": "Reconfigurar {service_name}",
@@ -91,8 +96,10 @@
         "service_not_found": "El servicio seleccionado no fue encontrado. Por favor intente nuevamente."
       },
       "abort": {
+        "already_configured": "Esta cuenta de servicio ya está configurada.",
         "detection_failed": "No se pudo escanear la bandeja de entrada en busca de servicios. Verifique sus credenciales de correo.",
-        "no_services_available": "No se encontraron nuevas cuentas de servicio en la bandeja de entrada. Es posible que todos los servicios detectados ya estén configurados."
+        "no_services_available": "No se encontraron nuevas cuentas de servicio en la bandeja de entrada. Es posible que todos los servicios detectados ya estén configurados.",
+        "subentry_added": "Dispositivo de servicio agregado exitosamente."
       }
     }
   }

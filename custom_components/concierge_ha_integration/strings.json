@@ -68,7 +68,8 @@
   "config_subentries": {
     "service": {
       "initiate_flow": {
-        "user": "Add Service Device"
+        "user": "Add Service Device",
+        "discovery": "Discovered Service Device"
       },
       "entry_type": "Service Device",
       "step": {
@@ -78,6 +79,10 @@
           "data": {
             "service_id": "Service"
           }
+        },
+        "discovery_confirm": {
+          "title": "Discovered: {service_name}",
+          "description": "{service_name} was detected in the inbox ({email_count} email(s)). Do you want to add it as a service device?"
         },
         "reconfigure": {
           "title": "Reconfigure {service_name}",
@@ -91,8 +96,10 @@
         "service_not_found": "Selected service not found. Please try again."
       },
       "abort": {
+        "already_configured": "This service account is already configured.",
         "detection_failed": "Failed to scan the inbox for services. Check your email credentials.",
-        "no_services_available": "No new service accounts were found in the inbox. All detected services may already be configured."
+        "no_services_available": "No new service accounts were found in the inbox. All detected services may already be configured.",
+        "subentry_added": "Service device added successfully."
       }
     }
   }

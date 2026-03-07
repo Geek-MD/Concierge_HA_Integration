@@ -2,18 +2,35 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_time_interval
 
-from .const import DOMAIN
+from .const import (
+    CONF_EMAIL,
+    CONF_IMAP_PORT,
+    CONF_IMAP_SERVER,
+    CONF_PASSWORD,
+    CONF_SERVICE_ID,
+    DOMAIN,
+)
+from .service_detector import detect_services_from_imap
 
 _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to support
 PLATFORMS: list[str] = ["sensor"]
+
+# How often to re-scan the inbox for new services
+_DISCOVERY_INTERVAL = timedelta(hours=1)
+
+# Key used inside hass.data[DOMAIN][entry_id] to track queued discoveries
+_PENDING_DISCOVERIES_KEY = "pending_discoveries"
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -115,6 +132,9 @@ def _migrate_1_1_to_1_2(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Concierge Services from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN].setdefault(entry.entry_id, {})
+    hass.data[DOMAIN][entry.entry_id][_PENDING_DISCOVERIES_KEY] = set()
+
     # Forward the setup to the sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -122,12 +142,104 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # added/removed) so that sensors are recreated with the latest config.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
+    # Run an initial inbox scan for new services right after setup.
+    hass.async_create_task(
+        _async_discover_services(hass, entry),
+        f"concierge_ha_integration discovery initial {entry.entry_id}",
+    )
+
+    # Schedule periodic re-scans so newly-received bills are noticed.
+    @callback
+    def _schedule_discovery(_now: object) -> None:
+        """Create a discovery task on each interval tick."""
+        hass.async_create_task(
+            _async_discover_services(hass, entry),
+            f"concierge_ha_integration discovery periodic {entry.entry_id}",
+        )
+
+    entry.async_on_unload(
+        async_track_time_interval(hass, _schedule_discovery, _DISCOVERY_INTERVAL)
+    )
+
     _LOGGER.info(
         "Concierge Services integration loaded for %s",
         entry.data.get("email"),
     )
 
     return True
+
+
+async def _async_discover_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Scan the IMAP inbox and trigger discovery flows for new services.
+
+    A discovery subentry flow is initiated for every service found in the
+    inbox that is not yet configured as a subentry and does not already have
+    a pending discovery flow in progress.  The user then decides whether to
+    add the device from the integration card in Configuration → Integrations.
+    """
+    cfg = {**entry.data, **entry.options}
+
+    try:
+        services = await hass.async_add_executor_job(
+            detect_services_from_imap,
+            cfg[CONF_IMAP_SERVER],
+            cfg[CONF_IMAP_PORT],
+            cfg[CONF_EMAIL],
+            cfg[CONF_PASSWORD],
+            100,
+        )
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.debug("Concierge Services discovery scan failed: %s", err)
+        return
+
+    # IDs already configured as subentries
+    existing_ids: set[str | None] = {
+        sub.data.get(CONF_SERVICE_ID)
+        for sub in entry.subentries.values()  # type: ignore[attr-defined]
+    }
+
+    # IDs for which a discovery flow is already in progress (avoid duplicates)
+    pending: set[str] = (
+        hass.data.get(DOMAIN, {})
+        .get(entry.entry_id, {})
+        .get(_PENDING_DISCOVERIES_KEY, set())
+    )
+
+    # Retrieve the subentry flow manager (requires HA ≥ 2025.4)
+    subentries_mgr = getattr(hass.config_entries, "subentries", None)
+    if subentries_mgr is None:
+        _LOGGER.debug(
+            "Concierge Services: subentry discovery requires HA 2025.4 or newer"
+        )
+        return
+
+    for service in services:
+        if service.service_id in existing_ids or service.service_id in pending:
+            continue
+
+        _LOGGER.info(
+            "Concierge Services: discovered new service '%s' (%s)",
+            service.service_name,
+            service.service_id,
+        )
+        pending.add(service.service_id)
+
+        try:
+            hass.async_create_task(
+                subentries_mgr.async_init(  # type: ignore[attr-defined]
+                    (entry.entry_id, "service"),
+                    context={"source": "discovery"},
+                    data=asdict(service),
+                ),
+                f"concierge_ha_integration discovery flow {service.service_id}",
+            )
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.debug(
+                "Concierge Services: failed to init discovery flow for '%s': %s",
+                service.service_name,
+                err,
+            )
+            pending.discard(service.service_id)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
