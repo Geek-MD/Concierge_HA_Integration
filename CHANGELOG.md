@@ -5,18 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - 2026-03-07
-
-### Changed
-- **`consumption` is now a float** (`attribute_extractor.py`): The extracted
-  consumption value is converted to a Python `float` instead of being stored
-  as a raw string.  A new `_parse_consumption_to_float()` helper handles both
-  Chilean/Spanish format (dot = thousands separator, comma = decimal, e.g.
-  `"1.500"` → `1500.0`, `"12,5"` → `12.5`) and English format (`"12.5"` →
-  `12.5`).  The default value in the sensor attributes changes from `0` to
-  `0.0` accordingly.
-
-
+## [0.5.0] - 2026-03-07
 
 ### Added
 - **Standard attributes with default values** (`sensor.py`): Every service
@@ -35,8 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`total_amount` is now an integer** (`attribute_extractor.py`): The
   extracted amount is converted to a plain integer, removing thousands
-  separators regardless of locale format (e.g. Chilean `12.013` → `12013`,
-  `1.234,56` → `1234`).
+  separators regardless of locale format (e.g. Chilean `122.060` → `122060`,
+  `12.013` → `12013`, `1.234,56` → `1234`).  A dot or comma followed by
+  exactly 3 digits is treated as a thousands separator; followed by 1–2
+  digits it is treated as a decimal separator (decimal part discarded).
+- **`consumption` is now a float** (`attribute_extractor.py`): The extracted
+  consumption value is converted to a Python `float` instead of being stored
+  as a raw string.  A new `_parse_consumption_to_float()` helper handles both
+  Chilean/Spanish format (dot = thousands separator, comma = decimal, e.g.
+  `"1.500"` → `1500.0`, `"12,5"` → `12.5`) and English format (`"12.5"` →
+  `12.5`).  The default value in the sensor attributes is `0.0`.
 - **Unified consumption attributes** (`attribute_extractor.py`): Service-type
   specific fields (`consumption_m3`, `consumption_kwh`) have been replaced
   by the standard attributes `consumption` and `consumption_unit` (`"m3"` or
