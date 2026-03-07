@@ -85,7 +85,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up Concierge Services sensors.
 
-    One connection sensor is created for the main entry (hub device).
+    One connection sensor is created for the main entry as a standalone entity
+    (no device) so it does not appear in the "Devices that don't belong to a
+    sub-entry" category.
     One service sensor is created for every subentry (service device),
     each associated with its own subentry so it appears correctly grouped
     in the Home Assistant device registry.
@@ -100,7 +102,7 @@ async def async_setup_entry(
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][config_entry.entry_id] = coordinator
 
-    # Main connection sensor (hub device) — not linked to any subentry
+    # Main connection sensor (standalone entity, not linked to any device or subentry)
     async_add_entities([ConciergeServicesConnectionSensor(coordinator, config_entry)])
 
     # One service sensor per subentry, each linked to its own subentry so
@@ -450,13 +452,12 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
         self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}"
         self._attr_icon = "mdi:file-document-outline"
 
-        # Service device linked to the main hub device
+        # Service device associated with its own subentry
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{config_entry.entry_id}_{subentry_id}")},
             name=self._service_name,
             manufacturer="Concierge Services",
             model="Service Account",
-            via_device=(DOMAIN, config_entry.entry_id),
         )
 
     @property
@@ -526,7 +527,7 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
 
 
 class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):
-    """Sensor to monitor mail server connection status (main hub device)."""
+    """Sensor to monitor mail server connection status (no device, standalone entity)."""
 
     def __init__(
         self,
@@ -539,17 +540,6 @@ class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoord
         self._attr_name = "Concierge Services - Status"
         self._attr_unique_id = f"{config_entry.entry_id}_connection"
         self._attr_icon = "mdi:email-check"
-
-        friendly_name = config_entry.data.get(
-            "friendly_name", config_entry.data.get(CONF_EMAIL, "Concierge Services")
-        )
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, config_entry.entry_id)},
-            name=friendly_name,
-            manufacturer="Concierge Services",
-            model="Email Integration",
-            configuration_url="https://github.com/Geek-MD/Concierge_Services",
-        )
 
     @property
     def native_value(self) -> str:
