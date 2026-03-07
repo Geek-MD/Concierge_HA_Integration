@@ -4,8 +4,10 @@ from __future__ import annotations
 import email
 import imaplib
 import logging
+import re
 from datetime import timedelta
 from email.header import decode_header
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -30,9 +32,12 @@ from .const import (
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
     DOMAIN,
+    PDF_MAX_AGE_DAYS,
+    PDF_SUBDIR,
     SERVICE_TYPE_UNKNOWN,
 )
 from .attribute_extractor import extract_attributes_from_email_body, _strip_html
+from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
 from .service_detector import classify_service_type
 
 _LOGGER = logging.getLogger(__name__)
@@ -111,6 +116,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.config_entry = config_entry
         self._cfg = effective_cfg
+        self._pdf_dir: str = hass.config.path(PDF_SUBDIR)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from IMAP server."""
@@ -132,6 +138,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             imap = imaplib.IMAP4_SSL(cfg[CONF_IMAP_SERVER], cfg[CONF_IMAP_PORT])
             imap.login(cfg[CONF_EMAIL], cfg[CONF_PASSWORD])
             result["connection_status"] = "OK"
+
+            # Purge PDFs older than the configured retention period once per cycle
+            try:
+                purge_old_pdfs(self._pdf_dir, PDF_MAX_AGE_DAYS)
+            except Exception as err:
+                _LOGGER.debug("Error purging old PDFs: %s", err)
 
             # Fetch data for each subentry (service device)
             assert self.config_entry is not None
@@ -219,13 +231,28 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     ):
                         if date_header:
                             try:
-                                from email.utils import parsedate_to_datetime
                                 email_date = parsedate_to_datetime(date_header)
                                 if latest_date is None or email_date > latest_date:
                                     latest_date = email_date
                                     latest_attributes = extract_attributes_from_email_body(
                                         subject, body, service_type
                                     )
+                                    # Attempt to download (or locate) the bill PDF
+                                    try:
+                                        pdf_path = download_pdf_from_email(
+                                            msg,
+                                            self._pdf_dir,
+                                            service_id,
+                                            email_date,
+                                            latest_attributes,
+                                        )
+                                        if pdf_path:
+                                            latest_attributes["pdf_path"] = pdf_path
+                                    except Exception as pdf_err:
+                                        _LOGGER.debug(
+                                            "PDF download skipped for service '%s': %s",
+                                            service_id, pdf_err,
+                                        )
                             except Exception:
                                 pass
 
@@ -342,8 +369,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         body: str,
     ) -> bool:
         """Check if email matches a service based on flexible patterns."""
-        import re
-
         combined_text = f"{from_addr} {subject} {body}".lower()
 
         # Match by sender domain from sample_from (skip generic webmail providers)

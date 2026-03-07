@@ -39,6 +39,11 @@
   - Customer / account number (`customer_number`)
   - Service address (`address`)
   - Email send date (`last_updated_datetime`)
+- 📄 **Heuristic PDF Download**: Automatically downloads the billing PDF for each matched email:
+  - If the email has a PDF attachment it is saved directly
+  - Otherwise the HTML body is scanned for billing links (*"ver boleta"*, *"descargue su boleta"*, etc.) and the first valid PDF URL is downloaded
+  - Files are saved as `{service_id}_{YYYY-MM}_{folio}.pdf` under `config/concierge_ha_integration/pdfs/`
+  - PDFs older than one year are purged automatically
 - 🔧 **Device Architecture**: Each service appears as a separate device
 - 📊 **Status Sensor**: Monitor email connection status in real-time
 
@@ -47,7 +52,7 @@
 - 🔔 **Discovery Notifications**: Persistent notifications when new services are detected
 - 📱 **Service Configuration**: Configure detected services as individual devices
 - 📈 **Historical Data**: Track billing history over time
-- 📄 **PDF Analysis**: Enhanced extraction from PDF attachments (future enhancement)
+- 📑 **PDF Analysis**: Extract structured billing data directly from downloaded PDFs
 
 ---
 
@@ -179,12 +184,15 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Folio extracted from subject, ready for PDF confirmation
 - ✅ Billing period start/end, total amount, customer number, address
 - ✅ Fix: AttributeError when clicking ADD DEVICE button (v0.4.3)
+- ✅ Heuristic PDF download: attachment → billing link in HTML body (v0.4.10)
+- ✅ Deterministic PDF filename: `{service_id}_{YYYY-MM}_{folio}.pdf` (v0.4.10)
+- ✅ Automatic purge of PDFs older than 1 year (v0.4.10)
 - ✅ Passes ruff, mypy and hassfest checks
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services
 - Enhanced attribute display in sensor states
-- Enhanced PDF attachment processing
+- PDF content analysis for structured data extraction
 - Historical billing data tracking
 - Consumption trends and analytics
 - Payment reminders and automations
@@ -195,8 +203,8 @@ As the integration scans your inbox, it automatically detects utility services a
 
 - The integration currently detects services automatically from your inbox
 - Services are identified using targeted pattern matching on billing emails
-- Works best with emails that have attachments (typical for bills)
-- No PDF processing required — targeted data extracted directly from email text and subject
+- Works with both emails that carry a PDF attachment and emails that only contain a download link in the HTML body
+- Bill PDFs are downloaded automatically to `config/concierge_ha_integration/pdfs/` and purged after one year
 - All credentials are stored securely in Home Assistant
 - It is recommended to use app passwords instead of your main password
 - Only one instance is allowed per Home Assistant installation — use the **CONFIGURE** button to change the monitored email account

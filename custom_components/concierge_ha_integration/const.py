@@ -24,3 +24,7 @@ SERVICE_TYPE_GAS = "gas"
 SERVICE_TYPE_ELECTRICITY = "electricity"
 SERVICE_TYPE_TELECOM = "telecom"
 SERVICE_TYPE_UNKNOWN = "unknown"
+
+# PDF storage — subdirectory (relative to the HA config dir) and retention
+PDF_SUBDIR = "concierge_ha_integration/pdfs"
+PDF_MAX_AGE_DAYS = 365
