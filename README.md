@@ -31,14 +31,15 @@
 - 🏠 **Friendly Names**: Set custom names for your integrations
 - 📍 **Area Assignment**: Associate integrations with specific areas in your home
 - 🔍 **Automatic Service Detection**: Detects utility services from your inbox automatically
-- 🤖 **Targeted Attribute Extraction**: Extracts exactly the billing fields needed before PDF analysis:
-  - Company name (`service_name`)
-  - Invoice/folio number (`folio`)
-  - Billing period start & end (`billing_period_start`, `billing_period_end`)
-  - Total amount due (`total_amount`)
-  - Customer / account number (`customer_number`)
-  - Service address (`address`)
-  - Email send date (`last_updated_datetime`)
+- 🤖 **Standard Attribute Set**: Every service sensor always exposes the full
+  set of standard attributes.  Missing values default to `0`:
+  - Service identity: `service_id`, `service_name`, `service_type`,
+    `friendly_name`, `icon`
+  - Timing: `last_updated_datetime`
+  - Billing: `folio`, `billing_period_start`, `billing_period_end`,
+    `total_amount` (integer), `due_date`
+  - Account: `customer_number`, `address`
+  - Usage: `consumption`, `consumption_unit`
 - 📄 **Heuristic PDF Download**: Automatically downloads the billing PDF for each matched email:
   - If the email has a PDF attachment it is saved directly
   - Otherwise the HTML body is scanned for billing links (*"ver boleta"*, *"descargue su boleta"*, etc.) and the first valid PDF URL is downloaded
@@ -184,6 +185,8 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Folio extracted from subject, ready for PDF confirmation
 - ✅ Billing period start/end, total amount, customer number, address
 - ✅ Fix: AttributeError when clicking ADD DEVICE button (v0.4.3)
+- ✅ Standard attribute set with defaults (v0.5.0): `folio`, `billing_period_start`, `billing_period_end`, `total_amount` (int), `customer_number`, `address`, `due_date`, `consumption`, `consumption_unit`, `icon`, `friendly_name`
+- ✅ Device grouping fix (v0.5.0): service devices now appear correctly grouped under their subentry (no more "Dispositivos que no pertenecen a una subentrada")
 - ✅ Heuristic PDF download: attachment → billing link in HTML body (v0.4.10)
 - ✅ Deterministic PDF filename: `{service_id}_{YYYY-MM}_{folio}.pdf` (v0.4.10)
 - ✅ Automatic purge of PDFs older than 1 year (v0.4.10)

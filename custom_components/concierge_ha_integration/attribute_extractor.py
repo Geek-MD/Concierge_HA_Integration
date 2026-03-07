@@ -1,7 +1,11 @@
 """Attribute extraction module for Concierge Services.
 
 Extracts billing attributes from email body using targeted field patterns.
-Only the fields required before PDF analysis are extracted.
+Only the standard fields required before PDF analysis are extracted.
+
+Standard attributes (with default 0 when not found in the email):
+    folio, billing_period_start, billing_period_end, customer_number,
+    address, due_date, total_amount, consumption, consumption_unit.
 
 Extraction is modularised by service type so that each utility category
 (water, gas, electricity, …) can use patterns tuned to its own email
@@ -95,19 +99,90 @@ _AMOUNT_RE = re.compile(
 )
 
 
-def _extract_total_amount(text: str) -> str | None:
-    """Return the total amount due found in *text*, or None."""
+def _parse_amount_to_int(raw: str) -> int:
+    """Convert a formatted amount string to an integer.
+
+    Handles Chilean/Spanish format (dot as thousands separator, comma as
+    decimal) and English format (comma as thousands separator, dot as decimal).
+    A dot or comma followed by exactly 3 digits is always treated as a
+    thousands separator; followed by 1–2 digits it is treated as decimal
+    (which is then discarded because the result is an integer).
+
+    Examples::
+
+        "12.013"   → 12013   # Chilean: dot = thousands separator
+        "122.060"  → 122060  # Chilean: dot = thousands separator
+        "1.234,56" → 1234    # Chilean: dot = thousands, comma = decimal
+        "12,013"   → 12013   # English: comma = thousands separator
+        "1,234.56" → 1234    # English: comma = thousands, dot = decimal
+    """
+    raw = raw.strip()
+    m = re.search(r"([,.])(\d+)$", raw)
+    if m:
+        frac_digits = len(m.group(2))
+        if frac_digits <= 2:
+            # Last separator is decimal — strip the decimal part
+            decimal_sep = m.group(1)
+            raw = raw[: m.start()]
+            thousands_sep = "," if decimal_sep == "." else "."
+            raw = raw.replace(thousands_sep, "")
+        else:
+            # Last separator is a thousands separator — remove all separators
+            raw = raw.replace(".", "").replace(",", "")
+    raw = raw.strip()
+    try:
+        return int(raw) if raw else 0
+    except ValueError:
+        return 0
+
+
+def _parse_consumption_to_float(raw: str) -> float:
+    """Convert a formatted consumption string to a float.
+
+    Handles Chilean/Spanish format (dot as thousands separator, comma as
+    decimal) and English format (comma as thousands separator, dot as decimal).
+
+    Examples::
+
+        "12.5"   → 12.5    # decimal (1 frac digit → decimal sep)
+        "12,5"   → 12.5    # Chilean decimal
+        "1.500"  → 1500.0  # thousands separator (3 frac digits)
+        "150"    → 150.0   # plain integer
+    """
+    raw = raw.strip()
+    m = re.search(r"([,.])(\d+)$", raw)
+    if m:
+        frac_digits = len(m.group(2))
+        if frac_digits <= 2:
+            # Last separator is decimal — normalise to English dot notation
+            decimal_sep = m.group(1)
+            integer_part = raw[: m.start()]
+            thousands_sep = "," if decimal_sep == "." else "."
+            integer_part = integer_part.replace(thousands_sep, "")
+            raw = f"{integer_part}.{m.group(2)}"
+        else:
+            # Last separator is a thousands separator — remove all separators
+            raw = raw.replace(".", "").replace(",", "")
+    try:
+        return float(raw) if raw else 0.0
+    except ValueError:
+        return 0.0
+
+
+def _extract_total_amount(text: str) -> int | None:
+    """Return the total amount due (as integer) found in *text*, or None."""
     for label_match in _TOTAL_LABELS.finditer(text):
         rest = text[label_match.end():]
         amount_match = _AMOUNT_RE.search(rest[:60])
         if amount_match:
             raw = (amount_match.group(1) or amount_match.group(2) or "").strip()
             if raw:
-                return raw
+                return _parse_amount_to_int(raw)
     # Fallback: first currency amount in the whole text
     amount_match = _AMOUNT_RE.search(text)
     if amount_match:
-        return (amount_match.group(1) or amount_match.group(2) or "").strip() or None
+        raw = (amount_match.group(1) or amount_match.group(2) or "").strip()
+        return _parse_amount_to_int(raw) if raw else None
     return None
 
 
@@ -212,7 +287,8 @@ def _extract_water_attributes(text: str) -> dict[str, Any]:
     Extracted fields (all optional):
         ``address``        – service address from packed-values paragraph
         ``customer_number``– account number (overrides wrong generic value)
-        ``consumption_m3`` – volume consumed in m³ (label-based only)
+        ``consumption``    – volume consumed (label-based only)
+        ``consumption_unit``– unit of consumption (``"m3"``)
         ``meter_reading``  – meter reading value(s) found after a reading label
         ``meter_number``   – water meter identifier
     """
@@ -233,7 +309,8 @@ def _extract_water_attributes(text: str) -> dict[str, Any]:
     # Consumption volume (label-based; bare m³ fallback omitted to avoid
     # false positives — Aguas Andinas does not include consumption in the email)
     for label_match in _WATER_CONSUMPTION_RE.finditer(text):
-        attrs["consumption_m3"] = label_match.group(1).strip()
+        attrs["consumption"] = _parse_consumption_to_float(label_match.group(1).strip())
+        attrs["consumption_unit"] = "m3"
         break
 
     # Meter readings (anterior / actual)
@@ -272,11 +349,8 @@ _GAS_CONSUMPTION_LABELS = re.compile(
     r"(?:consumo\s+(?:de\s+)?gas|consumo|volumen\s+consumido)[:\s]+",
     re.IGNORECASE,
 )
-# Metropuntos loyalty-points label (Metrogas-specific)
-_GAS_METROPUNTOS_LABELS = re.compile(
-    r"metropuntos[:\s]+",
-    re.IGNORECASE,
-)
+# Metropuntos loyalty-points label (Metrogas-specific) — kept for future use
+# _GAS_METROPUNTOS_LABELS omitted; metropuntos is a service-specific attribute
 # Plain number pattern for "Total a pagar" — Metrogas omits the $ sign,
 # e.g. "Total a pagar: 12.013" (Chilean thousands separator is '.').
 _GAS_PLAIN_AMOUNT_RE = re.compile(
@@ -289,18 +363,17 @@ def _extract_gas_attributes(text: str) -> dict[str, Any]:
 
     Tuned for Metrogas (reference email: January 2026).  Key observations:
     - The HTML-only email carries folio, customer number, address, billing
-      period, total due, due date, and Metropuntos loyalty balance.
+      period, total due, due date.
     - Gas consumption (m³) is **not** included in the email — only in the PDF.
     - ``Total a pagar`` has no ``$`` prefix (e.g. ``12.013``).
     - Customer label is ``Número Cliente:`` (no ``de`` — handled in the
       shared ``_CUSTOMER_LABELS`` pattern).
-    - ``Metropuntos`` is a Metrogas loyalty-programme balance.
 
     Extracted fields (all optional):
-        ``total_amount``  – total amount due (plain number; overrides generic)
-        ``metropuntos``   – Metrogas loyalty points balance
-        ``consumption_m3``– gas consumed in m³ (label-based only, for issuers
-                            that include it in the email body)
+        ``total_amount``   – total amount due as integer (overrides generic)
+        ``consumption``    – gas consumed (label-based only, for issuers
+                             that include it in the email body)
+        ``consumption_unit``– unit of consumption (``"m3"``)
     """
     attrs: dict[str, Any] = {}
 
@@ -314,7 +387,7 @@ def _extract_gas_attributes(text: str) -> dict[str, Any]:
         if val_match:
             raw = val_match.group(1).strip()
             if raw:
-                attrs["total_amount"] = raw
+                attrs["total_amount"] = _parse_amount_to_int(raw)
                 break
 
     # Gas consumption (m³) — label-based only; bare m³ fallback omitted to
@@ -323,15 +396,8 @@ def _extract_gas_attributes(text: str) -> dict[str, Any]:
         rest = text[label_match.end():]
         val_match = _GAS_CONSUMPTION_RE.search(rest[:80])
         if val_match:
-            attrs["consumption_m3"] = val_match.group(1).strip()
-            break
-
-    # Metropuntos (Metrogas loyalty programme)
-    for label_match in _GAS_METROPUNTOS_LABELS.finditer(text):
-        rest = text[label_match.end():]
-        pts_match = re.search(r"([0-9]+)", rest[:20])
-        if pts_match:
-            attrs["metropuntos"] = pts_match.group(1).strip()
+            attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
+            attrs["consumption_unit"] = "m3"
             break
 
     return attrs
@@ -348,10 +414,6 @@ _ELEC_CONSUMPTION_LABELS = re.compile(
     r"(?:consumo|energ[íi]a\s+consumida)[:\s]+",
     re.IGNORECASE,
 )
-_ELEC_POWER_LABELS = re.compile(
-    r"(?:potencia\s+contratada|potencia)[:\s]+",
-    re.IGNORECASE,
-)
 # Enel: address follows "suministro ubicado en … ya está disponible"
 _ELEC_ENEL_ADDRESS_RE = re.compile(
     r"ubicado\s+en\s+([\s\S]{10,120}?)\s+ya\s+est[aá]",
@@ -362,20 +424,10 @@ _ELEC_ENEL_FOLIO_RE = re.compile(
     r"n[°º]\s*boleta\s+(\d{5,})",
     re.IGNORECASE,
 )
-# Enel: boleta issue date as "N° Boleta NNNNNN del DD-MM-YYYY"
-_ELEC_ENEL_BOLETA_DATE_RE = re.compile(
-    r"n[°º]\s*boleta\s+\d+\s+del\s+(\d{1,2}-\d{1,2}-\d{4})",
-    re.IGNORECASE,
-)
 # Enel: next billing period as "Próximo periodo de facturación\n DATE - DATE"
 _ELEC_ENEL_NEXT_PERIOD_RE = re.compile(
     r"pr[oó]ximo\s+periodo\s+de\s+facturaci[oó]n\s+"
     r"(\d{1,2}-\d{1,2}-\d{4})\s*-\s*(\d{1,2}-\d{1,2}-\d{4})",
-    re.IGNORECASE,
-)
-# Enel: meter-reading quality flag ("Consumo real" / "Consumo estimado")
-_ELEC_ENEL_CONSUMPTION_TYPE_RE = re.compile(
-    r"consumo\s+(real|estimado)",
     re.IGNORECASE,
 )
 
@@ -403,16 +455,12 @@ def _extract_electricity_attributes(text: str) -> dict[str, Any]:
       the HA state attributes rather than showing misleading values.
 
     Extracted fields (all optional):
-        ``folio``                    – invoice (boleta) number from body
-        ``boleta_date``              – date the boleta was issued
-        ``address``                  – service address (from ``ubicado en``)
-        ``consumption_kwh``          – energy consumed in kWh
-        ``consumption_type``         – ``"real"`` or ``"estimado"``
-        ``contracted_power_kw``      – contracted power in kW (if present)
-        ``next_billing_period_start``– start of the next billing period
-        ``next_billing_period_end``  – end of the next billing period
-        ``billing_period_start``     – ``None`` (not in email; clears wrong generic value)
-        ``billing_period_end``       – ``None`` (not in email; clears wrong generic value)
+        ``folio``            – invoice (boleta) number from body
+        ``address``          – service address (from ``ubicado en``)
+        ``consumption``      – energy consumed
+        ``consumption_unit`` – unit of consumption (``"kWh"``)
+        ``billing_period_start`` – ``None`` (not in email; clears wrong generic value)
+        ``billing_period_end``   – ``None`` (not in email; clears wrong generic value)
     """
     attrs: dict[str, Any] = {}
 
@@ -421,34 +469,19 @@ def _extract_electricity_attributes(text: str) -> dict[str, Any]:
         rest = text[label_match.end():]
         val_match = _ELEC_CONSUMPTION_RE.search(rest[:80])
         if val_match:
-            attrs["consumption_kwh"] = val_match.group(1).strip()
+            attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
+            attrs["consumption_unit"] = "kWh"
             break
-    if "consumption_kwh" not in attrs:
+    if "consumption" not in attrs:
         val_match = _ELEC_CONSUMPTION_RE.search(text)
         if val_match:
-            attrs["consumption_kwh"] = val_match.group(1).strip()
-
-    # Contracted power (kW) — present in some tariff types
-    for label_match in _ELEC_POWER_LABELS.finditer(text):
-        rest = text[label_match.end():]
-        kw_match = re.search(
-            r"([0-9]+(?:[.,][0-9]+)?)\s*kW(?!h)",
-            rest[:60],
-            re.IGNORECASE,
-        )
-        if kw_match:
-            attrs["contracted_power_kw"] = kw_match.group(1).strip()
-            break
+            attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
+            attrs["consumption_unit"] = "kWh"
 
     # Enel: invoice number from body "N° Boleta NNNNNN del …"
     folio_match = _ELEC_ENEL_FOLIO_RE.search(text)
     if folio_match:
         attrs["folio"] = folio_match.group(1).strip()
-
-    # Enel: boleta issue date
-    boleta_date_match = _ELEC_ENEL_BOLETA_DATE_RE.search(text)
-    if boleta_date_match:
-        attrs["boleta_date"] = boleta_date_match.group(1).strip()
 
     # Enel: service address from "ubicado en ADDRESS ya está disponible"
     addr_match = _ELEC_ENEL_ADDRESS_RE.search(text)
@@ -457,20 +490,13 @@ def _extract_electricity_attributes(text: str) -> dict[str, Any]:
         if addr:
             attrs["address"] = addr
 
-    # Enel: next billing period
+    # Enel: next billing period — used only to detect "no current period in email"
     next_period_match = _ELEC_ENEL_NEXT_PERIOD_RE.search(text)
     if next_period_match:
-        attrs["next_billing_period_start"] = next_period_match.group(1).strip()
-        attrs["next_billing_period_end"] = next_period_match.group(2).strip()
         # The email does not include the current billing period.  Clear the
         # wrong dates the generic extractor would have inserted.
         attrs["billing_period_start"] = None
         attrs["billing_period_end"] = None
-
-    # Enel: consumption quality ("Consumo real" vs "Consumo estimado")
-    cons_type_match = _ELEC_ENEL_CONSUMPTION_TYPE_RE.search(text)
-    if cons_type_match:
-        attrs["consumption_type"] = cons_type_match.group(1).lower()
 
     return attrs
 
@@ -495,13 +521,14 @@ def extract_attributes_from_email_body(
 ) -> dict[str, Any]:
     """Extract billing attributes from email subject and body.
 
-    Extracts exactly the fields needed before PDF analysis:
+    Extracts the standard fields before PDF analysis:
     folio, billing_period_start, billing_period_end,
-    total_amount, customer_number, address.
+    total_amount (integer), customer_number, address, due_date,
+    consumption, consumption_unit.
 
-    When *service_type* is provided, additional type-specific attributes
-    are extracted (e.g. ``consumption_m3`` for water services,
-    ``consumption_kwh`` for electricity services).
+    When *service_type* is provided, additional type-specific overrides
+    are applied (e.g. ``consumption``/``consumption_unit`` for water/gas/
+    electricity services).
 
     Args:
         subject:      Email subject line (decoded).
@@ -561,11 +588,11 @@ def extract_attributes_from_email_body(
 def _extract_from_subject(subject: str) -> dict[str, str]:
     """
     Extract specific attributes from email subject line.
-    
+
     Subject lines often contain key identifiers in a compact format.
     """
     attrs: dict[str, str] = {}
-    
+
     # Extract folio/invoice numbers from subject
     folio_patterns = [
         r"folio[:\s]*([0-9]{6,})",
@@ -574,19 +601,13 @@ def _extract_from_subject(subject: str) -> dict[str, str]:
         r"boleta[:\s]*([0-9]{6,})",
         r"factura[:\s]*([0-9]{6,})",
     ]
-    
+
     for pattern in folio_patterns:
         match = re.search(pattern, subject, re.IGNORECASE)
         if match:
             attrs["folio"] = match.group(1)
             break
-    
-    # Extract RUT from subject if present
-    rut_pattern = r"([0-9]{1,2}\.[0-9]{3}\.[0-9]{3}-[0-9kK])"
-    match = re.search(rut_pattern, subject)
-    if match:
-        attrs["rut_from_subject"] = match.group(1)
-    
+
     return attrs
 
 
