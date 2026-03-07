@@ -499,7 +499,7 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
             "icon": "mdi:file-document-outline",
             "friendly_name": self._service_name,
             "total_amount": 0,
-            "consumption": 0,
+            "consumption": 0.0,
             "consumption_unit": 0,
         }
 

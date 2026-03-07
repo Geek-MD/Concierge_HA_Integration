@@ -104,10 +104,14 @@ def _parse_amount_to_int(raw: str) -> int:
 
     Handles Chilean/Spanish format (dot as thousands separator, comma as
     decimal) and English format (comma as thousands separator, dot as decimal).
+    A dot or comma followed by exactly 3 digits is always treated as a
+    thousands separator; followed by 1–2 digits it is treated as decimal
+    (which is then discarded because the result is an integer).
 
     Examples::
 
         "12.013"   → 12013   # Chilean: dot = thousands separator
+        "122.060"  → 122060  # Chilean: dot = thousands separator
         "1.234,56" → 1234    # Chilean: dot = thousands, comma = decimal
         "12,013"   → 12013   # English: comma = thousands separator
         "1,234.56" → 1234    # English: comma = thousands, dot = decimal
@@ -130,6 +134,39 @@ def _parse_amount_to_int(raw: str) -> int:
         return int(raw) if raw else 0
     except ValueError:
         return 0
+
+
+def _parse_consumption_to_float(raw: str) -> float:
+    """Convert a formatted consumption string to a float.
+
+    Handles Chilean/Spanish format (dot as thousands separator, comma as
+    decimal) and English format (comma as thousands separator, dot as decimal).
+
+    Examples::
+
+        "12.5"   → 12.5    # decimal (1 frac digit → decimal sep)
+        "12,5"   → 12.5    # Chilean decimal
+        "1.500"  → 1500.0  # thousands separator (3 frac digits)
+        "150"    → 150.0   # plain integer
+    """
+    raw = raw.strip()
+    m = re.search(r"([,.])(\d+)$", raw)
+    if m:
+        frac_digits = len(m.group(2))
+        if frac_digits <= 2:
+            # Last separator is decimal — normalise to English dot notation
+            decimal_sep = m.group(1)
+            integer_part = raw[: m.start()]
+            thousands_sep = "," if decimal_sep == "." else "."
+            integer_part = integer_part.replace(thousands_sep, "")
+            raw = f"{integer_part}.{m.group(2)}"
+        else:
+            # Last separator is a thousands separator — remove all separators
+            raw = raw.replace(".", "").replace(",", "")
+    try:
+        return float(raw) if raw else 0.0
+    except ValueError:
+        return 0.0
 
 
 def _extract_total_amount(text: str) -> int | None:
@@ -272,7 +309,7 @@ def _extract_water_attributes(text: str) -> dict[str, Any]:
     # Consumption volume (label-based; bare m³ fallback omitted to avoid
     # false positives — Aguas Andinas does not include consumption in the email)
     for label_match in _WATER_CONSUMPTION_RE.finditer(text):
-        attrs["consumption"] = label_match.group(1).strip()
+        attrs["consumption"] = _parse_consumption_to_float(label_match.group(1).strip())
         attrs["consumption_unit"] = "m3"
         break
 
@@ -359,7 +396,7 @@ def _extract_gas_attributes(text: str) -> dict[str, Any]:
         rest = text[label_match.end():]
         val_match = _GAS_CONSUMPTION_RE.search(rest[:80])
         if val_match:
-            attrs["consumption"] = val_match.group(1).strip()
+            attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
             attrs["consumption_unit"] = "m3"
             break
 
@@ -432,13 +469,13 @@ def _extract_electricity_attributes(text: str) -> dict[str, Any]:
         rest = text[label_match.end():]
         val_match = _ELEC_CONSUMPTION_RE.search(rest[:80])
         if val_match:
-            attrs["consumption"] = val_match.group(1).strip()
+            attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
             attrs["consumption_unit"] = "kWh"
             break
     if "consumption" not in attrs:
         val_match = _ELEC_CONSUMPTION_RE.search(text)
         if val_match:
-            attrs["consumption"] = val_match.group(1).strip()
+            attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
             attrs["consumption_unit"] = "kWh"
 
     # Enel: invoice number from body "N° Boleta NNNNNN del …"

@@ -5,7 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-03-07
+## [0.5.1] - 2026-03-07
+
+### Changed
+- **`consumption` is now a float** (`attribute_extractor.py`): The extracted
+  consumption value is converted to a Python `float` instead of being stored
+  as a raw string.  A new `_parse_consumption_to_float()` helper handles both
+  Chilean/Spanish format (dot = thousands separator, comma = decimal, e.g.
+  `"1.500"` → `1500.0`, `"12,5"` → `12.5`) and English format (`"12.5"` →
+  `12.5`).  The default value in the sensor attributes changes from `0` to
+  `0.0` accordingly.
+
+
 
 ### Added
 - **Standard attributes with default values** (`sensor.py`): Every service
