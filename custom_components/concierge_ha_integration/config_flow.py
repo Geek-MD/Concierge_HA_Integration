@@ -106,6 +106,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # Only one instance is allowed (single_config_entry: true in manifest).
+            # Using DOMAIN as the unique_id enforces that uniqueness constraint.
+            await self.async_set_unique_id(DOMAIN)
+            self._abort_if_unique_id_configured()
             try:
                 await validate_imap_connection(self.hass, user_input)
             except CannotConnect:
