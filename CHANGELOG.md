@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-03-08
+
+### Fixed
+- **`AttributeError: 'ConciergeServicesCoordinator' object has no attribute 'get'`**
+  (`sensor.py`): `async_setup_entry` in the sensor platform was assigning the
+  coordinator object directly to `hass.data[DOMAIN][entry_id]`, overwriting the
+  plain dict (containing the `pending_discoveries` set) that
+  `__init__.py`'s `async_setup_entry` had just initialised at the same key.
+  When the background discovery task subsequently called
+  `.get(_PENDING_DISCOVERIES_KEY, set())` on what it expected to be a dict, it
+  received a `ConciergeServicesCoordinator` instance instead and crashed.
+
+  Fix: the coordinator is now stored under a `"coordinator"` sub-key
+  (`hass.data[DOMAIN][entry_id]["coordinator"]`) so the pending-discoveries dict
+  is preserved and the discovery task runs without errors.
+
 ## [0.5.2] - 2026-03-07
 
 ### Added
