@@ -22,12 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **"Agregar servicio" button hidden when already configured**: With `integration_type:
   "hub"` and `single_config_entry: true`, Home Assistant no longer shows the "Add new
   instance" button on the integration card once an email account is already configured.
-  The `async_set_unique_id(DOMAIN)` + `_abort_if_unique_id_configured()` guard (added
-  in v0.5.3) provides an additional code-level safeguard.
-
-## [0.5.3] - 2026-03-08
-
-### Fixed
+  The `async_set_unique_id(DOMAIN)` + `_abort_if_unique_id_configured()` guard provides
+  an additional code-level safeguard.
 - **`AttributeError: 'ConciergeServicesCoordinator' object has no attribute 'get'`**
   (`sensor.py`): `async_setup_entry` in the sensor platform was assigning the
   coordinator object directly to `hass.data[DOMAIN][entry_id]`, overwriting the
