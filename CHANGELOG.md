@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-03-08
+
+### Fixed
+- **Integration UI buttons not translated** (`manifest.json`): `integration_type` was
+  set to `"service"`, which caused Home Assistant to fall back to the English
+  `strings.json` for all integration-specific UI strings (subentry labels, button text,
+  device-type badges). The value has been restored to `"hub"` — as it was first set in
+  v0.4.2 — so that HA renders the proper CONFIGURE + ADD DEVICE card and applies the
+  integration's own translations (including `es.json`) for all subentry labels.
+  Concretely:
+  - **"+ Add Service Device"** button now shows as **"+ Agregar Dispositivo de Servicio"**
+    in Spanish (and in any other supported locale).
+  - **"Service Device"** type badge shown under each subentry group now reads
+    **"Dispositivo de Servicio"** in Spanish.
+- **"Agregar servicio" button hidden when already configured**: With `integration_type:
+  "hub"` and `single_config_entry: true`, Home Assistant no longer shows the "Add new
+  instance" button on the integration card once an email account is already configured.
+  The `async_set_unique_id(DOMAIN)` + `_abort_if_unique_id_configured()` guard provides
+  an additional code-level safeguard.
+- **`AttributeError: 'ConciergeServicesCoordinator' object has no attribute 'get'`**
+  (`sensor.py`): `async_setup_entry` in the sensor platform was assigning the
+  coordinator object directly to `hass.data[DOMAIN][entry_id]`, overwriting the
+  plain dict (containing the `pending_discoveries` set) that
+  `__init__.py`'s `async_setup_entry` had just initialised at the same key.
+  When the background discovery task subsequently called
+  `.get(_PENDING_DISCOVERIES_KEY, set())` on what it expected to be a dict, it
+  received a `ConciergeServicesCoordinator` instance instead and crashed.
+
+  Fix: the coordinator is now stored under a `"coordinator"` sub-key
+  (`hass.data[DOMAIN][entry_id]["coordinator"]`) so the pending-discoveries dict
+  is preserved and the discovery task runs without errors.
+
 ## [0.5.2] - 2026-03-07
 
 ### Added

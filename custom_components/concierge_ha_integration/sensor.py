@@ -98,9 +98,11 @@ async def async_setup_entry(
     coordinator = ConciergeServicesCoordinator(hass, config_entry, effective_cfg)
     await coordinator.async_config_entry_first_refresh()
 
-    # Store coordinator so __init__ can clean it up on unload
+    # Store coordinator under a sub-key so the pending-discoveries dict
+    # initialised by async_setup_entry in __init__.py is not overwritten.
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][config_entry.entry_id] = coordinator
+    hass.data[DOMAIN].setdefault(config_entry.entry_id, {})
+    hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
 
     # Main connection sensor (standalone entity, not linked to any device or subentry)
     async_add_entities([ConciergeServicesConnectionSensor(coordinator, config_entry)])
