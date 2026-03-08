@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-03-08
+
+### Added
+- **Local brand images for HA 2026.3+** (`brand/`): Starting with Home Assistant
+  2026.3, custom integrations can ship their own brand images directly inside the
+  integration directory.  The `brand/` folder now contains both `icon.png` and
+  `icon@2x.png` so that the integration icon is served through the new local
+  brands-proxy API (`/api/brands/integration/{domain}/{image}`) without requiring
+  a separate submission to the `home-assistant/brands` repository.  No changes to
+  `manifest.json` or any Python file are needed — placing the images in `brand/`
+  is sufficient.
+
+### Changed
+- **`manifest.json`**: Version bumped to `0.5.5`.
+
 ## [0.5.4] - 2026-03-08
 
 ### Fixed
