@@ -5,7 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.2] - 2026-03-17
+## [0.6.3] - 2026-03-17
+
+### Changed
+- **Service-type-specific attribute sets** (`sensor.py`): Each service sensor
+  now exposes only the attributes relevant to its service type, instead of
+  showing every attribute (gas + electricity) regardless of type.
+
+  - `_STANDARD_ATTRS` replaced by:
+    - `_COMMON_ATTRS` — universal attributes present for every service type
+      (folio, billing dates, customer number, address, due date, total amount,
+      consumption, consumption unit).
+    - `_GAS_ATTR_DEFAULTS` — gas-only defaults: `cost_per_m3s`.
+    - `_ELECTRICITY_ATTR_DEFAULTS` — electricity-only defaults:
+      `service_administration`, `electricity_transport`, `stabilization_fund`,
+      `electricity_consumption`, `cost_per_kwh`.
+    - `_SERVICE_TYPE_ATTR_DEFAULTS` — mapping `service_type → defaults dict`,
+      making it straightforward to add water-specific attributes later.
+  - `extra_state_attributes` initialises universal defaults then adds
+    service-type-specific defaults only for the matching type.  Extracted
+    values are applied to both sets independently.
+  - **Gas sensor** exposes 16 attributes (15 universal + `cost_per_m3s`).
+  - **Electricity sensor** exposes 20 attributes (15 universal + 5 electricity).
+  - **Water / unknown sensors** expose only the 15 universal attributes.
+- **`manifest.json`**: Version bumped to `0.6.3`.
+
+
 
 ### Added
 - **Electricity PDF extractor for Enel Distribución Chile** (`attribute_extractor.py`):

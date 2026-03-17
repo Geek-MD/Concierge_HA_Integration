@@ -34,6 +34,8 @@ from .const import (
     DOMAIN,
     PDF_MAX_AGE_DAYS,
     PDF_SUBDIR,
+    SERVICE_TYPE_ELECTRICITY,
+    SERVICE_TYPE_GAS,
     SERVICE_TYPE_UNKNOWN,
 )
 from .attribute_extractor import extract_attributes_from_email_body, extract_attributes_from_pdf, _strip_html
@@ -45,9 +47,8 @@ _LOGGER = logging.getLogger(__name__)
 # Update interval for checking mail server connection
 SCAN_INTERVAL = timedelta(minutes=30)
 
-# Standard attributes exposed by each service sensor.
-# Any attribute not extractable from the email defaults to 0.
-_STANDARD_ATTRS: tuple[str, ...] = (
+# Attributes common to every service sensor (always present, default 0).
+_COMMON_ATTRS: tuple[str, ...] = (
     "folio",
     "billing_period_start",
     "billing_period_end",
@@ -57,13 +58,28 @@ _STANDARD_ATTRS: tuple[str, ...] = (
     "total_amount",
     "consumption",
     "consumption_unit",
-    "cost_per_m3s",
-    "service_administration",
-    "electricity_transport",
-    "stabilization_fund",
-    "electricity_consumption",
-    "cost_per_kwh",
 )
+
+# Service-type-specific attribute defaults.
+# Keys present here are added to the sensor only for the matching service type,
+# keeping each sensor's attribute set clean and relevant.
+_GAS_ATTR_DEFAULTS: dict[str, Any] = {
+    "cost_per_m3s": 0.0,
+}
+_ELECTRICITY_ATTR_DEFAULTS: dict[str, Any] = {
+    "service_administration": 0,
+    "electricity_transport": 0,
+    "stabilization_fund": 0,
+    "electricity_consumption": 0,
+    "cost_per_kwh": 0.0,
+}
+# Water-specific attributes will be added here when defined.
+
+# Mapping from service type → its specific attribute defaults dict.
+_SERVICE_TYPE_ATTR_DEFAULTS: dict[str, dict[str, Any]] = {
+    SERVICE_TYPE_GAS: _GAS_ATTR_DEFAULTS,
+    SERVICE_TYPE_ELECTRICITY: _ELECTRICITY_ATTR_DEFAULTS,
+}
 
 # Webmail provider domains that are too generic for sender-domain matching.
 # Emails forwarded through these services carry the forwarder's address, not
@@ -495,12 +511,13 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes.
 
-        All standard attributes are always present.  If the value could not be
-        extracted from the email the attribute defaults to ``0``.
+        Universal attributes are always present with a default of ``0``.
+        Service-type-specific attributes (gas, electricity, …) are added only
+        for the matching service type, keeping each sensor's attribute set clean.
         """
         service_type = self._subentry_data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
 
-        # Initialise every standard attribute with its default value (0)
+        # Universal attributes — present for every service type.
         attrs: dict[str, Any] = {
             "service_id": self._service_id,
             "service_name": self._service_name,
@@ -517,13 +534,11 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
             "total_amount": 0,
             "consumption": 0.0,
             "consumption_unit": 0,
-            "cost_per_m3s": 0.0,
-            "service_administration": 0,
-            "electricity_transport": 0,
-            "stabilization_fund": 0,
-            "electricity_consumption": 0,
-            "cost_per_kwh": 0.0,
         }
+
+        # Service-type-specific attributes — only for the matching type.
+        type_specific_defaults = _SERVICE_TYPE_ATTR_DEFAULTS.get(service_type, {})
+        attrs.update(type_specific_defaults)
 
         if self.coordinator.data:
             service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
@@ -534,13 +549,19 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
 
                 extracted_attrs = service_data.get("attributes", {})
                 if extracted_attrs:
-                    # Override standard attributes with extracted values
-                    for key in _STANDARD_ATTRS:
+                    # Override universal attributes with extracted values.
+                    for key in _COMMON_ATTRS:
                         value = extracted_attrs.get(key)
                         if value is not None:
                             attrs[key] = value
 
-                    # Include pdf_path when a bill PDF was downloaded
+                    # Override service-type-specific attributes.
+                    for key in type_specific_defaults:
+                        value = extracted_attrs.get(key)
+                        if value is not None:
+                            attrs[key] = value
+
+                    # Include pdf_path when a bill PDF was downloaded.
                     if pdf_path := extracted_attrs.get("pdf_path"):
                         attrs["pdf_path"] = pdf_path
 
