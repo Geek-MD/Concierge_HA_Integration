@@ -98,7 +98,10 @@ _PDF_HREF_KEYWORDS = re.compile(
     r"|visualizar"
     # acepta.com is Chile's official electronic-document management portal;
     # any URL on that domain is a billing document viewer/download link.
-    r"|acepta\.com",
+    r"|acepta\.com"
+    # fidelizador.com is a Chilean email-marketing platform used by Metrogas
+    # and other utilities; their tracker URLs redirect to the real document.
+    r"|fidelizador\.com",
     re.IGNORECASE,
 )
 
@@ -126,13 +129,37 @@ _CONTAINER_TAGS = frozenset({
 })
 
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.9 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.10 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
 
 # First four bytes of every valid PDF file
 _PDF_MAGIC = b"%PDF"
+
+# <meta http-equiv="refresh" content="N; url=REDIRECT_URL"> — order of the
+# two attributes may be swapped, so we match both orderings separately.
+# Group 1 (when http-equiv comes first) or Group 2 (when content comes first)
+# holds the redirect URL.
+_META_REFRESH_RE = re.compile(
+    r'<meta\b[^>]*\bhttp-equiv\s*=\s*["\']?refresh["\']?\b[^>]*'
+    r'\bcontent\s*=\s*["\'][^"\']*;\s*url\s*=\s*([^"\'>\s]+)["\']'
+    r'|<meta\b[^>]*\bcontent\s*=\s*["\'][^"\']*;\s*url\s*=\s*([^"\'>\s]+)["\']'
+    r'[^>]*\bhttp-equiv\s*=\s*["\']?refresh["\']?',
+    re.IGNORECASE,
+)
+
+# JavaScript patterns that unconditionally redirect the browser to a URL:
+#   window.location.href = 'URL'
+#   window.location = 'URL'
+#   location.href = 'URL'
+#   location.replace('URL')
+#   location.assign('URL')
+_JS_LOCATION_RE = re.compile(
+    r'(?:window\.)?location(?:\.href)?\s*=\s*["\']([^"\']+)["\']'
+    r'|location\.(?:replace|assign)\s*\(\s*["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +401,134 @@ def _find_urls_in_script_tags(html_body: str) -> list[tuple[str, str]]:
             results.append((url, script_text[start:end]))
 
     return results
+
+
+def _extract_url_from_html_redirect(html: str) -> str | None:
+    """Try to find a redirect target URL from an HTML page.
+
+    Some email click-tracking services (e.g. *fidelizador.com*) serve a thin
+    HTML wrapper whose only purpose is to redirect the browser to the real
+    document URL.  Because ``urllib`` already follows HTTP-level redirects
+    (301/302/307/308), this function handles the two most common
+    *client-side* redirect mechanisms embedded in the HTML:
+
+    1. **``<meta http-equiv="refresh">``** — e.g.
+       ``<meta http-equiv="refresh" content="0; url=https://…">``.
+    2. **JavaScript location assignment** — e.g.
+       ``window.location.href = 'https://…'`` or
+       ``location.replace('https://…')``.
+
+    The first HTTP URL found by either mechanism is returned.  ``None`` is
+    returned when no redirect target can be extracted.
+
+    Args:
+        html: Raw HTML text of the response page.
+
+    Returns:
+        Absolute HTTP/HTTPS redirect target URL, or ``None``.
+    """
+    # 1. <meta http-equiv="refresh" …>
+    m = _META_REFRESH_RE.search(html)
+    if m:
+        url = (m.group(1) or m.group(2) or "").strip()
+        if url.startswith("http"):
+            return url
+
+    # 2. JavaScript location redirect inside <script> blocks
+    for script_m in _SCRIPT_TAG_RE.finditer(html):
+        script_text = script_m.group(1)
+        js_m = _JS_LOCATION_RE.search(script_text)
+        if js_m:
+            url = (js_m.group(1) or js_m.group(2) or "").strip()
+            if url.startswith("http"):
+                return url
+
+    return None
+
+
+def _charset_from_content_type(content_type: str, default: str = "utf-8") -> str:
+    """Parse the ``charset`` parameter from a ``Content-Type`` header value.
+
+    Args:
+        content_type: Raw ``Content-Type`` header string,
+                      e.g. ``"text/html; charset=iso-8859-1"``.
+        default:      Charset to return when none is found.
+
+    Returns:
+        Charset string (lowercased), or *default*.
+    """
+    for part in content_type.split(";"):
+        part = part.strip()
+        if part.lower().startswith("charset="):
+            return part.split("=", 1)[1].strip()
+    return default
+
+
+def _try_html_redirect_download(
+    original_url: str,
+    html_data: bytes,
+    content_type: str,
+    dest_path: str,
+) -> str | None:
+    """Attempt to follow a client-side HTML redirect and download the PDF.
+
+    Called by :func:`_download_first_valid_pdf` when a candidate URL returns
+    an HTML page instead of a PDF.  Decodes the HTML, extracts the redirect
+    target via :func:`_extract_url_from_html_redirect`, fetches that target,
+    and — if the result is a valid PDF — writes it to *dest_path*.
+
+    Args:
+        original_url: The URL that returned the HTML page (for logging).
+        html_data:    Raw bytes of the HTML response body.
+        content_type: ``Content-Type`` header of the HTML response.
+        dest_path:    Destination path to write the PDF to.
+
+    Returns:
+        *dest_path* on success, ``None`` if no redirect target was found or
+        the redirect target did not return a valid PDF.
+    """
+    charset = _charset_from_content_type(content_type, default="iso-8859-1")
+    try:
+        html_text = html_data.decode(charset, errors="ignore")
+    except Exception:
+        html_text = html_data.decode("utf-8", errors="ignore")
+
+    redirect_url = _extract_url_from_html_redirect(html_text)
+    if not redirect_url:
+        return None
+
+    _LOGGER.info(
+        "URL %s returned HTML redirect; following to %s",
+        original_url,
+        redirect_url,
+    )
+    try:
+        rreq = urllib.request.Request(
+            redirect_url, headers={"User-Agent": _HTTP_USER_AGENT}
+        )
+        with urllib.request.urlopen(rreq, timeout=_DOWNLOAD_TIMEOUT) as rresp:
+            redirect_ct: str = rresp.headers.get("Content-Type", "")
+            redirect_data: bytes = rresp.read()
+    except urllib.error.URLError as err:
+        _LOGGER.warning(
+            "URL error following redirect to %s: %s", redirect_url, err
+        )
+        return None
+
+    if not ("application/pdf" in redirect_ct or redirect_data[:4] == _PDF_MAGIC):
+        _LOGGER.warning(
+            "Redirect target %s did not return a PDF "
+            "(Content-Type: %s, first bytes: %r)",
+            redirect_url,
+            redirect_ct,
+            redirect_data[:16],
+        )
+        return None
+
+    with open(dest_path, "wb") as fh:
+        fh.write(redirect_data)
+    _LOGGER.info("Downloaded PDF via redirect %s → %s", redirect_url, dest_path)
+    return dest_path
 
 
 def _find_pdf_links_in_html(html_body: str) -> list[str]:
@@ -714,23 +869,31 @@ def _download_first_valid_pdf(
                 content_type: str = resp.headers.get("Content-Type", "")
                 pdf_data: bytes = resp.read()
 
-            # Validate PDF magic bytes or content-type header
-            if not (
-                "application/pdf" in content_type
-                or pdf_data[:4] == _PDF_MAGIC
-            ):
-                _LOGGER.warning(
-                    "URL %s did not return a PDF (Content-Type: %s, first bytes: %r)",
-                    url,
-                    content_type,
-                    pdf_data[:16],
+            # Validate PDF magic bytes or content-type header.
+            if "application/pdf" in content_type or pdf_data[:4] == _PDF_MAGIC:
+                with open(dest_path, "wb") as fh:
+                    fh.write(pdf_data)
+                _LOGGER.info("Downloaded PDF %s → %s", url, dest_path)
+                return dest_path
+
+            # If the response is HTML, attempt to follow a client-side
+            # redirect (meta-refresh or JS location assignment) that some
+            # click-tracking services (e.g. fidelizador.com) use to record
+            # clicks before sending the browser to the real document URL.
+            if "text/html" in content_type:
+                result = _try_html_redirect_download(
+                    url, pdf_data, content_type, dest_path
                 )
+                if result:
+                    return result
                 continue
 
-            with open(dest_path, "wb") as fh:
-                fh.write(pdf_data)
-            _LOGGER.info("Downloaded PDF %s → %s", url, dest_path)
-            return dest_path
+            _LOGGER.warning(
+                "URL %s did not return a PDF (Content-Type: %s, first bytes: %r)",
+                url,
+                content_type,
+                pdf_data[:16],
+            )
 
         except urllib.error.URLError as err:
             _LOGGER.warning("URL error downloading %s: %s", url, err)

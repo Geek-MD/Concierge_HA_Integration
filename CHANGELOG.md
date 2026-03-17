@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.10] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download — HTML click-tracking redirects** (`pdf_downloader.py`):
+  Metrogas emails delivered via the *fidelizador.com* platform embed billing
+  links as click-tracking URLs (e.g.
+  ``https://trackercl1.fidelizador.com/…``).  When the code fetched such a
+  URL it received an HTML page (``Content-Type: text/html``) instead of a
+  PDF, because the tracking server records the click and then redirects the
+  browser client-side rather than via an HTTP 301/302 response that
+  ``urllib`` would have followed automatically.
+
+  Two complementary changes address this:
+
+  1. **HTML redirect follower in `_download_first_valid_pdf()`** — when a
+     fetched URL returns an HTML page, the code now inspects the HTML for
+     common client-side redirect mechanisms and, if one is found, fetches
+     the redirect target and validates it as a PDF before writing it to
+     disk.  Two redirect patterns are recognised:
+
+     - ``<meta http-equiv="refresh" content="N; url=…">``
+     - JavaScript ``window.location.href = '…'`` /
+       ``location.replace('…')`` / ``location.assign('…')`` assignments
+       inside ``<script>`` blocks.
+
+     A single redirect hop is followed per candidate URL to prevent loops.
+
+  2. **`fidelizador.com` added to `_PDF_HREF_KEYWORDS`** — ensures that
+     fidelizador.com tracking URLs discovered in email bodies (``<a href>``
+     or plain-text) are always classified as billing-related candidates and
+     included in the download attempt list, even when the URL path itself
+     carries no recognisable billing keyword.
+
 ## [0.6.9] - 2026-03-17
 
 ### Fixed
