@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download** (`pdf_downloader.py`): The Metrogas email uses
+  image-only ``<a href="…"><img alt="" …></a>`` buttons where the visible
+  label ("Ver boleta") is a sibling text node placed **outside** the
+  ``<a>`` tag rather than inside it.  The previous `_LinkExtractor`
+  only collected text *inside* ``<a>`` elements, so these buttons were
+  returned with an empty label and silently skipped by the keyword filter.
+
+  `_LinkExtractor` now implements an *adjacent-text fallback*:
+
+  - Text that appears **before** an ``<a>`` tag within the same container
+    element is kept as the *preceding context*.
+  - When a link closes with an empty label, the preceding context is used
+    first; if that is also empty the link is marked *pending* and text that
+    appears **after** the ``</a>`` (still within the same container) is
+    accumulated as its label.
+  - Context is reset at every block/container tag boundary
+    (``<td>``, ``<tr>``, ``<div>``, ``<p>``, ``<table>``, etc.) so that
+    text from unrelated table cells or sections is never incorrectly
+    associated with a link.
+
+  With this fix, both occurrences of "Ver boleta" in the Metrogas email are
+  correctly matched against `_PDF_LINK_KEYWORDS` and the tracking URL is
+  promoted to the top-priority candidate list, enabling the bill PDF to be
+  downloaded successfully.
+
+
 ## [0.6.6] - 2026-03-17
 
 ### Added

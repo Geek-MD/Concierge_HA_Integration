@@ -94,8 +94,18 @@ _PDF_HREF_KEYWORDS = re.compile(
 # Regex to extract bare HTTP/HTTPS URLs from plain-text email bodies
 _URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 
+# HTML block/container tags that delimit the context window used to associate
+# adjacent (sibling) text with a nearby link.  When one of these tags is
+# opened or closed, any pending no-text link is flushed and the context
+# buffer is reset so that text from unrelated cells/sections is not mixed in.
+_CONTAINER_TAGS = frozenset({
+    "td", "th", "tr", "div", "p", "li",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "section", "article", "table", "tbody", "thead", "tfoot",
+})
+
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.5.6 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.7 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -118,6 +128,20 @@ class _LinkExtractor(HTMLParser):
     This ensures that image-only buttons (e.g.
     ``<a href="…"><img alt="Ver boleta" …></a>``) are treated the same way
     as text links.
+
+    **Adjacent-text fallback** — when both the above yield an empty string
+    (image-only button with no ``alt`` text), the extractor also considers:
+
+    1. Text that appeared *before* the ``<a>`` tag within the same container
+       element (e.g. ``Ver boleta <a …><img …></a>``).
+    2. Text that appears *after* the ``</a>`` tag within the same container
+       element (e.g. ``<a …><img …></a> Ver boleta``).
+
+    This covers the Metrogas email pattern where the button image has an
+    empty ``alt`` attribute and the human-readable label ("Ver boleta") is
+    a sibling text node placed after the closing ``</a>`` tag.  Context is
+    reset at every :data:`_CONTAINER_TAGS` boundary so that text from
+    unrelated table cells is never associated with a link.
     """
 
     def __init__(self) -> None:
@@ -126,10 +150,41 @@ class _LinkExtractor(HTMLParser):
         self._current_href: str | None = None
         self._current_text: list[str] = []
         self._in_link = False
+        # Text accumulated outside <a> tags within the current container.
+        # Used as a fallback label when the link itself carries no text.
+        self._context_before: list[str] = []
+        # A no-text link that has been recorded but whose label has not yet
+        # been finalised — it waits for text that follows the </a> tag.
+        self._pending_href: str | None = None
+        self._pending_label: list[str] = []
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _flush_pending(self) -> None:
+        """Commit the pending no-text link with whatever label was collected."""
+        if self._pending_href is not None:
+            label = " ".join(self._pending_label).strip()
+            self._links.append((self._pending_href, label))
+            self._pending_href = None
+            self._pending_label = []
+
+    def _reset_context(self) -> None:
+        """Flush pending link and clear the intra-container text buffer."""
+        self._flush_pending()
+        self._context_before = []
+
+    # ------------------------------------------------------------------
+    # HTMLParser callbacks
+    # ------------------------------------------------------------------
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
         if tag == "a":
+            # A new <a> starts: commit any pending no-text link first so its
+            # label window does not extend into the new link's preceding text.
+            self._flush_pending()
             href = attr_dict.get("href") or ""
             if href:
                 self._current_href = href
@@ -140,23 +195,54 @@ class _LinkExtractor(HTMLParser):
             alt = (attr_dict.get("alt") or "").strip()
             if alt:
                 self._current_text.append(alt)
+        elif tag in _CONTAINER_TAGS:
+            # Entering a new container: reset context so text from the
+            # previous cell/section is not carried over.
+            self._reset_context()
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "a" and self._in_link:
             text = " ".join(self._current_text).strip()
             if self._current_href:
-                self._links.append((self._current_href, text))
+                if text:
+                    # The link has explicit text (data or img alt): use it.
+                    self._links.append((self._current_href, text))
+                else:
+                    # No explicit link text: try preceding context first.
+                    preceding = " ".join(self._context_before).strip()
+                    if preceding:
+                        self._links.append((self._current_href, preceding))
+                    else:
+                        # No preceding text either: mark as pending and wait
+                        # for text that follows the </a> within this container.
+                        self._pending_href = self._current_href
+                        self._pending_label = []
             self._current_href = None
             self._current_text = []
             self._in_link = False
+            # Reset preceding-text buffer after the link is processed.
+            self._context_before = []
+        elif tag in _CONTAINER_TAGS:
+            # Leaving a container: flush any pending link.
+            self._reset_context()
 
     def handle_data(self, data: str) -> None:
         if self._in_link:
             stripped = data.strip()
             if stripped:
                 self._current_text.append(stripped)
+        else:
+            stripped = data.strip()
+            if stripped:
+                if self._pending_href is not None:
+                    # Text following a no-text link: accumulate as its label.
+                    self._pending_label.append(stripped)
+                else:
+                    # Text preceding any upcoming link within this container.
+                    self._context_before.append(stripped)
 
     def get_links(self) -> list[tuple[str, str]]:
+        self._flush_pending()
         return list(self._links)
 
 
