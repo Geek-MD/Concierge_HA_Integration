@@ -219,7 +219,7 @@ def detect_services_from_imap(
     imap = None
     try:
         # Connect to IMAP server
-        imap = imaplib.IMAP4_SSL(imap_server, imap_port)
+        imap = imaplib.IMAP4_SSL(imap_server, imap_port, timeout=30)
         imap.login(email_address, password)
         
         # Select inbox
