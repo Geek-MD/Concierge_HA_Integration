@@ -391,6 +391,42 @@ _WATER_AA_PDF_TREATMENT_RE = re.compile(
     r"metro\s+c[úu]bico\s+tratamiento\s*" + _WATER_AA_TARIFF_AMT,
     re.IGNORECASE,
 )
+# Billing breakdown table — pdfminer serialises the table column-by-column:
+# all row labels first, then the three per-row consumption sub-values (10,98
+# repeated for each water service), then the eight CLP amounts in row order.
+# The intermediate "TOTAL A PAGAR" label sits between the last row label and
+# the sub-values but is NOT a separate billing row.
+#
+# Row / group mapping for the captured amounts (Chilean format, dot = thousands):
+#   group 1 – CARGO FIJO               (e.g. "914")
+#   group 2 – CONSUMO AGUA POTABLE     (e.g. "6.426")
+#   group 3 – RECOLECCION AGUAS SERV.  (e.g. "4.902")
+#   group 4 – TRATAMIENTO AGUAS SERV.  (e.g. "3.360")
+#   group 5 – SUBTOTAL SERVICIO        (e.g. "15.602")
+#   group 6 – INTERÉS DEUDA            (e.g. "99")
+#   group 7 – TOTAL VENTA              (e.g. "15.701")  [not stored separately]
+#   group 8 – DESCUENTO LEY REDONDEO   (e.g. "-1")
+_WATER_AA_PDF_BILLING_TABLE_RE = re.compile(
+    r"CARGO\s+FIJO\n"
+    r"CONSUMO\s+AGUA\s+POTABLE\n"
+    r"RECOLECCION\s+AGUAS\s+SERVIDAS\n"
+    r"TRATAMIENTO\s+AGUAS\s+SERVIDAS\n"
+    r"SUBTOTAL\s+SERVICIO\n"
+    r"INTER[EÉ]S\s+DEUDA\n"
+    r"TOTAL\s+VENTA\n"
+    r"DESCUENTO\s+LEY\s+REDONDEO\n"
+    r"\s*TOTAL\s+A\s+PAGAR\s*\n"           # intermediate row (not stored)
+    r"\s*(?:[0-9][0-9.,]*\s*\n)+"          # per-row consumption sub-values
+    r"\s*([0-9][0-9.,]+)\s*\n"             # group 1 – CARGO FIJO
+    r"([0-9][0-9.,]+)\s*\n"               # group 2 – CONSUMO AGUA POTABLE
+    r"([0-9][0-9.,]+)\s*\n"               # group 3 – RECOLECCION
+    r"([0-9][0-9.,]+)\s*\n"               # group 4 – TRATAMIENTO
+    r"([0-9][0-9.,]+)\s*\n"               # group 5 – SUBTOTAL
+    r"([0-9][0-9.,]+)\s*\n"               # group 6 – INTERÉS DEUDA
+    r"([0-9][0-9.,]+)\s*\n"               # group 7 – TOTAL VENTA
+    r"(-?[0-9][0-9.,]*)",                  # group 8 – DESCUENTO LEY REDONDEO
+    re.IGNORECASE,
+)
 
 
 def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
@@ -424,6 +460,11 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
         ``cubic_meter_overconsumption``   – cost per m³ (overconsumption) as float
         ``cubic_meter_collection``        – cost per m³ (collection) as float
         ``cubic_meter_treatment``         – cost per m³ (treatment) as float
+        ``water_consumption``             – potable water charge as integer (CLP)
+        ``wastewater_recolection``        – wastewater collection charge as integer (CLP)
+        ``wastewater_treatment``          – wastewater treatment charge as integer (CLP)
+        ``subtotal``                      – subtotal before surcharges as integer (CLP)
+        ``other_charges``                 – net surcharges (interest − rounding) as integer
     """
     attrs: dict[str, Any] = {}
 
@@ -490,6 +531,65 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
     treatment_match = _WATER_AA_PDF_TREATMENT_RE.search(text)
     if treatment_match:
         attrs["cubic_meter_treatment"] = _parse_consumption_to_float(treatment_match.group(1))
+
+    # Billing breakdown table — water_consumption, wastewater charges,
+    # subtotal, and other_charges (surcharges net of rounding discount).
+    # pdfminer serialises the table as labels → sub-values → amounts; the
+    # regex anchors on the label block to recover amounts in row order.
+    # Tolerance for cross-verification: published tariff rates are rounded
+    # to 2 decimal places, so computed products may differ from the billed
+    # integer by a few CLP.
+    _BILLING_VERIFY_TOLERANCE = 10  # CLP
+    table_match = _WATER_AA_PDF_BILLING_TABLE_RE.search(text)
+    if table_match:
+        billed_fixed = _parse_amount_to_int(table_match.group(1))
+        water_cons   = _parse_amount_to_int(table_match.group(2))
+        ww_recol     = _parse_amount_to_int(table_match.group(3))
+        ww_treat     = _parse_amount_to_int(table_match.group(4))
+        subtotal     = _parse_amount_to_int(table_match.group(5))
+        interes      = _parse_amount_to_int(table_match.group(6))
+        descuento    = _parse_amount_to_int(table_match.group(8))
+
+        attrs["water_consumption"]      = water_cons
+        attrs["wastewater_recolection"] = ww_recol
+        attrs["wastewater_treatment"]   = ww_treat
+        attrs["subtotal"]               = subtotal
+        attrs["other_charges"]          = interes + descuento
+
+        # Cross-verify each water charge against consumption × published rate.
+        consumption = attrs.get("consumption")
+        if consumption:
+            for field, extracted, rate_key in (
+                ("water_consumption",      water_cons, "cubic_meter_non_peak_water_cost"),
+                ("wastewater_recolection", ww_recol,   "cubic_meter_collection"),
+                ("wastewater_treatment",   ww_treat,   "cubic_meter_treatment"),
+            ):
+                rate = attrs.get(rate_key)
+                if rate:
+                    expected = round(consumption * rate)
+                    diff = abs(extracted - expected)
+                    if diff > _BILLING_VERIFY_TOLERANCE:
+                        _LOGGER.warning(
+                            "Water PDF billing check: %s=%d but "
+                            "round(consumption × %s) = round(%.2f × %.2f) = %d "
+                            "(diff=%d, tolerance=%d)",
+                            field, extracted,
+                            rate_key, consumption, rate, expected,
+                            diff, _BILLING_VERIFY_TOLERANCE,
+                        )
+
+        # Cross-verify subtotal = fixed_charge + three service charges.
+        expected_subtotal = billed_fixed + water_cons + ww_recol + ww_treat
+        diff = abs(subtotal - expected_subtotal)
+        if diff > _BILLING_VERIFY_TOLERANCE:
+            _LOGGER.warning(
+                "Water PDF billing check: subtotal=%d but "
+                "fixed_charge(%d) + water_consumption(%d) + "
+                "wastewater_recolection(%d) + wastewater_treatment(%d) = %d "
+                "(diff=%d, tolerance=%d)",
+                subtotal, billed_fixed, water_cons, ww_recol, ww_treat,
+                expected_subtotal, diff, _BILLING_VERIFY_TOLERANCE,
+            )
 
     return attrs
 
@@ -1134,7 +1234,9 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
       ``consumption_unit``, ``total_amount``, ``fixed_charge``,
       ``cubic_meter_peak_water_cost``, ``cubic_meter_non_peak_water_cost``,
       ``cubic_meter_overconsumption``, ``cubic_meter_collection``,
-      ``cubic_meter_treatment``
+      ``cubic_meter_treatment``, ``water_consumption``,
+      ``wastewater_recolection``, ``wastewater_treatment``,
+      ``subtotal``, ``other_charges``
     - **gas** — :func:`_extract_gas_pdf_attributes` (Metrogas, Jan 2026):
       ``consumption``, ``consumption_unit``, ``cost_per_m3s``, ``total_amount``
     - **electricity** — :func:`_extract_electricity_pdf_attributes` (Enel, Feb 2026):

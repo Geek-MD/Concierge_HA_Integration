@@ -86,6 +86,11 @@ _WATER_ATTR_DEFAULTS: dict[str, Any] = {
     "cubic_meter_overconsumption": 0.0,
     "cubic_meter_collection": 0.0,
     "cubic_meter_treatment": 0.0,
+    "water_consumption": 0,
+    "wastewater_recolection": 0,
+    "wastewater_treatment": 0,
+    "subtotal": 0,
+    "other_charges": 0,
 }
 
 # Mapping from service type → its specific attribute defaults dict.

@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.5] - 2026-03-17
+## [0.6.6] - 2026-03-17
+
+### Added
+- **5 new water-billing attributes** extracted from the Aguas Andinas PDF
+  billing breakdown table (`attribute_extractor.py`):
+
+  pdfminer serialises the billing table column-by-column (all row labels
+  first, then three per-row consumption sub-values, then CLP amounts in
+  row order). `_WATER_AA_PDF_BILLING_TABLE_RE` anchors on the label block
+  to recover all eight amounts at once.
+
+  | Attribute | Source row | Value | Type |
+  |---|---|---|---|
+  | `water_consumption` | `CONSUMO AGUA POTABLE … 6.426` | `6426` | int |
+  | `wastewater_recolection` | `RECOLECCION AGUAS SERVIDAS … 4.902` | `4902` | int |
+  | `wastewater_treatment` | `TRATAMIENTO AGUAS SERVIDAS … 3.360` | `3360` | int |
+  | `subtotal` | `SUBTOTAL SERVICIO … 15.602` | `15602` | int |
+  | `other_charges` | `INTERÉS DEUDA (99) + DESCUENTO LEY REDONDEO (−1)` | `98` | int |
+
+  Cross-verifications (tolerance ±10 CLP; warnings logged on mismatch):
+  - `water_consumption ≈ round(consumption × cubic_meter_non_peak_water_cost)`
+  - `wastewater_recolection ≈ round(consumption × cubic_meter_collection)`
+  - `wastewater_treatment ≈ round(consumption × cubic_meter_treatment)`
+  - `subtotal ≈ fixed_charge + water_consumption + wastewater_recolection + wastewater_treatment`
+
+### Changed
+- **`_WATER_ATTR_DEFAULTS`** (`sensor.py`): Added zero defaults for
+  `water_consumption`, `wastewater_recolection`, `wastewater_treatment`,
+  `subtotal`, `other_charges` so the water sensor exposes these fields
+  from startup.
+
 
 ### Added
 - **Water PDF extractor — Aguas Andinas** (`attribute_extractor.py`):
