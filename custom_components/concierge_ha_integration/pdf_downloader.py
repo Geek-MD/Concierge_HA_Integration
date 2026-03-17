@@ -130,7 +130,7 @@ _CONTAINER_TAGS = frozenset({
 })
 
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.12 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.13 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -162,10 +162,59 @@ _JS_LOCATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Raw QP fidelizador.com URL extractor
+# ---------------------------------------------------------------------------
+#
+# Metrogas billing emails are delivered by *fidelizador.com* and contain
+# *multiple* click-tracking URLs that all share the
+# ``trackercl1.fidelizador.com`` host.  These tracking URLs appear as:
+#
+#   1. An RFC 2396 angle-bracket link in the **plain-text** body —
+#      the "Ver en el navegador" (view-in-browser) reference that sits at the
+#      top of the email, above all other content.  In practice this is the
+#      same URL that drives the bill download button, routed through
+#      fidelizador.com's click-tracking redirect.
+#
+#   2. One or more ``<a href=3D"…">`` elements in the **HTML** body —
+#      including social-media icon links, account links, and the actual
+#      bill-download button.
+#
+# Because every occurrence shares the same domain, the URLs are
+# indistinguishable by domain alone.  The critical observation is:
+#
+#   * In the *plain-text* part the bill link appears **first** (line 1 of the
+#     body), while social-media / account links appear later.
+#   * The entire email is Quoted-Printable encoded *without* a
+#     ``Content-Transfer-Encoding`` header (fidelizador.com omits it).
+#     Python's ``email`` library therefore does **not** decode the payload
+#     automatically, so the URL may be split across lines with a QP soft
+#     line-break (``=\r?\n``):
+#
+#       <https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4=
+#       E1ADBBCEJA9FFC4CD0B3A58A829KF1C34750AD1337D0DF097F8513787E299F30>
+#
+#     → reconstructed:
+#       https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4
+#       E1ADBBCEJA9FFC4CD0B3A58A829KF1C34750AD1337D0DF097F8513787E299F30
+#
+# Strategy: walk all MIME parts in document order (plain-text before HTML in a
+# standard multipart/alternative message), skip any part that Python has
+# already QP-decoded (CTE header present), and search the raw bytes for the
+# ``https://trackercl1.fidelizador.com/`` prefix.  The first URL found is the
+# plain-text "Ver en el navegador" link and is the correct one to follow.
+#
+# ``=`` is deliberately excluded from the ordinary-character class in the
+# capture so the regex engine is forced to use one of the two QP-escape
+# alternatives (``=[0-9A-Fa-f]{2}`` or ``=\r?\n``) whenever it sees ``=``,
+# correctly decoding or skipping QP-encoded bytes and soft line-breaks.
+_FIDELIZADOR_URL_RE = re.compile(
+    rb"https://trackercl1\.fidelizador\.com/"
+    rb"(?:[^\r\n\"'<>=\s]|=[0-9A-Fa-f]{2}|=\r?\n)+",
+    re.IGNORECASE,
+)
 
-# ---------------------------------------------------------------------------
-# Internal HTML parser
-# ---------------------------------------------------------------------------
+
 
 class _LinkExtractor(HTMLParser):
     """Extract (href, link_text) pairs from an HTML document.
@@ -420,6 +469,100 @@ def _decode_qp_if_needed(
         except Exception:
             pass
     return payload
+
+
+def _find_fidelizador_links_in_raw_qp_parts(
+    msg: _email_lib.message.Message,
+) -> list[str]:
+    """Find ``trackercl1.fidelizador.com`` URLs in raw QP-encoded MIME parts.
+
+    Metrogas billing emails delivered by *fidelizador.com* are
+    Quoted-Printable encoded **without** a ``Content-Transfer-Encoding``
+    header, so Python's :mod:`email` library does not decode them
+    automatically.  The bill tracker URL appears in **two** places inside
+    the raw bytes:
+
+    1. **Plain-text part** — as an RFC 2396 angle-bracket link at the very
+       top of the body (the "Ver en el navegador" / view-in-browser
+       reference)::
+
+           <https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4=
+           E1ADBBCEJA9FFC4CD0B3A58A829KF1C34750AD1337D0DF097F8513787E299F30>
+
+       → reconstructed full URL (after removing the ``=\\n`` soft
+       line-break)::
+
+           https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4
+           E1ADBBCEJA9FFC4CD0B3A58A829KF1C34750AD1337D0DF097F8513787E299F30
+
+    2. **HTML part** — as a ``href=3D"URL"`` attribute on the image-only
+       bill download button ``<a>``, also potentially split by a ``=\\n``
+       soft line-break.
+
+    The plain-text part comes **first** in a standard
+    ``multipart/alternative`` message, so the URL it contains is found
+    before any HTML-body URL.  This is important because the HTML body may
+    contain other ``trackercl1.fidelizador.com`` URLs (social-media icons,
+    account links, etc.) that would redirect to unrelated pages.
+
+    The function walks MIME parts in document order (using ``msg.walk()``),
+    skips any part that already has a ``Content-Transfer-Encoding:
+    quoted-printable`` header (Python has decoded those automatically),
+    and applies :data:`_FIDELIZADOR_URL_RE` to the raw bytes to find and
+    reconstruct the URL.  :func:`quopri.decodestring` is used to remove any
+    ``=\\n`` soft line-breaks embedded in the URL.
+
+    Args:
+        msg: Parsed email message.
+
+    Returns:
+        Deduplicated list of reconstructed ``https://trackercl1.fidelizador
+        .com/…`` URLs, in the order they appear across all parts (plain-text
+        part URLs come before HTML part URLs in a standard email).
+    """
+    results: list[str] = []
+    seen: set[str] = set()
+
+    parts: list[_email_lib.message.Message] = (
+        list(msg.walk()) if msg.is_multipart() else [msg]
+    )
+    for part in parts:
+        content_type = part.get_content_type()
+        if content_type not in ("text/plain", "text/html"):
+            continue
+        if "attachment" in str(part.get("Content-Disposition", "")):
+            continue
+        cte = (part.get("Content-Transfer-Encoding") or "").lower().strip()
+        if cte == "quoted-printable":
+            # Python already decoded this part; raw QP patterns are gone.
+            # The URL will be found later by the normal HTML/text parsers.
+            continue
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        # Only process payloads that show QP soft line-breaks — the
+        # unambiguous sign that the body is QP-encoded without a CTE header.
+        if b"=\r\n" not in payload and b"=\n" not in payload:  # type: ignore[operator]
+            continue
+        for m in _FIDELIZADOR_URL_RE.finditer(payload):  # type: ignore[arg-type]
+            raw_url: bytes = m.group()
+            # QP-decode: removes =\n soft line-breaks that split the URL
+            # across lines and converts any =XX hex codes in the path.
+            try:
+                url = quopri.decodestring(raw_url).decode("utf-8", errors="ignore")
+            except Exception:
+                url = raw_url.decode("ascii", errors="ignore")
+            url = url.strip()
+            if url.startswith("https://trackercl1.fidelizador.com/") and url not in seen:
+                seen.add(url)
+                results.append(url)
+                _LOGGER.debug(
+                    "Fidelizador.com bill URL found in raw QP %s part: %s",
+                    content_type,
+                    url,
+                )
+
+    return results
 
 
 def _get_html_body(msg: _email_lib.message.Message) -> str:
@@ -905,20 +1048,36 @@ def download_pdf_from_email(
     --------
     1. Walk MIME parts looking for ``application/pdf`` or a ``.pdf`` filename.
        If found, write bytes to *pdf_dir* and return the path.
-    2. Parse ``text/html`` parts for ``<a href>`` elements and ``<script>``
-       blocks.  Three tiers of candidates are tried (best first):
+    2. Parse ``text/html`` parts.  Two sub-steps are tried in order:
 
-       a. Links whose visible text **or** img-alt matches billing keywords,
-          **or** script-block URLs whose surrounding code context matches
-          the same keywords.
-       b. Links / script-block URLs whose ``href`` / URL ends in ``.pdf``.
-       c. Links / script-block URLs whose ``href`` / URL contains
-          billing-related terms anywhere, including the ``acepta.com``
-          document portal domain.
+       a. **Raw QP fidelizador.com URL** (Metrogas / fidelizador.com) —
+          when any MIME part (``text/plain`` or ``text/html``) is
+          Quoted-Printable encoded without a CTE header, the raw bytes are
+          scanned for ``https://trackercl1.fidelizador.com/…`` URLs.
+          Parts are walked in document order, so the ``text/plain`` part
+          is searched first: in a Metrogas email the plain-text body
+          contains the tracker URL as its very first RFC 2396 link (the
+          "Ver en el navegador" view-in-browser reference), and this URL
+          appears **before** any social-media or account links.
+          QP soft line-breaks (``=\\n``) embedded in the URL are removed
+          by :func:`quopri.decodestring` to reconstruct the complete URL.
 
-       ``<a data-url>``, ``<a data-href>``, and ``<a onclick>`` attributes
-       are also checked when ``href`` is a non-HTTP placeholder, covering
-       email platforms that store the real URL in data attributes.
+       b. **HTML link extraction** — the decoded HTML is parsed for
+          ``<a href>`` elements and ``<script>`` blocks.  Three tiers of
+          candidates are tried (best first):
+
+          i.  Links whose visible text **or** img-alt matches billing
+              keywords, **or** script-block URLs whose surrounding context
+              matches the same keywords.
+          ii. Links / script-block URLs whose ``href`` / URL ends in
+              ``.pdf``.
+          iii. Links / script-block URLs whose ``href`` / URL contains
+               billing-related terms anywhere, including the ``acepta.com``
+               document portal domain.
+
+          ``<a data-url>``, ``<a data-href>``, and ``<a onclick>``
+          attributes are also checked when ``href`` is a non-HTTP
+          placeholder.
 
        Each candidate is fetched and validated (magic bytes / Content-Type).
     3. If no HTML body is present or no valid PDF was found in step 2, scan
@@ -969,6 +1128,30 @@ def download_pdf_from_email(
     # --- Strategy 2: Link in HTML body ---
     html_body = _get_html_body(msg)
     if html_body:
+        # Attempt 2a: fidelizador.com bill URL found in raw QP bytes.
+        # Metrogas emails are QP-encoded without a CTE header; the tracker
+        # URL appears in the plain-text part first (view-in-browser link at
+        # the top of the body) and again in the HTML part (bill download
+        # button).  Walking parts in document order gives the plain-text URL
+        # priority, which is the correct one to follow — the HTML body
+        # contains other fidelizador.com URLs (social-media icons, account
+        # links) that appear earlier in the HTML and would redirect to
+        # unrelated pages.
+        qp_bill_urls = _find_fidelizador_links_in_raw_qp_parts(msg)
+        if qp_bill_urls:
+            _LOGGER.info(
+                "Found %d fidelizador.com bill URL(s) in raw QP parts for "
+                "service '%s': %s",
+                len(qp_bill_urls),
+                service_id,
+                qp_bill_urls,
+            )
+            result = _download_first_valid_pdf(qp_bill_urls, dest_path, service_id)
+            if result:
+                return result
+
+        # Attempt 2b: regular HTML link extraction (keyword / .pdf /
+        # billing-term priority tiers).
         candidate_urls = _find_pdf_links_in_html(html_body)
         if not candidate_urls:
             _LOGGER.info(

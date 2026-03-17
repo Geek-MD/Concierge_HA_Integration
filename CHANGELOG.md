@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.13] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download — wrong PDF selected when multiple fidelizador.com
+  links present** (`pdf_downloader.py`):
+  Metrogas billing emails delivered by *fidelizador.com* are Quoted-Printable
+  encoded **without** a ``Content-Transfer-Encoding`` header.  They contain
+  **multiple** ``trackercl1.fidelizador.com`` click-tracking URLs: one per
+  interactive element (social-media icons, account-management buttons, and the
+  bill download button).  Because all share the same domain, the
+  ``_PDF_HREF_KEYWORDS`` matcher could not distinguish them, and the code was
+  following whichever URL appeared first in the decoded HTML — often a
+  social-media or account link — and downloading whatever PDF that redirect
+  chain produced (which was *not* the gas bill).
+
+  The tracker URL can be found in **two places** in the raw email bytes:
+
+  1. **Plain-text part** — as an RFC 2396 angle-bracket link at the very top
+     of the body (the "Ver en el navegador" view-in-browser reference)::
+
+         Ver en el navegador
+         <https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4=
+         E1ADBBCEJA9FFC4CD0B3A58A829KF1C34750AD1337D0DF097F8513787E299F30>
+
+     This is the *first* occurrence and the most reliable one: the plain-text
+     part has only one ``trackercl1.fidelizador.com`` URL at the top, before
+     any social-media or account links.
+
+  2. **HTML part** — as a ``href=3D"URL"`` attribute on the image-only bill
+     download button ``<a>`` element, also potentially split by a soft
+     line-break.  This occurrence can serve as confirmation that the URL
+     is correctly reconstructed.
+
+  In both cases the URL may be split across two QP lines by a soft line-break
+  (``=\r?\n``) that must be removed to reconstruct the full URL.
+
+  The fix adds:
+
+  1. **`_FIDELIZADOR_URL_RE` (new regex constant)** — matches
+     ``https://trackercl1.fidelizador.com/`` followed by the opaque
+     alphanumeric token, spanning QP soft line-breaks (``=\r?\n``) and
+     optional QP hex codes (``=XX``).  ``=`` is excluded from the ordinary-
+     character class so the engine always uses a QP alternative when it
+     encounters ``=``, ensuring no truncation at soft line-breaks.
+
+  2. **`_find_fidelizador_links_in_raw_qp_parts()` (new helper)** — walks
+     all MIME parts in document order (``text/plain`` before ``text/html``
+     in a standard ``multipart/alternative`` message), skips any part whose
+     ``Content-Transfer-Encoding`` header is ``quoted-printable`` (Python
+     has already decoded those), checks for QP soft line-breaks as the
+     indicator that raw QP processing is needed, and applies
+     ``_FIDELIZADOR_URL_RE`` + ``quopri.decodestring()`` to extract and
+     reconstruct the full URL.  Because the plain-text part is walked first,
+     the first URL returned is the view-in-browser link from the plain-text
+     body — the correct one to follow.
+
+  3. **`download_pdf_from_email()` — new attempt 2a** — before the existing
+     keyword / ``.pdf`` / billing-term HTML link extraction (now *attempt
+     2b*), the function calls ``_find_fidelizador_links_in_raw_qp_parts()``
+     and, if any URL is returned, tries to download the PDF from those URLs
+     first.  The existing HTML parsing falls through as a fallback if no
+     fidelizador.com URL is found in the raw QP bytes or the download fails.
+
 ## [0.6.12] - 2026-03-17
 
 ### Fixed
