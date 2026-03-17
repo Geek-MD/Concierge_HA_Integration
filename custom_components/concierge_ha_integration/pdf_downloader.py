@@ -1,16 +1,29 @@
 """PDF download helper for Concierge HA Integration.
 
-Heuristic that tries two strategies in order:
+Heuristic that tries three strategies in order:
 
 1. **PDF attachment** — if the email carries a ``application/pdf`` MIME part
    (or any part with a ``.pdf`` filename), its bytes are written directly to
    disk.
 2. **Link in HTML body** — if no attachment is found the raw HTML of the
-   email body is parsed for ``<a href>`` elements whose visible link text
-   matches common Spanish/English billing keywords
-   (e.g. *"ver boleta"*, *"descargue su boleta"*) **or** whose ``href``
-   ends in ``.pdf``.  The first URL that returns a valid PDF response is
-   saved.
+   email body is parsed for ``<a href>`` elements.  Three tiers of candidates
+   are collected (best first):
+
+   a. Links whose visible text **or** enclosed ``<img alt>`` text matches
+      common Spanish/English billing keywords
+      (e.g. *"ver boleta"*, *"descargue su factura"*, *"descargar PDF"*).
+   b. Links whose ``href`` ends in ``.pdf`` (with optional query string).
+   c. Links whose ``href`` contains billing-related terms
+      (*pdf*, *boleta*, *factura*, *invoice*, *bill*, *comprobante*, etc.)
+      anywhere in the URL path or query string.
+
+   Each candidate URL is fetched; the response is validated by magic-byte
+   check (``%PDF``) and/or ``Content-Type`` header before the file is
+   written.
+3. **URL in plain-text body** — if no HTML body is present (or no valid PDF
+   was found in the HTML), the plain-text parts of the email are scanned for
+   bare HTTP/HTTPS URLs that contain billing-related terms.  The same
+   fetch-and-validate logic is applied.
 
 Saved files are named with the scheme::
 
@@ -40,20 +53,49 @@ from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
-# Visible link-text patterns that suggest a billing PDF link (Spanish + English)
+# Visible link-text / img-alt patterns that suggest a billing PDF link
+# (Spanish + English).  Matched against the human-readable label of the link.
 _PDF_LINK_KEYWORDS = re.compile(
     r"ver\s+boleta"
-    r"|descarga(?:r|e)?\s+(?:su\s+)?boleta"
+    # descarg(?:ar?|ue[ns]?) covers: descarga, descargar, descargue, descarguen, descargues
+    r"|descarg(?:ar?|ue[ns]?)\s+(?:su\s+|tu\s+)?boleta"
+    r"|revisa(?:r)?\s+(?:tu\s+|su\s+)?boleta"
     r"|ver\s+factura"
-    r"|descarga(?:r|e)?\s+(?:su\s+)?factura"
+    r"|descarg(?:ar?|ue[ns]?)\s+(?:su\s+|tu\s+)?factura"
+    r"|ver\s+(?:tu\s+|su\s+)?factura"
     r"|ver\s+cuenta"
-    r"|descargar\s+(?:pdf|documento)"
-    r"|download.*(?:invoice|bill|statement|pdf)",
+    r"|ver\s+comprobante"
+    r"|descarg(?:ar?|ue[ns]?)\s+comprobante"
+    r"|ver\s+documento"
+    r"|descarg(?:ar?|ue[ns]?)\s+(?:pdf|documento|archivo)"
+    r"|bajar\s+(?:pdf|boleta|factura)"
+    r"|obtener\s+(?:pdf|boleta|factura)"
+    r"|imprimir\s+boleta"
+    r"|imprimir\s+factura"
+    r"|visualizar\s+(?:boleta|factura|documento)"
+    r"|ver\s+cobro"
+    r"|download.*(?:invoice|bill|statement|pdf|receipt)"
+    r"|view.*(?:invoice|bill|statement|receipt)"
+    r"|get.*(?:invoice|bill|pdf)",
     re.IGNORECASE,
 )
 
+# URL-path/query patterns that indicate a billing PDF link even when the
+# visible text does not match _PDF_LINK_KEYWORDS.  Matched against the href.
+_PDF_HREF_KEYWORDS = re.compile(
+    r"[/=_-](?:pdf|boleta|factura|invoice|bill|comprobante|receipt|documento)"
+    r"|(?:pdf|boleta|factura|invoice|bill|comprobante|receipt|documento)[/=_?&]"
+    r"|descargar"
+    r"|download"
+    r"|visualizar",
+    re.IGNORECASE,
+)
+
+# Regex to extract bare HTTP/HTTPS URLs from plain-text email bodies
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.4.10 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.5.6 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -67,7 +109,16 @@ _PDF_MAGIC = b"%PDF"
 # ---------------------------------------------------------------------------
 
 class _LinkExtractor(HTMLParser):
-    """Extract (href, link_text) pairs from an HTML document."""
+    """Extract (href, link_text) pairs from an HTML document.
+
+    *link_text* is the concatenation of:
+    - any visible character data inside the ``<a>…</a>`` tag, **and**
+    - the ``alt`` attribute of any ``<img>`` tag nested inside the link.
+
+    This ensures that image-only buttons (e.g.
+    ``<a href="…"><img alt="Ver boleta" …></a>``) are treated the same way
+    as text links.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -77,12 +128,18 @@ class _LinkExtractor(HTMLParser):
         self._in_link = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_dict = dict(attrs)
         if tag == "a":
-            href = dict(attrs).get("href") or ""
+            href = attr_dict.get("href") or ""
             if href:
                 self._current_href = href
                 self._current_text = []
                 self._in_link = True
+        elif tag == "img" and self._in_link:
+            # Capture the alt text of images nested inside a link
+            alt = (attr_dict.get("alt") or "").strip()
+            if alt:
+                self._current_text.append(alt)
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "a" and self._in_link:
@@ -152,8 +209,10 @@ def _find_pdf_links_in_html(html_body: str) -> list[str]:
     """Return candidate PDF URLs from an HTML body, best candidates first.
 
     Priority:
-    1. Links whose **visible text** matches :data:`_PDF_LINK_KEYWORDS`.
+    1. Links whose **visible text or img alt** matches :data:`_PDF_LINK_KEYWORDS`.
     2. Links whose ``href`` ends with ``.pdf`` (with optional query string).
+    3. Links whose ``href`` contains billing-related terms anywhere
+       (matched by :data:`_PDF_HREF_KEYWORDS`).
     """
     extractor = _LinkExtractor()
     try:
@@ -166,6 +225,7 @@ def _find_pdf_links_in_html(html_body: str) -> list[str]:
     seen: set[str] = set()
     keyword_links: list[str] = []
     pdf_href_links: list[str] = []
+    billing_href_links: list[str] = []
 
     for href, text in links:
         if not href.startswith("http"):
@@ -177,8 +237,96 @@ def _find_pdf_links_in_html(html_body: str) -> list[str]:
             keyword_links.append(href)
         elif re.search(r"\.pdf($|\?)", href, re.IGNORECASE):
             pdf_href_links.append(href)
+        elif _PDF_HREF_KEYWORDS.search(href):
+            billing_href_links.append(href)
 
-    return keyword_links + pdf_href_links
+    return keyword_links + pdf_href_links + billing_href_links
+
+
+def _get_plain_text_body(msg: _email_lib.message.Message) -> str:
+    """Return the plain-text content of an email (concatenated parts)."""
+    text_parts: list[str] = []
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() != "text/plain":
+                continue
+            content_disposition = str(part.get("Content-Disposition", ""))
+            if "attachment" in content_disposition:
+                continue
+            payload = part.get_payload(decode=True)
+            if payload:
+                charset = part.get_content_charset() or "utf-8"
+                text_parts.append(
+                    payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
+                )
+    else:
+        if msg.get_content_type() == "text/plain":
+            payload = msg.get_payload(decode=True)
+            if payload:
+                charset = msg.get_content_charset() or "utf-8"
+                text_parts.append(
+                    payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
+                )
+    return "\n".join(text_parts)
+
+
+def _find_urls_in_plain_text(text_body: str) -> list[str]:
+    """Return candidate PDF URLs from a plain-text email body, best first.
+
+    Handles two common plain-text link formats:
+
+    1. **RFC 2396 notation** — a label on one line followed by ``<URL>`` on
+       the next (as rendered by Gmail, Thunderbird, etc.)::
+
+           DESCARGUE SU BOLETA
+           <https://click.info-enel.com/?qs=...>
+
+       The label is matched against :data:`_PDF_LINK_KEYWORDS`; if it
+       matches, the URL is treated as a top-priority candidate.
+
+    2. **Bare HTTP/HTTPS URL** — the URL appears directly in the text body,
+       filtered by ``.pdf`` suffix or :data:`_PDF_HREF_KEYWORDS`.
+
+    Priority:
+    1. RFC 2396 URLs whose preceding label matches :data:`_PDF_LINK_KEYWORDS`.
+    2. URLs ending in ``.pdf``.
+    3. URLs whose path/query matches :data:`_PDF_HREF_KEYWORDS`.
+    """
+    seen: set[str] = set()
+    keyword_urls: list[str] = []
+    pdf_urls: list[str] = []
+    billing_urls: list[str] = []
+
+    def _classify(url: str, label: str = "") -> None:
+        url = url.strip().rstrip(".,;:!?)>\"'")
+        if not url.startswith("http"):
+            return
+        if url in seen:
+            return
+        seen.add(url)
+        if _PDF_LINK_KEYWORDS.search(label):
+            keyword_urls.append(url)
+        elif re.search(r"\.pdf($|\?)", url, re.IGNORECASE):
+            pdf_urls.append(url)
+        elif _PDF_HREF_KEYWORDS.search(url):
+            billing_urls.append(url)
+
+    prev_text = ""
+    for line in text_body.splitlines():
+        stripped = line.strip()
+        # RFC 2396: the entire line is <URL> — use the previous line as label
+        m = re.fullmatch(r"<(https?://[^\s<>\"']+)>", stripped)
+        if m:
+            _classify(m.group(1), prev_text)
+            prev_text = ""  # label was consumed; reset so it is not reused
+            continue
+        # Bare URLs embedded anywhere in the line (no label context)
+        for url_m in _URL_IN_TEXT.finditer(stripped):
+            _classify(url_m.group(), "")
+        if stripped:
+            prev_text = stripped
+
+    return keyword_urls + pdf_urls + billing_urls
 
 
 def _build_filename(
@@ -239,15 +387,23 @@ def download_pdf_from_email(
     email_date: datetime | None = None,
     attributes: dict[str, Any] | None = None,
 ) -> str | None:
-    """Heuristic PDF downloader — attachment first, then HTML link.
+    """Heuristic PDF downloader — attachment first, then HTML/text links.
 
     Strategy
     --------
     1. Walk MIME parts looking for ``application/pdf`` or a ``.pdf`` filename.
        If found, write bytes to *pdf_dir* and return the path.
-    2. Parse ``text/html`` parts for ``<a href>`` elements whose visible text
-       matches billing keywords or whose href ends in ``.pdf``.  The first URL
-       that returns a valid PDF response is saved.
+    2. Parse ``text/html`` parts for ``<a href>`` elements.  Three tiers of
+       candidates are tried (best first):
+
+       a. Links whose visible text **or** img-alt matches billing keywords.
+       b. Links whose ``href`` ends in ``.pdf``.
+       c. Links whose ``href`` contains billing-related terms anywhere.
+
+       Each candidate is fetched and validated (magic bytes / Content-Type).
+    3. If no HTML body is present or no valid PDF was found in step 2, scan
+       the ``text/plain`` parts for bare HTTP/HTTPS URLs that contain
+       billing-related terms and attempt to download each one.
 
     The saved filename encodes service identity and billing period so that
     subsequent runs with the same bill produce the same name and the download
@@ -290,15 +446,45 @@ def download_pdf_from_email(
 
     # --- Strategy 2: Link in HTML body ---
     html_body = _get_html_body(msg)
-    if not html_body:
-        _LOGGER.debug("No HTML body in email for service '%s'", service_id)
-        return None
+    if html_body:
+        candidate_urls = _find_pdf_links_in_html(html_body)
+        if not candidate_urls:
+            _LOGGER.debug("No PDF links found in HTML body for service '%s'", service_id)
+        else:
+            result = _download_first_valid_pdf(candidate_urls, dest_path, service_id)
+            if result:
+                return result
 
-    candidate_urls = _find_pdf_links_in_html(html_body)
-    if not candidate_urls:
-        _LOGGER.debug("No PDF links found in HTML body for service '%s'", service_id)
-        return None
+    # --- Strategy 3: URL in plain-text body ---
+    text_body = _get_plain_text_body(msg)
+    if not text_body:
+        _LOGGER.debug("No plain-text body in email for service '%s'", service_id)
+    else:
+        candidate_urls = _find_urls_in_plain_text(text_body)
+        if not candidate_urls:
+            _LOGGER.debug(
+                "No PDF URLs found in plain-text body for service '%s'", service_id
+            )
+        else:
+            result = _download_first_valid_pdf(candidate_urls, dest_path, service_id)
+            if result:
+                return result
 
+    _LOGGER.debug("No PDF could be obtained for service '%s'", service_id)
+    return None
+
+
+def _download_first_valid_pdf(
+    candidate_urls: list[str],
+    dest_path: str,
+    service_id: str,
+) -> str | None:
+    """Try each URL in *candidate_urls* until a valid PDF is saved.
+
+    The response is validated by magic-byte check (``%PDF``) and/or the
+    ``Content-Type`` header.  Returns *dest_path* on success, ``None`` if
+    all candidates failed.
+    """
     for url in candidate_urls:
         try:
             _LOGGER.debug("Attempting PDF download from %s", url)
@@ -329,7 +515,6 @@ def download_pdf_from_email(
         except OSError as err:
             _LOGGER.warning("Could not write downloaded PDF to %s: %s", dest_path, err)
 
-    _LOGGER.debug("No PDF could be obtained for service '%s'", service_id)
     return None
 
 
