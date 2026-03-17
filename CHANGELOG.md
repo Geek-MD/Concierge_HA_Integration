@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.9] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download — JavaScript URL injection** (`pdf_downloader.py`):
+  Metrogas emails (sent via the acepta.com platform) embed the real document
+  URL inside a JavaScript variable in the email ``<head>`` and set the
+  visible ``<a href>`` dynamically at browser render time.  Because the
+  Python email parser does not execute JavaScript, the ``href`` attribute
+  remained a non-navigable placeholder (``#`` or ``javascript:…``) and the
+  real URL was never discovered.
+
+  Three complementary fixes address this:
+
+  1. **`_find_urls_in_script_tags()` (new helper)** — walks every
+     ``<script>…</script>`` block in the HTML body, extracts all
+     ``http(s)://`` URLs, and classifies them into the same three-tier
+     priority scheme used for ``<a href>`` links (keyword context match →
+     ``.pdf`` suffix → billing-term / domain match).  The 200-character
+     text surrounding each URL in the script is used as the context for
+     keyword matching, so variable names such as ``boletaUrl`` or comments
+     like ``// URL de la boleta`` promote the URL to the highest tier.
+
+  2. **`acepta.com` added to `_PDF_HREF_KEYWORDS`** — the acepta.com domain
+     is Chile's official electronic-document management portal; any URL on
+     that domain is a billing document link.  This ensures acepta.com URLs
+     found in ``<script>`` blocks (and in ``<a href>`` tags) are always
+     picked up as tier-3 candidates even when the surrounding context
+     carries no explicit billing keywords.
+
+  3. **`_LinkExtractor` — `data-*` / `onclick` fallback** — when an ``<a>``
+     tag has a non-HTTP ``href`` (``#``, ``javascript:…``), the extractor
+     now also inspects ``data-url``, ``data-href``, ``data-link``,
+     ``data-target``, ``data-action``, and ``onclick`` attributes for a
+     real HTTP URL.  This covers email platforms that store the document URL
+     in data attributes instead of (or in addition to) a script variable.
+
 ## [0.6.8] - 2026-03-17
 
 ### Added

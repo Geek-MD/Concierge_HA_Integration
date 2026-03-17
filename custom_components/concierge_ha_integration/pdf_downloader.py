@@ -6,16 +6,24 @@ Heuristic that tries three strategies in order:
    (or any part with a ``.pdf`` filename), its bytes are written directly to
    disk.
 2. **Link in HTML body** — if no attachment is found the raw HTML of the
-   email body is parsed for ``<a href>`` elements.  Three tiers of candidates
-   are collected (best first):
+   email body is parsed for ``<a href>`` elements **and** ``<script>`` blocks.
+   Three tiers of candidates are collected (best first):
 
    a. Links whose visible text **or** enclosed ``<img alt>`` text matches
       common Spanish/English billing keywords
-      (e.g. *"ver boleta"*, *"descargue su factura"*, *"descargar PDF"*).
-   b. Links whose ``href`` ends in ``.pdf`` (with optional query string).
+      (e.g. *"ver boleta"*, *"descargue su factura"*, *"descargar PDF"*),
+      **or** URLs found in ``<script>`` blocks whose surrounding code context
+      contains the same keywords.
+   b. Links whose ``href`` ends in ``.pdf`` (with optional query string), or
+      script-block URLs that end in ``.pdf``.
    c. Links whose ``href`` contains billing-related terms
-      (*pdf*, *boleta*, *factura*, *invoice*, *bill*, *comprobante*, etc.)
-      anywhere in the URL path or query string.
+      (*pdf*, *boleta*, *factura*, *invoice*, *bill*, *comprobante*,
+      *acepta.com*, etc.) anywhere in the URL, or script-block URLs that
+      match the same patterns.
+
+   ``<a data-url>``, ``<a data-href>``, and ``onclick`` attributes are also
+   checked when ``href`` is a non-HTTP placeholder (``#``, ``javascript:…``),
+   covering email platforms that store the real URL outside the ``href``.
 
    Each candidate URL is fetched; the response is validated by magic-byte
    check (``%PDF``) and/or ``Content-Type`` header before the file is
@@ -87,12 +95,25 @@ _PDF_HREF_KEYWORDS = re.compile(
     r"|(?:pdf|boleta|factura|invoice|bill|comprobante|receipt|documento)[/=_?&]"
     r"|descargar"
     r"|download"
-    r"|visualizar",
+    r"|visualizar"
+    # acepta.com is Chile's official electronic-document management portal;
+    # any URL on that domain is a billing document viewer/download link.
+    r"|acepta\.com",
     re.IGNORECASE,
 )
 
 # Regex to extract bare HTTP/HTTPS URLs from plain-text email bodies
 _URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+
+# Regex to extract the content of every <script>…</script> block.
+# Used to find billing URLs that email platforms inject into <a href>
+# attributes via JavaScript at render time (e.g. Metrogas / acepta.com).
+# The closing tag uses [^>]* to tolerate malformed HTML such as
+# </script >, </script  bar>, or other stray content before >.
+_SCRIPT_TAG_RE = re.compile(
+    r"<script\b[^>]*>(.*?)</script[^>]*>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 # HTML block/container tags that delimit the context window used to associate
 # adjacent (sibling) text with a nearby link.  When one of these tags is
@@ -105,7 +126,7 @@ _CONTAINER_TAGS = frozenset({
 })
 
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.8 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.9 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -186,6 +207,25 @@ class _LinkExtractor(HTMLParser):
             # label window does not extend into the new link's preceding text.
             self._flush_pending()
             href = attr_dict.get("href") or ""
+            # When the href is a non-navigable placeholder (``#``,
+            # ``javascript:…``, empty) look for the real URL in common
+            # ``data-*`` attributes or the ``onclick`` handler.  Some email
+            # platforms (e.g. Metrogas / acepta.com) store the document URL
+            # there and set the visible ``href`` dynamically via JavaScript.
+            if not href.startswith("http"):
+                for data_key in (
+                    "data-url", "data-href", "data-link",
+                    "data-target", "data-action",
+                ):
+                    candidate = (attr_dict.get(data_key) or "").strip()
+                    if candidate.startswith("http"):
+                        href = candidate
+                        break
+                if not href.startswith("http"):
+                    onclick = attr_dict.get("onclick") or ""
+                    url_m = _URL_IN_TEXT.search(onclick)
+                    if url_m:
+                        href = url_m.group()
             if href:
                 self._current_href = href
                 self._current_text = []
@@ -291,14 +331,70 @@ def _get_html_body(msg: _email_lib.message.Message) -> str:
     return "\n".join(html_parts)
 
 
+def _find_urls_in_script_tags(html_body: str) -> list[tuple[str, str]]:
+    """Extract ``(url, context_snippet)`` pairs from ``<script>`` blocks.
+
+    Some email senders (notably Metrogas via acepta.com) embed the actual
+    document URL inside a JavaScript variable in the email ``<head>`` and
+    set the visible ``<a href>`` dynamically at browser render time.
+    Because the Python email parser does not execute JavaScript, the
+    ``href`` attribute seen by :class:`_LinkExtractor` remains a placeholder
+    (``#`` or ``javascript:…``) and the real URL is never extracted through
+    normal link parsing.
+
+    This function walks every ``<script>…</script>`` block in the HTML,
+    finds all HTTP/HTTPS URLs within them, and returns each URL paired with
+    a 200-character context snippet (the text surrounding the URL inside the
+    script).  The context is used by :func:`_find_pdf_links_in_html` to
+    classify the URL into the same three-tier priority scheme used for
+    ``<a href>`` links.
+
+    Args:
+        html_body: Raw HTML string of the email (or any HTML document).
+
+    Returns:
+        Deduplicated list of ``(url, context_snippet)`` tuples, one per
+        distinct URL found across all ``<script>`` blocks.
+    """
+    results: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for script_m in _SCRIPT_TAG_RE.finditer(html_body):
+        script_text = script_m.group(1)
+        for url_m in _URL_IN_TEXT.finditer(script_text):
+            # Strip trailing JS string delimiters / punctuation that may be
+            # attached to the URL inside the script source.
+            url = url_m.group().rstrip("\"',;)")
+            if not url.startswith("http") or url in seen:
+                continue
+            seen.add(url)
+            # Capture a window of surrounding text for keyword classification.
+            start = max(0, url_m.start() - 200)
+            end = min(len(script_text), url_m.end() + 200)
+            results.append((url, script_text[start:end]))
+
+    return results
+
+
 def _find_pdf_links_in_html(html_body: str) -> list[str]:
     """Return candidate PDF URLs from an HTML body, best candidates first.
 
     Priority:
-    1. Links whose **visible text or img alt** matches :data:`_PDF_LINK_KEYWORDS`.
-    2. Links whose ``href`` ends with ``.pdf`` (with optional query string).
-    3. Links whose ``href`` contains billing-related terms anywhere
-       (matched by :data:`_PDF_HREF_KEYWORDS`).
+    1. Links whose **visible text or img alt** (or nearby sibling text)
+       matches :data:`_PDF_LINK_KEYWORDS`, **or** script-block URLs whose
+       surrounding context (within a 200-char window) matches the same
+       keywords (e.g. ``"boleta"`` or ``"ver boleta"`` appears near the URL
+       inside the JavaScript code).
+    2. Links / script-block URLs whose ``href`` / URL ends with ``.pdf``
+       (with optional query string).
+    3. Links / script-block URLs whose ``href`` / URL contains
+       billing-related terms matched by :data:`_PDF_HREF_KEYWORDS` (which
+       includes the ``acepta.com`` document portal domain).
+
+    ``<script>`` blocks are scanned in addition to ``<a href>`` tags so that
+    URLs injected into anchor elements via JavaScript at render time (e.g.
+    Metrogas / acepta.com pattern where the real document URL lives in a JS
+    variable in the email ``<head>``) are also discovered.
     """
     extractor = _LinkExtractor()
     try:
@@ -325,6 +421,19 @@ def _find_pdf_links_in_html(html_body: str) -> list[str]:
             pdf_href_links.append(href)
         elif _PDF_HREF_KEYWORDS.search(href):
             billing_href_links.append(href)
+
+    # Also scan <script> blocks for billing URLs that JavaScript would
+    # otherwise inject into <a href> at browser render time.
+    for url, context in _find_urls_in_script_tags(html_body):
+        if url in seen:
+            continue
+        seen.add(url)
+        if _PDF_LINK_KEYWORDS.search(context):
+            keyword_links.append(url)
+        elif re.search(r"\.pdf($|\?)", url, re.IGNORECASE):
+            pdf_href_links.append(url)
+        elif _PDF_HREF_KEYWORDS.search(url):
+            billing_href_links.append(url)
 
     return keyword_links + pdf_href_links + billing_href_links
 
@@ -479,12 +588,20 @@ def download_pdf_from_email(
     --------
     1. Walk MIME parts looking for ``application/pdf`` or a ``.pdf`` filename.
        If found, write bytes to *pdf_dir* and return the path.
-    2. Parse ``text/html`` parts for ``<a href>`` elements.  Three tiers of
-       candidates are tried (best first):
+    2. Parse ``text/html`` parts for ``<a href>`` elements and ``<script>``
+       blocks.  Three tiers of candidates are tried (best first):
 
-       a. Links whose visible text **or** img-alt matches billing keywords.
-       b. Links whose ``href`` ends in ``.pdf``.
-       c. Links whose ``href`` contains billing-related terms anywhere.
+       a. Links whose visible text **or** img-alt matches billing keywords,
+          **or** script-block URLs whose surrounding code context matches
+          the same keywords.
+       b. Links / script-block URLs whose ``href`` / URL ends in ``.pdf``.
+       c. Links / script-block URLs whose ``href`` / URL contains
+          billing-related terms anywhere, including the ``acepta.com``
+          document portal domain.
+
+       ``<a data-url>``, ``<a data-href>``, and ``<a onclick>`` attributes
+       are also checked when ``href`` is a non-HTTP placeholder, covering
+       email platforms that store the real URL in data attributes.
 
        Each candidate is fetched and validated (magic bytes / Content-Type).
     3. If no HTML body is present or no valid PDF was found in step 2, scan
