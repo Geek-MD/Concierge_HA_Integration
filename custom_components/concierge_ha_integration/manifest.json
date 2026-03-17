@@ -7,7 +7,7 @@
   "integration_type": "hub",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Geek-MD/Concierge_HA_Integration/issues",
-  "requirements": [],
+  "requirements": ["pdfminer.six>=20221105"],
   "single_config_entry": true,
-  "version": "0.5.6"
+  "version": "0.6.4"
 }

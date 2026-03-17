@@ -337,14 +337,16 @@ def _extract_water_attributes(text: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Gas-service extractor (tuned for Metrogas; reference email: Jan 2026)
 # ---------------------------------------------------------------------------
-# Consumption in cubic metres — label-based only.
-# NOTE: Metrogas does NOT include consumption in the email body; it is only
-# present in the PDF attachment.  The label-based pattern is kept for gas
-# companies that do include it in their email.
+# Consumption value and unit — used by both email and PDF extractors.
+# Group 1 captures the numeric value; group 2 captures the unit (m3s / m3 / m³).
 _GAS_CONSUMPTION_RE = re.compile(
-    r"([0-9]+(?:[.,][0-9]+)?)\s*m[³3]",
+    r"([0-9]+(?:[.,][0-9]+)?)\s*(m[³3]s?)",
     re.IGNORECASE,
 )
+# Email-body label patterns for gas consumption (generic, non-PDF issuers).
+# NOTE: Metrogas does NOT include consumption in the email body; it is only
+# present in the PDF attachment.  The label-based pattern is kept here for
+# gas companies that do include it in their email.
 _GAS_CONSUMPTION_LABELS = re.compile(
     r"(?:consumo\s+(?:de\s+)?gas|consumo|volumen\s+consumido)[:\s]+",
     re.IGNORECASE,
@@ -359,28 +361,32 @@ _GAS_PLAIN_AMOUNT_RE = re.compile(
 
 
 def _extract_gas_attributes(text: str) -> dict[str, Any]:
-    """Extract gas-service-specific attributes.
+    """Extract gas-service attributes from an **email body**.
 
     Tuned for Metrogas (reference email: January 2026).  Key observations:
     - The HTML-only email carries folio, customer number, address, billing
       period, total due, due date.
-    - Gas consumption (m³) is **not** included in the email — only in the PDF.
-    - ``Total a pagar`` has no ``$`` prefix (e.g. ``12.013``).
+    - Gas consumption is **not** included in the Metrogas email — only in the
+      PDF attachment.  The label-based consumption search is kept here for
+      other gas issuers that do include it in the email body.
+    - ``Total a pagar`` in the Metrogas email has no ``$`` prefix
+      (e.g. ``12.013``).
     - Customer label is ``Número Cliente:`` (no ``de`` — handled in the
       shared ``_CUSTOMER_LABELS`` pattern).
 
     Extracted fields (all optional):
-        ``total_amount``   – total amount due as integer (overrides generic)
-        ``consumption``    – gas consumed (label-based only, for issuers
-                             that include it in the email body)
-        ``consumption_unit``– unit of consumption (``"m3"``)
+        ``total_amount``    – total amount due as integer (overrides generic)
+        ``consumption``     – gas consumed (label-based, for issuers that
+                               include it in the email body)
+        ``consumption_unit``– unit of consumption (e.g. ``"m3"``)
+        ``cost_per_m3s``    – cost per m3s; only set when both
+                               ``total_amount`` and ``consumption`` are found
+                               and consumption > 0
     """
     attrs: dict[str, Any] = {}
 
-    # Total a pagar — Metrogas uses a plain number without a $ prefix.
-    # This overrides the generic extractor result (which would return nothing
-    # for plain numbers).  We reuse _TOTAL_LABELS for the label match so that
-    # the search window is anchored to the correct part of the text.
+    # Total a pagar — Metrogas uses a plain number without a $ prefix in the
+    # email body (e.g. "Total a pagar: 12.013").
     for label_match in _TOTAL_LABELS.finditer(text):
         rest = text[label_match.end():]
         val_match = _GAS_PLAIN_AMOUNT_RE.search(rest[:60])
@@ -390,15 +396,77 @@ def _extract_gas_attributes(text: str) -> dict[str, Any]:
                 attrs["total_amount"] = _parse_amount_to_int(raw)
                 break
 
-    # Gas consumption (m³) — label-based only; bare m³ fallback omitted to
+    # Gas consumption — label-based only; bare m³ fallback omitted to
     # avoid false positives in HTML that contains no consumption data.
     for label_match in _GAS_CONSUMPTION_LABELS.finditer(text):
         rest = text[label_match.end():]
         val_match = _GAS_CONSUMPTION_RE.search(rest[:80])
         if val_match:
             attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
-            attrs["consumption_unit"] = "m3"
+            attrs["consumption_unit"] = val_match.group(2).lower()
             break
+
+    # cost_per_m3s — derived when both values are present in the email.
+    total = attrs.get("total_amount")
+    consumption = attrs.get("consumption")
+    if total and consumption and consumption > 0:
+        attrs["cost_per_m3s"] = round(total / consumption, 2)
+
+    return attrs
+
+
+# ---------------------------------------------------------------------------
+# Gas-service PDF extractor (Metrogas-specific; reference PDF: Jan 2026)
+# ---------------------------------------------------------------------------
+# PDF-specific label for gas consumption in Metrogas bills:
+# "Gas consumido ( 5,95 m3s )".  The separator allows ":", whitespace, and
+# "(" to match the parenthesised format used in the PDF.
+_GAS_PDF_CONSUMPTION_LABELS = re.compile(
+    r"gas\s+consumido[:\s\(]+",
+    re.IGNORECASE,
+)
+
+
+def _extract_gas_pdf_attributes(text: str) -> dict[str, Any]:
+    """Extract gas-service attributes from a **Metrogas PDF**.
+
+    This extractor is dedicated to Metrogas PDF bills and handles patterns
+    that appear exclusively in the PDF, not in the notification email.
+
+    Key observations (reference PDF: January 2026):
+    - Gas consumption is labelled ``Gas consumido ( 5,95 m3s )`` in the PDF.
+    - The unit is ``m3s`` (standardised cubic metres), not plain ``m3``.
+    - The total amount appears as ``$ 12.013`` near ``Total a pagar``.
+
+    Extracted fields (all optional):
+        ``total_amount``    – total amount due as integer
+        ``consumption``     – gas consumed in m3s (float)
+        ``consumption_unit``– unit of consumption (``"m3s"``)
+        ``cost_per_m3s``    – cost per m3s (total_amount / consumption, float)
+    """
+    attrs: dict[str, Any] = {}
+
+    # Total amount — PDF uses "$" prefix (e.g. "$ 12.013"), handled by the
+    # generic _extract_total_amount which looks for _AMOUNT_RE after the label.
+    total = _extract_total_amount(text)
+    if total:
+        attrs["total_amount"] = total
+
+    # Gas consumption — Metrogas PDF label: "Gas consumido ( 5,95 m3s )"
+    for label_match in _GAS_PDF_CONSUMPTION_LABELS.finditer(text):
+        rest = text[label_match.end():]
+        val_match = _GAS_CONSUMPTION_RE.search(rest[:80])
+        if val_match:
+            attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
+            attrs["consumption_unit"] = val_match.group(2).lower()
+            break
+
+    # cost_per_m3s — cost per standardised cubic metre.
+    # Calculated only when both values are available and consumption > 0.
+    total_val = attrs.get("total_amount")
+    consumption_val = attrs.get("consumption")
+    if total_val and consumption_val and consumption_val > 0:
+        attrs["cost_per_m3s"] = round(total_val / consumption_val, 2)
 
     return attrs
 
@@ -502,17 +570,223 @@ def _extract_electricity_attributes(text: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Routing helper
+# Electricity-service PDF extractor (Enel Distribución Chile; Feb 2026)
+# ---------------------------------------------------------------------------
+# Spanish abbreviated month names used in Enel PDF date ranges.
+_SPANISH_MONTH_MAP: dict[str, int] = {
+    "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
+    "jul": 7, "ago": 8, "sep": 9, "oct": 10, "nov": 11, "dic": 12,
+}
+# Billing period date range with Spanish month names (primary source):
+# "30 Dic 2025 - 29 Ene 2026" — appears after "Monto del periodo" in the PDF.
+_ELEC_PDF_BILLING_PERIOD_RE = re.compile(
+    r"(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\.?\s+(\d{4})"
+    r"\s*[-–]\s*"
+    r"(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\.?\s+(\d{4})",
+    re.IGNORECASE,
+)
+# Fallback billing period from "Período de lectura: 30/12/2025 - 29/01/2026"
+# (DD/MM/YYYY format, always present in the Enel PDF).
+_ELEC_PDF_PERIOD_LECTURA_RE = re.compile(
+    r"per[íi]odo\s+de\s+lectura[:\s]+(\d{1,2}/\d{1,2}/\d{4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{4})",
+    re.IGNORECASE,
+)
+# Enel PDF billing breakdown — pdfminer reads the three-column table as
+# separate blocks: labels first, then a column of "$" signs, then amounts.
+# Exact structure extracted from Enel.pdf (Feb 2026):
+#
+#   Administración del servicio
+#   Electricidad Consumida (505kWh)
+#   Transporte de electricidad
+#   Cargo Fondo de Estabilización Ley 21.472
+#
+#   $              ← all $ signs stacked
+#   $
+#   $
+#   $
+#
+#   708            ← amounts in the same row order
+#   111.824
+#   8.479
+#   1.049
+#
+# Groups: (1) consumption value, (2) kWh unit,
+#         (3) service_administration, (4) electricity_consumption,
+#         (5) electricity_transport, (6) stabilization_fund
+_ELEC_PDF_TABLE_RE = re.compile(
+    r"administraci[oó]n\s+del\s+servicio\s*\n"
+    r"electricidad\s+consumida\s*\(([0-9]+(?:[.,][0-9]+)?)\s*(kWh)\)\s*\n"
+    r"transporte\s+de\s+electricidad\s*\n"
+    r"cargo\s+fondo\s+de\s+estabilizaci[oó]n[^\n]*\n"
+    r"\s*"                              # blank line between labels and $ column
+    r"\$\s*\n\$\s*\n\$\s*\n\$\s*\n"    # four "$" signs, one per line
+    r"\s*"                              # blank line between $ column and amounts
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)\s*\n"   # service_administration
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)\s*\n"   # electricity_consumption
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)\s*\n"   # electricity_transport
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)",        # stabilization_fund
+    re.IGNORECASE,
+)
+# "Tipo de tarifa contratada: BT1-T2"
+_ELEC_PDF_TARIFF_CODE_RE = re.compile(
+    r"tipo\s+de\s+tarifa\s+contratada[:\s]+([^\n\r]{1,40})",
+    re.IGNORECASE,
+)
+# "Potencia conectada: 2,500 kW"
+# Group 1: numeric value (Chilean format), Group 2: unit (kW / kVA / MW)
+_ELEC_PDF_CONNECTED_POWER_RE = re.compile(
+    r"potencia\s+conectada[:\s]+([0-9]+(?:[.,][0-9]+)?)\s*(kVA|kW|MW)",
+    re.IGNORECASE,
+)
+# "Área Típica: AREA 1 S Caso 3 (a)"
+_ELEC_PDF_AREA_RE = re.compile(
+    r"[áa]rea\s+t[íi]pica[:\s]+([^\n\r]{1,80})",
+    re.IGNORECASE,
+)
+# "Subestación: SAN CRISTOBAL"
+_ELEC_PDF_SUBSTATION_RE = re.compile(
+    r"subestaci[oó]n[:\s]+([^\n\r]{1,80})",
+    re.IGNORECASE,
+)
+
+
+def _parse_spanish_date(day: str, month_str: str, year: str) -> str:
+    """Convert Spanish date parts to a ``DD-MM-YYYY`` string.
+
+    Returns an empty string if the month abbreviation is not recognised.
+    """
+    month_num = _SPANISH_MONTH_MAP.get(month_str[:3].lower(), 0)
+    if not month_num:
+        return ""
+    return f"{int(day):02d}-{month_num:02d}-{year}"
+
+
+def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
+    """Extract electricity-service attributes from an **Enel PDF** bill.
+
+    This extractor is dedicated to Enel Distribución Chile PDF bills and
+    handles patterns that appear exclusively in the PDF, not in the
+    notification email.
+
+    Key observations (reference PDF: February 2026):
+    - Billing period dates appear as ``30 Dic 2025 - 29 Ene 2026`` after
+      ``Monto del periodo`` and as ``30/12/2025 - 29/01/2026`` after
+      ``Período de lectura:``.
+    - The billing breakdown is a three-column table; pdfminer reads the
+      columns separately: label names, then ``$`` signs, then amounts
+      (each column as a block of newline-separated values).
+    - Amounts use Chilean thousands format: ``111.824`` → 111 824.
+
+    Extracted fields (all optional):
+        ``billing_period_start``   – start of the billing period (DD-MM-YYYY)
+        ``billing_period_end``     – end of the billing period (DD-MM-YYYY)
+        ``consumption``            – energy consumed (float, kWh, from PDF)
+        ``consumption_unit``       – ``"kWh"``
+        ``service_administration`` – administration fee (int)
+        ``electricity_consumption``– cost of consumed electricity (int)
+        ``electricity_transport``  – electricity transport charge (int)
+        ``stabilization_fund``     – stabilisation fund charge (int)
+        ``cost_per_kwh``           – cost per kWh (electricity_consumption /
+                                     consumption, float); only set when both
+                                     values are available and consumption > 0
+        ``tariff_code``            – contracted tariff type (e.g. ``"BT1-T2"``)
+        ``connected_power``        – contracted connected power (int, kW)
+        ``connected_power_unit``   – unit of connected power (e.g. ``"kW"``)
+        ``area``                   – typical area (e.g. ``"AREA 1 S Caso 3 (a)"``)
+        ``substation``             – supplying substation name
+    """
+    attrs: dict[str, Any] = {}
+
+    # Billing period — primary: Spanish month format "30 Dic 2025 - 29 Ene 2026"
+    period_match = _ELEC_PDF_BILLING_PERIOD_RE.search(text)
+    if period_match:
+        start = _parse_spanish_date(
+            period_match.group(1), period_match.group(2), period_match.group(3)
+        )
+        end = _parse_spanish_date(
+            period_match.group(4), period_match.group(5), period_match.group(6)
+        )
+        if start:
+            attrs["billing_period_start"] = start
+        if end:
+            attrs["billing_period_end"] = end
+
+    # Billing period — fallback: DD/MM/YYYY format from "Período de lectura"
+    if "billing_period_start" not in attrs:
+        lectura_match = _ELEC_PDF_PERIOD_LECTURA_RE.search(text)
+        if lectura_match:
+            attrs["billing_period_start"] = lectura_match.group(1).replace("/", "-")
+            attrs["billing_period_end"] = lectura_match.group(2).replace("/", "-")
+
+    # Billing breakdown table — matches the column-separated layout extracted
+    # by pdfminer: labels / $ signs / amounts (each column as a separate block).
+    table_match = _ELEC_PDF_TABLE_RE.search(text)
+    if table_match:
+        attrs["consumption"] = _parse_consumption_to_float(table_match.group(1).strip())
+        attrs["consumption_unit"] = table_match.group(2)        # "kWh"
+        attrs["service_administration"] = _parse_amount_to_int(table_match.group(3).strip())
+        attrs["electricity_consumption"] = _parse_amount_to_int(table_match.group(4).strip())
+        attrs["electricity_transport"] = _parse_amount_to_int(table_match.group(5).strip())
+        attrs["stabilization_fund"] = _parse_amount_to_int(table_match.group(6).strip())
+
+    # cost_per_kwh — cost per kWh consumed.
+    # Calculated only when both values are available and consumption > 0.
+    elec_cost = attrs.get("electricity_consumption")
+    consumption_val = attrs.get("consumption")
+    if elec_cost and consumption_val and consumption_val > 0:
+        attrs["cost_per_kwh"] = round(elec_cost / consumption_val, 2)
+
+    # "Tipo de tarifa contratada: BT1-T2"
+    tariff_match = _ELEC_PDF_TARIFF_CODE_RE.search(text)
+    if tariff_match:
+        attrs["tariff_code"] = tariff_match.group(1).strip()
+
+    # "Potencia conectada: 2,500 kW"
+    power_match = _ELEC_PDF_CONNECTED_POWER_RE.search(text)
+    if power_match:
+        attrs["connected_power"] = _parse_amount_to_int(power_match.group(1).strip())
+        attrs["connected_power_unit"] = power_match.group(2)
+
+    # "Área Típica: AREA 1 S Caso 3 (a)"
+    area_match = _ELEC_PDF_AREA_RE.search(text)
+    if area_match:
+        attrs["area"] = area_match.group(1).strip()
+
+    # "Subestación: SAN CRISTOBAL"
+    substation_match = _ELEC_PDF_SUBSTATION_RE.search(text)
+    if substation_match:
+        attrs["substation"] = substation_match.group(1).strip()
+
+    return attrs
+
+
+# ---------------------------------------------------------------------------
+# Routing helpers
 # ---------------------------------------------------------------------------
 
 def _extract_type_specific_attributes(text: str, service_type: str) -> dict[str, Any]:
-    """Dispatch to the extractor for *service_type* and return its results."""
+    """Dispatch to the **email** extractor for *service_type* and return its results."""
     if service_type == SERVICE_TYPE_WATER:
         return _extract_water_attributes(text)
     if service_type == SERVICE_TYPE_GAS:
         return _extract_gas_attributes(text)
     if service_type == SERVICE_TYPE_ELECTRICITY:
         return _extract_electricity_attributes(text)
+    return {}
+
+
+def _extract_pdf_type_specific_attributes(text: str, service_type: str) -> dict[str, Any]:
+    """Dispatch to the **PDF** extractor for *service_type* and return its results.
+
+    Each service type has a dedicated PDF extractor whose patterns are tuned to
+    the layout of that issuer's PDF bill — separate from the email extractor.
+    Service types that do not yet have a PDF-specific extractor fall back to an
+    empty dict (no attributes extracted from the PDF).
+    """
+    if service_type == SERVICE_TYPE_GAS:
+        return _extract_gas_pdf_attributes(text)
+    if service_type == SERVICE_TYPE_ELECTRICITY:
+        return _extract_electricity_pdf_attributes(text)
     return {}
 
 
@@ -677,3 +951,68 @@ def extract_attributes_from_email(msg: Any) -> dict[str, Any]:
         _LOGGER.debug("Error extracting body for attribute extraction: %s", err)
     
     return extract_attributes_from_email_body(subject, body)
+
+
+def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_UNKNOWN) -> dict[str, Any]:
+    """Extract billing attributes from a downloaded PDF file.
+
+    Uses ``pdfminer.six`` to convert the PDF to plain text and then dispatches
+    to the **PDF-specific** extractor for *service_type* via
+    :func:`_extract_pdf_type_specific_attributes`.  Each service type has its
+    own dedicated PDF extractor whose patterns are tuned to that issuer's PDF
+    layout — separate from the email extractor.
+
+    Only attributes that can be reliably sourced from the PDF are returned;
+    the caller is responsible for merging these with email-derived attributes
+    (PDF values take precedence).
+
+    Currently implemented PDF extractors:
+    - **gas** — :func:`_extract_gas_pdf_attributes` (Metrogas, Jan 2026):
+      ``consumption``, ``consumption_unit``, ``cost_per_m3s``, ``total_amount``
+    - **electricity** — :func:`_extract_electricity_pdf_attributes` (Enel, Feb 2026):
+      ``billing_period_start``, ``billing_period_end``, ``consumption``,
+      ``consumption_unit``, ``electricity_consumption``, ``service_administration``,
+      ``electricity_transport``, ``stabilization_fund``, ``cost_per_kwh``
+
+    Args:
+        pdf_path:     Absolute path to the downloaded PDF file.
+        service_type: One of the ``SERVICE_TYPE_*`` constants.
+
+    Returns:
+        Dictionary with attributes extracted from the PDF, or an empty dict
+        if the PDF could not be read, the service type has no PDF extractor,
+        or no attributes were found.
+    """
+    try:
+        from pdfminer.high_level import extract_text as _pdf_extract_text  # type: ignore[import-untyped]
+    except ImportError:
+        _LOGGER.warning(
+            "pdfminer.six is not installed; PDF attribute extraction is unavailable. "
+            "Install it via 'pip install pdfminer.six' or add it to manifest requirements."
+        )
+        return {}
+
+    try:
+        pdf_text = _pdf_extract_text(pdf_path)
+    except Exception as err:
+        _LOGGER.debug("Could not extract text from PDF '%s': %s", pdf_path, err)
+        return {}
+
+    if not pdf_text:
+        return {}
+
+    attrs: dict[str, Any] = {}
+    try:
+        # Cap text length for performance (PDFs can be large)
+        if len(pdf_text) > 50000:
+            pdf_text = pdf_text[:50000]
+
+        # Apply the PDF-specific extractor for this service type.
+        # Each service type has its own PDF extractor tuned to that issuer's
+        # PDF layout (separate from the email extractor).
+        pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type)
+        attrs.update(pdf_attrs)
+    except Exception as err:
+        _LOGGER.debug("Error extracting attributes from PDF '%s': %s", pdf_path, err)
+
+    return attrs

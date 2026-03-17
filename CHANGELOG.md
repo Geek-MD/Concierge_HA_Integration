@@ -5,7 +5,170 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.6] - 2026-03-17
+## [0.6.4] - 2026-03-17
+
+### Added
+- **5 new electricity-specific PDF attributes** (`attribute_extractor.py`):
+  All extracted from the Enel PDF header block that appears at the very
+  beginning of the extracted text.
+
+  | Attribute | Source phrase | Value |
+  |---|---|---|
+  | `tariff_code` | `Tipo de tarifa contratada: BT1-T2` | `"BT1-T2"` |
+  | `connected_power` | `Potencia conectada: 2,500 kW` | `2500` (int) |
+  | `connected_power_unit` | `Potencia conectada: 2,500 kW` | `"kW"` |
+  | `area` | `Área Típica: AREA 1 S Caso 3 (a)` | `"AREA 1 S Caso 3 (a)"` |
+  | `substation` | `Subestación: SAN CRISTOBAL` | `"SAN CRISTOBAL"` |
+
+  New regexes: `_ELEC_PDF_TARIFF_CODE_RE`, `_ELEC_PDF_CONNECTED_POWER_RE`,
+  `_ELEC_PDF_AREA_RE`, `_ELEC_PDF_SUBSTATION_RE`.
+
+  `connected_power` is parsed by `_parse_amount_to_int` which correctly
+  handles the Chilean format ``2,500`` → ``2500``.
+
+### Changed
+- **`_ELECTRICITY_ATTR_DEFAULTS`** (`sensor.py`): Added `tariff_code` (default
+  `0`), `connected_power` (default `0`), `connected_power_unit` (default `0`),
+  `area` (default `0`), `substation` (default `0`) to the electricity sensor's
+  attribute set.
+- **`manifest.json`**: Version bumped to `0.6.4`.
+
+## [0.6.3] - 2026-03-17
+
+### Changed
+- **Service-type-specific attribute sets** (`sensor.py`): Each service sensor
+  now exposes only the attributes relevant to its service type, instead of
+  showing every attribute (gas + electricity) regardless of type.
+
+  - `_STANDARD_ATTRS` replaced by:
+    - `_COMMON_ATTRS` — universal attributes present for every service type
+      (folio, billing dates, customer number, address, due date, total amount,
+      consumption, consumption unit).
+    - `_GAS_ATTR_DEFAULTS` — gas-only defaults: `cost_per_m3s`.
+    - `_ELECTRICITY_ATTR_DEFAULTS` — electricity-only defaults:
+      `service_administration`, `electricity_transport`, `stabilization_fund`,
+      `electricity_consumption`, `cost_per_kwh`.
+    - `_SERVICE_TYPE_ATTR_DEFAULTS` — mapping `service_type → defaults dict`,
+      making it straightforward to add water-specific attributes later.
+  - `extra_state_attributes` initialises universal defaults then adds
+    service-type-specific defaults only for the matching type.  Extracted
+    values are applied to both sets independently.
+  - **Gas sensor** exposes 16 attributes (15 universal + `cost_per_m3s`).
+  - **Electricity sensor** exposes 20 attributes (15 universal + 5 electricity).
+  - **Water / unknown sensors** expose only the 15 universal attributes.
+- **`manifest.json`**: Version bumped to `0.6.3`.
+
+
+
+### Added
+- **Electricity PDF extractor for Enel Distribución Chile** (`attribute_extractor.py`):
+  A new dedicated `_extract_electricity_pdf_attributes(text)` extracts attributes
+  that are only present in the Enel PDF bill, not in the notification email.
+
+  Key implementation detail: pdfminer reads the billing breakdown table as three
+  separate column blocks (labels / `$` signs / amounts), so the extractor uses a
+  single multi-line regex (`_ELEC_PDF_TABLE_RE`) that matches the full block in
+  column order rather than expecting label+amount on the same line.
+
+  New attributes extracted from the PDF:
+  - `billing_period_start` / `billing_period_end` – billing period dates
+    (DD-MM-YYYY), parsed from the Spanish-month format
+    "30 Dic 2025 - 29 Ene 2026" (primary) or the DD/MM/YYYY
+    "Período de lectura: 30/12/2025 - 29/01/2026" (fallback).
+  - `consumption` / `consumption_unit` – energy consumed confirmed from
+    the PDF (e.g. `505.0` / `"kWh"`).
+  - `service_administration` – administration fee in integer CLP.
+  - `electricity_consumption` – cost of consumed electricity in integer CLP.
+  - `electricity_transport` – electricity transport charge in integer CLP.
+  - `stabilization_fund` – stabilisation fund charge in integer CLP.
+  - `cost_per_kwh` – `electricity_consumption / consumption` (float, 2 dp).
+
+- **`_ELEC_PDF_BILLING_PERIOD_RE`** – regex for Spanish-month date range.
+- **`_ELEC_PDF_PERIOD_LECTURA_RE`** – fallback regex for DD/MM/YYYY date range.
+- **`_ELEC_PDF_TABLE_RE`** – column-aware regex for the Enel billing table.
+- **`_SPANISH_MONTH_MAP`** / **`_parse_spanish_date`** – helpers for
+  converting Spanish abbreviated month names to DD-MM-YYYY strings.
+
+### Changed
+- **`_extract_pdf_type_specific_attributes`** (`attribute_extractor.py`):
+  Routes `SERVICE_TYPE_ELECTRICITY` to `_extract_electricity_pdf_attributes`.
+- **PDF text cap** (`extract_attributes_from_pdf`): Increased from 15 000 to
+  50 000 characters.  The Enel PDF has key data at ~29 000–31 000 chars; the
+  old cap silently discarded all of it.
+- **`_STANDARD_ATTRS`** / **`extra_state_attributes`** (`sensor.py`): Added
+  `service_administration` (default `0`), `electricity_transport` (default `0`),
+  `stabilization_fund` (default `0`), `electricity_consumption` (default `0`),
+  and `cost_per_kwh` (default `0.0`) to the standard sensor attributes.
+- **`manifest.json`**: Version bumped to `0.6.2`.
+
+
+## [0.6.1] - 2026-03-17
+
+### Changed
+- **Dedicated PDF extractor per service type** (`attribute_extractor.py`):
+  The PDF extraction pipeline now mirrors the email extraction pipeline with
+  **separate extractor functions per service type**, instead of reusing the
+  email extractors for PDF text.
+
+  - **`_GAS_PDF_CONSUMPTION_LABELS`** *(new)*: regex for the Metrogas PDF
+    consumption label (``gas\s+consumido`` with ``[:\s\(]+`` separator),
+    kept separate from the email-body label patterns in
+    ``_GAS_CONSUMPTION_LABELS``.
+  - **`_extract_gas_pdf_attributes(text)`** *(new)*: dedicated PDF extractor
+    for Metrogas gas bills.  Contains only the patterns that appear in the
+    Metrogas PDF (``Gas consumido ( 5,95 m3s )``, ``$``-prefixed total
+    amount) and calculates ``cost_per_m3s``.
+  - **`_extract_pdf_type_specific_attributes(text, service_type)`** *(new)*:
+    routing helper for PDF extractors, parallel to the existing
+    ``_extract_type_specific_attributes`` (email router).  Service types
+    without a PDF extractor return an empty dict.
+  - **`_extract_gas_attributes(text)`** *(email-only)*: reverted to handle
+    email bodies only — ``gas\s+consumido`` (PDF-only label) and the ``(``
+    separator extension have been moved to the new PDF extractor.
+  - **`extract_attributes_from_pdf`**: updated to call
+    ``_extract_pdf_type_specific_attributes`` instead of the email router.
+- **`manifest.json`**: Version bumped to `0.6.1`.
+
+## [0.6.0] - 2026-03-17
+
+### Added
+- **PDF data extraction for gas service** (`attribute_extractor.py`):
+  A new `extract_attributes_from_pdf()` function uses `pdfminer.six` to
+  convert downloaded bill PDFs to plain text and applies the
+  service-type-specific PDF extractor.  For Metrogas, the PDF is the
+  authoritative source for gas consumption data not present in the
+  notification email.
+
+- **Gas consumption from Metrogas PDF** (`attribute_extractor.py`):
+  The gas PDF extractor recognises the PDF label
+  ``Gas consumido ( 5,95 m3s )`` and extracts the numeric value and unit.
+
+- **`consumption_unit` correctly set to `"m3s"`** (`attribute_extractor.py`):
+  The unit of measurement is extracted directly from the matched text
+  (group 2 of `_GAS_CONSUMPTION_RE`) instead of being hard-coded, so
+  ``"m3s"`` (Metrogas standardised cubic metres) is returned for Metrogas
+  PDFs while ``"m3"`` or ``"m³"`` is still returned for other formats.
+
+- **`cost_per_m3s` attribute** (`attribute_extractor.py`, `sensor.py`):
+  A new derived attribute ``cost_per_m3s`` (cost per standardised cubic metre)
+  is calculated as ``round(total_amount / consumption, 2)`` whenever both
+  values are available and consumption is positive.  It is exposed as a
+  standard sensor attribute with a default value of ``0.0``.
+
+- **`pdfminer.six` dependency** (`manifest.json`):
+  Added ``pdfminer.six>=20221105`` to the integration's pip requirements so
+  that Home Assistant installs the library automatically on first load.
+
+### Changed
+- **`_GAS_CONSUMPTION_RE`** (`attribute_extractor.py`): Extended to capture
+  the unit string (group 2: ``m3s`` / ``m3`` / ``m³``) alongside the
+  numeric value (group 1), enabling precise unit reporting.
+- **`sensor.py`**: After a bill PDF is downloaded, `extract_attributes_from_pdf`
+  is called automatically and its results are merged into the service
+  attributes (PDF values take precedence over email-derived values for the
+  same keys).  `cost_per_m3s` added to `_STANDARD_ATTRS` with default `0.0`.
+- **`manifest.json`**: Version bumped to `0.6.0`.
+
 
 ### Added
 - **Richer PDF link detection in email bodies** (`pdf_downloader.py`):
