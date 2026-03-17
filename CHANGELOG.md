@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.11] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download — acepta.com depot URL extraction** (`pdf_downloader.py`):
+  The acepta.com document depot URL
+  (`http://metrogas{YYMM}.acepta.com/depot/{hash}?k={token}`) that the
+  Metrogas bill viewer opens is reachable from the email via two paths that
+  the previous code did not cover:
+
+  1. **`<iframe src>` / `<embed src>` / `<object data>` / `<form action>`
+     extraction in `_LinkExtractor`** — the acepta.com viewer URL often
+     appears as an inline-frame source or embedded-object ``data`` attribute
+     in the email HTML or in the HTML page served by the fidelizador.com
+     click-tracker.  `_LinkExtractor` previously only inspected ``<a href>``
+     tags; it now also records HTTP(S) URLs from these four element types
+     with an empty text label, so they are classified purely by URL content
+     (tier 3 — matches ``acepta\.com`` in `_PDF_HREF_KEYWORDS`).
+
+  2. **`_try_html_redirect_download` — full billing-URL scan as fallback** —
+     when the fidelizador.com tracker page uses an *indirect* JavaScript
+     redirect (``var u = "https://…"; window.location.href = u;``) the
+     ``_extract_url_from_html_redirect`` helper returns ``None`` because it
+     only matches *direct string literals*.  The acepta.com URL is, however,
+     present in the ``<script>`` block as a string and is already found by
+     ``_find_urls_in_script_tags`` → ``_find_pdf_links_in_html``.
+     ``_try_html_redirect_download`` now builds a combined candidate list
+     from **both** ``_extract_url_from_html_redirect`` (priority 1) **and**
+     ``_find_pdf_links_in_html`` (priority 2 — covers ``<a href>``,
+     ``<iframe src>``, ``<script>`` variables, etc.), and tries each in
+     order.
+
+  3. **Depth-limited recursive HTML following** — the two-hop chain
+     *fidelizador.com → acepta.com viewer → PDF download link* is now
+     resolved automatically.  ``_try_html_redirect_download`` accepts a
+     ``_depth`` parameter and recurses up to two levels deep, so if the
+     acepta.com viewer itself returns HTML with a *"Descargar PDF"* link or
+     an embedded iframe pointing at the actual PDF bytes, that final hop is
+     also followed.  The depth cap (``_MAX_HTML_DEPTH = 2``) prevents
+     infinite loops.
+
 ## [0.6.10] - 2026-03-17
 
 ### Fixed

@@ -129,7 +129,7 @@ _CONTAINER_TAGS = frozenset({
 })
 
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.10 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.11 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -190,6 +190,24 @@ class _LinkExtractor(HTMLParser):
     a sibling text node placed after the closing ``</a>`` tag.  Context is
     reset at every :data:`_CONTAINER_TAGS` boundary so that text from
     unrelated table cells is never associated with a link.
+
+    **Embedded-resource URLs** — the following void/non-anchor elements
+    are also scanned because email senders (notably Metrogas / acepta.com)
+    sometimes embed the actual document viewer URL in them rather than in a
+    plain ``<a href>``:
+
+    - ``<iframe src="…">`` — the acepta.com document depot viewer is
+      commonly embedded as an inline frame in the email body or in the
+      redirect page served by the click-tracking platform (fidelizador.com).
+    - ``<frame src="…">`` — older frameset variant.
+    - ``<embed src="…">`` — plugin-based embedding (PDF viewer).
+    - ``<object data="…">`` — object-element embedding.
+    - ``<form action="…">`` — some acepta.com integrations use a GET form
+      whose ``action`` is the document depot URL.
+
+    URLs from these elements are added with an empty text label and
+    therefore classified purely by their URL content (tier 3 in the
+    priority scheme used by :func:`_find_pdf_links_in_html`).
     """
 
     def __init__(self) -> None:
@@ -262,6 +280,26 @@ class _LinkExtractor(HTMLParser):
             alt = (attr_dict.get("alt") or "").strip()
             if alt:
                 self._current_text.append(alt)
+        elif tag in ("iframe", "frame"):
+            # Inline-frame / frame: the document viewer URL is in "src".
+            # acepta.com depot viewer URLs appear here in Metrogas emails
+            # and in the redirect HTML served by fidelizador.com.
+            src = (attr_dict.get("src") or "").strip()
+            if src.startswith("http"):
+                self._links.append((src, ""))
+        elif tag == "embed":
+            src = (attr_dict.get("src") or "").strip()
+            if src.startswith("http"):
+                self._links.append((src, ""))
+        elif tag == "object":
+            data = (attr_dict.get("data") or "").strip()
+            if data.startswith("http"):
+                self._links.append((data, ""))
+        elif tag == "form":
+            # Some acepta.com integrations expose the depot URL as a GET form action.
+            action = (attr_dict.get("action") or "").strip()
+            if action.startswith("http"):
+                self._links.append((action, ""))
         elif tag in _CONTAINER_TAGS:
             # Entering a new container: reset context so text from the
             # previous cell/section is not carried over.
@@ -469,66 +507,133 @@ def _try_html_redirect_download(
     html_data: bytes,
     content_type: str,
     dest_path: str,
+    _depth: int = 0,
 ) -> str | None:
-    """Attempt to follow a client-side HTML redirect and download the PDF.
+    """Attempt to extract a PDF from an HTML page returned instead of a PDF.
 
     Called by :func:`_download_first_valid_pdf` when a candidate URL returns
-    an HTML page instead of a PDF.  Decodes the HTML, extracts the redirect
-    target via :func:`_extract_url_from_html_redirect`, fetches that target,
-    and — if the result is a valid PDF — writes it to *dest_path*.
+    an HTML page.  This covers two families of cases:
+
+    1. **Click-tracking redirects** (e.g. *fidelizador.com*) — the HTML is a
+       thin wrapper that redirects the browser to the real document URL via a
+       ``<meta http-equiv="refresh">`` tag or a JavaScript statement such as
+       ``window.location.href = '…'`` or ``window.location = variable``.
+
+    2. **Document viewer pages** (e.g. *acepta.com/depot/*) — the HTML is an
+       actual viewer page that embeds the PDF in an ``<iframe>``, an
+       ``<embed>``, an ``<object>``, or exposes a download ``<a href>`` link.
+
+    The function builds a prioritised candidate list and tries each URL in
+    order:
+
+    a. An explicit client-side redirect discovered by
+       :func:`_extract_url_from_html_redirect` (meta-refresh / direct JS
+       location assignment).
+    b. All billing-related URLs found anywhere in the HTML by
+       :func:`_find_pdf_links_in_html` — this covers ``<a href>``, script
+       variables (e.g. ``var url = "https://acepta.com/…"``), ``<iframe
+       src>``, ``<embed src>``, ``<object data>``, and ``<form action>``.
+
+    If a candidate itself returns HTML and the recursion depth is below
+    ``_MAX_HTML_DEPTH``, this function is called recursively so that a
+    two-hop chain (fidelizador → acepta viewer → PDF) is resolved
+    automatically.
 
     Args:
         original_url: The URL that returned the HTML page (for logging).
         html_data:    Raw bytes of the HTML response body.
         content_type: ``Content-Type`` header of the HTML response.
         dest_path:    Destination path to write the PDF to.
+        _depth:       Current recursion depth (internal; callers omit this).
 
     Returns:
-        *dest_path* on success, ``None`` if no redirect target was found or
-        the redirect target did not return a valid PDF.
+        *dest_path* on success, ``None`` if no valid PDF could be obtained.
     """
+    _MAX_HTML_DEPTH = 2
+
     charset = _charset_from_content_type(content_type, default="iso-8859-1")
     try:
         html_text = html_data.decode(charset, errors="ignore")
     except Exception:
         html_text = html_data.decode("utf-8", errors="ignore")
 
+    # --- Build a deduplicated, prioritised candidate list -----------------
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    # Priority 1 — explicit client-side redirect (meta-refresh / JS literal)
     redirect_url = _extract_url_from_html_redirect(html_text)
-    if not redirect_url:
+    if redirect_url:
+        seen.add(redirect_url)
+        candidates.append(redirect_url)
+
+    # Priority 2 — billing URLs found anywhere in the HTML
+    # (covers <a href>, <iframe src>, <embed>, <object>, <form action>,
+    #  <script> variables, etc.)
+    for url in _find_pdf_links_in_html(html_text):
+        if url not in seen:
+            seen.add(url)
+            candidates.append(url)
+
+    if not candidates:
+        _LOGGER.warning(
+            "URL %s returned HTML but no redirect target or billing URL found "
+            "(depth=%d)",
+            original_url,
+            _depth,
+        )
         return None
 
     _LOGGER.info(
-        "URL %s returned HTML redirect; following to %s",
+        "URL %s returned HTML (depth=%d); trying %d candidate(s): %s",
         original_url,
-        redirect_url,
+        _depth,
+        len(candidates),
+        candidates,
     )
-    try:
-        rreq = urllib.request.Request(
-            redirect_url, headers={"User-Agent": _HTTP_USER_AGENT}
-        )
-        with urllib.request.urlopen(rreq, timeout=_DOWNLOAD_TIMEOUT) as rresp:
-            redirect_ct: str = rresp.headers.get("Content-Type", "")
-            redirect_data: bytes = rresp.read()
-    except urllib.error.URLError as err:
-        _LOGGER.warning(
-            "URL error following redirect to %s: %s", redirect_url, err
-        )
-        return None
 
-    if not ("application/pdf" in redirect_ct or redirect_data[:4] == _PDF_MAGIC):
+    for url in candidates:
+        _LOGGER.info("Fetching HTML-page candidate: %s", url)
+        try:
+            rreq = urllib.request.Request(
+                url, headers={"User-Agent": _HTTP_USER_AGENT}
+            )
+            with urllib.request.urlopen(rreq, timeout=_DOWNLOAD_TIMEOUT) as rresp:
+                rct: str = rresp.headers.get("Content-Type", "")
+                rdata: bytes = rresp.read()
+        except urllib.error.URLError as err:
+            _LOGGER.warning("URL error fetching %s: %s", url, err)
+            continue
+
+        if "application/pdf" in rct or rdata[:4] == _PDF_MAGIC:
+            with open(dest_path, "wb") as fh:
+                fh.write(rdata)
+            _LOGGER.info(
+                "Downloaded PDF via HTML page (depth=%d) %s → %s",
+                _depth,
+                url,
+                dest_path,
+            )
+            return dest_path
+
+        # Another HTML response — recurse if depth budget allows
+        if "text/html" in rct and _depth < _MAX_HTML_DEPTH:
+            result = _try_html_redirect_download(
+                url, rdata, rct, dest_path, _depth + 1
+            )
+            if result:
+                return result
+            continue
+
         _LOGGER.warning(
-            "Redirect target %s did not return a PDF "
+            "Candidate %s did not return a PDF "
             "(Content-Type: %s, first bytes: %r)",
-            redirect_url,
-            redirect_ct,
-            redirect_data[:16],
+            url,
+            rct,
+            rdata[:16],
         )
-        return None
 
-    with open(dest_path, "wb") as fh:
-        fh.write(redirect_data)
-    _LOGGER.info("Downloaded PDF via redirect %s → %s", redirect_url, dest_path)
-    return dest_path
+    return None
 
 
 def _find_pdf_links_in_html(html_body: str) -> list[str]:
