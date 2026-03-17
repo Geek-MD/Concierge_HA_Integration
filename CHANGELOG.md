@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-03-17
+
+### Added
+- **Water PDF extractor — Aguas Andinas** (`attribute_extractor.py`):
+  New function `_extract_water_pdf_attributes` and its companion regex
+  constants, registered in `_extract_pdf_type_specific_attributes` for
+  `SERVICE_TYPE_WATER`.
+
+  Key observations (reference PDF: February 2026):
+  - pdfminer reads two-column table sections column-by-column (labels first,
+    then values), so label-based lookups with short windows fail; each
+    pattern is anchored to a landmark visible in the pdfminer output.
+  - Address spans two lines after `SEÑOR RESIDENTE` in the header.
+  - Account number follows the `Nro de cuenta` label (with a blank line)
+    at the bottom of the bill.
+  - Due date follows the `VENCIMIENTO` label in the header.
+  - CONSUMO TOTAL value is the last m³ entry in the readings block before
+    `MODALIDAD DE PRORRATEO`.
+  - Tariff rates appear in a published-rates block as `Label = $ value`.
+
+  | Attribute | Source phrase | Value | Type |
+  |---|---|---|---|
+  | `address` | `SEÑOR RESIDENTE\nGENERAL JOFRE  385-515\nSANTIAGO` | `"GENERAL JOFRE 385-515 SANTIAGO"` | str |
+  | `customer_number` | `Nro de cuenta\n\n1630935-4` | `"1630935-4"` | str |
+  | `due_date` | `VENCIMIENTO\n\n21-MAR-2026` | `"21-MAR-2026"` | str |
+  | `consumption` | `CONSUMO TOTAL … 10,98 m3` | `10.98` | float |
+  | `consumption_unit` | `CONSUMO TOTAL … 10,98 m3` | `"m3"` | str |
+  | `total_amount` | `TOTAL A PAGAR\n\n$ 15.700` | `15700` | int |
+  | `fixed_charge` | `Cargo fijo = $ 914` | `914` | int |
+  | `cubic_meter_peak_water_cost` | `Metro cúbico agua potable punta = $ 585,32` | `585.32` | float |
+  | `cubic_meter_non_peak_water_cost` | `Metro cúbico agua potable no punta = $ 585,28` | `585.28` | float |
+  | `cubic_meter_overconsumption` | `Metro cúbico sobreconsumo = $ 1.679,38` | `1679.38` | float |
+  | `cubic_meter_collection` | `Metro cúbico recolección = $ 446,45` | `446.45` | float |
+  | `cubic_meter_treatment` | `Metro cúbico tratamiento = $ 306,45` | `306.45` | float |
+
+  New regex constants: `_WATER_AA_PDF_ADDRESS_RE`, `_WATER_AA_PDF_ACCOUNT_RE`,
+  `_WATER_AA_PDF_DUE_DATE_RE`, `_WATER_AA_PDF_CONSUMO_LABEL_RE`,
+  `_WATER_AA_TARIFF_AMT`, `_WATER_AA_PDF_FIXED_CHARGE_RE`,
+  `_WATER_AA_PDF_PEAK_COST_RE`, `_WATER_AA_PDF_NON_PEAK_COST_RE`,
+  `_WATER_AA_PDF_OVERCONSUMPTION_RE`, `_WATER_AA_PDF_COLLECTION_RE`,
+  `_WATER_AA_PDF_TREATMENT_RE`.
+
+
 ## [0.6.4] - 2026-03-17
 
 ### Added

@@ -37,6 +37,7 @@ from .const import (
     SERVICE_TYPE_ELECTRICITY,
     SERVICE_TYPE_GAS,
     SERVICE_TYPE_UNKNOWN,
+    SERVICE_TYPE_WATER,
 )
 from .attribute_extractor import extract_attributes_from_email_body, extract_attributes_from_pdf, _strip_html
 from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
@@ -78,10 +79,18 @@ _ELECTRICITY_ATTR_DEFAULTS: dict[str, Any] = {
     "area": 0,
     "substation": 0,
 }
-# Water-specific attributes will be added here when defined.
+_WATER_ATTR_DEFAULTS: dict[str, Any] = {
+    "fixed_charge": 0,
+    "cubic_meter_peak_water_cost": 0.0,
+    "cubic_meter_non_peak_water_cost": 0.0,
+    "cubic_meter_overconsumption": 0.0,
+    "cubic_meter_collection": 0.0,
+    "cubic_meter_treatment": 0.0,
+}
 
 # Mapping from service type → its specific attribute defaults dict.
 _SERVICE_TYPE_ATTR_DEFAULTS: dict[str, dict[str, Any]] = {
+    SERVICE_TYPE_WATER: _WATER_ATTR_DEFAULTS,
     SERVICE_TYPE_GAS: _GAS_ATTR_DEFAULTS,
     SERVICE_TYPE_ELECTRICITY: _ELECTRICITY_ATTR_DEFAULTS,
 }
