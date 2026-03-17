@@ -5,6 +5,114 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.12] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download — Quoted-Printable email body without CTE header**
+  (`pdf_downloader.py`): Metrogas billing emails delivered by *fidelizador.com*
+  are Quoted-Printable encoded.  In a standards-compliant email the MIME part
+  carries a ``Content-Transfer-Encoding: quoted-printable`` header, which
+  causes Python's ``email`` library to decode the QP bytes automatically when
+  ``get_payload(decode=True)`` is called.  However, some fidelizador.com
+  messages omit this header even though the body is fully QP-encoded.  Without
+  the header, ``get_payload(decode=True)`` returns the raw bytes unchanged,
+  so the HTML body contains:
+
+  * ``=3D`` instead of ``=`` in HTML attribute assignments — for example the
+    anchor tag appears as ``<a href=3D"https://trackercl1.fidelizador.com/…">``.
+    ``HTMLParser`` treats the ``=`` immediately after ``href`` as the
+    attribute-assignment operator and parses ``3D"https://…"`` as an
+    *unquoted* attribute value, yielding a ``href`` value of
+    ``3D"https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807=``
+    instead of the correct URL — which never starts with ``http`` and is
+    therefore silently discarded.
+  * ``=\n`` (QP soft line-break) splitting the tracking URL across two lines
+    — the second fragment (``CB3HF4E1ADBBCE…``) is parsed as a separate,
+    meaningless attribute and the first fragment is truncated at ``=``.
+
+  A new private helper ``_decode_qp_if_needed()`` is called immediately after
+  ``get_payload(decode=True)`` in both ``_get_html_body()`` and
+  ``_get_plain_text_body()``.  It checks whether the raw payload contains
+  ``=\n`` or ``=\r\n`` (QP soft line-breaks) — an unambiguous indicator of
+  QP-encoded content — and, if so, applies ``quopri.decodestring()`` to strip
+  the encoding before the bytes are decoded as a character set and passed to
+  the HTML/text parsers.  The helper is a no-op when the ``Content-Transfer-
+  Encoding`` header is already ``quoted-printable`` (Python has decoded the
+  bytes) or when the payload contains no soft line-breaks.
+
+## [0.6.11] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download — acepta.com depot URL extraction** (`pdf_downloader.py`):
+  The acepta.com document depot URL
+  (`http://metrogas{YYMM}.acepta.com/depot/{hash}?k={token}`) that the
+  Metrogas bill viewer opens is reachable from the email via two paths that
+  the previous code did not cover:
+
+  1. **`<iframe src>` / `<embed src>` / `<object data>` / `<form action>`
+     extraction in `_LinkExtractor`** — the acepta.com viewer URL often
+     appears as an inline-frame source or embedded-object ``data`` attribute
+     in the email HTML or in the HTML page served by the fidelizador.com
+     click-tracker.  `_LinkExtractor` previously only inspected ``<a href>``
+     tags; it now also records HTTP(S) URLs from these four element types
+     with an empty text label, so they are classified purely by URL content
+     (tier 3 — matches ``acepta\.com`` in `_PDF_HREF_KEYWORDS`).
+
+  2. **`_try_html_redirect_download` — full billing-URL scan as fallback** —
+     when the fidelizador.com tracker page uses an *indirect* JavaScript
+     redirect (``var u = "https://…"; window.location.href = u;``) the
+     ``_extract_url_from_html_redirect`` helper returns ``None`` because it
+     only matches *direct string literals*.  The acepta.com URL is, however,
+     present in the ``<script>`` block as a string and is already found by
+     ``_find_urls_in_script_tags`` → ``_find_pdf_links_in_html``.
+     ``_try_html_redirect_download`` now builds a combined candidate list
+     from **both** ``_extract_url_from_html_redirect`` (priority 1) **and**
+     ``_find_pdf_links_in_html`` (priority 2 — covers ``<a href>``,
+     ``<iframe src>``, ``<script>`` variables, etc.), and tries each in
+     order.
+
+  3. **Depth-limited recursive HTML following** — the two-hop chain
+     *fidelizador.com → acepta.com viewer → PDF download link* is now
+     resolved automatically.  ``_try_html_redirect_download`` accepts a
+     ``_depth`` parameter and recurses up to two levels deep, so if the
+     acepta.com viewer itself returns HTML with a *"Descargar PDF"* link or
+     an embedded iframe pointing at the actual PDF bytes, that final hop is
+     also followed.  The depth cap (``_MAX_HTML_DEPTH = 2``) prevents
+     infinite loops.
+
+## [0.6.10] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download — HTML click-tracking redirects** (`pdf_downloader.py`):
+  Metrogas emails delivered via the *fidelizador.com* platform embed billing
+  links as click-tracking URLs (e.g.
+  ``https://trackercl1.fidelizador.com/…``).  When the code fetched such a
+  URL it received an HTML page (``Content-Type: text/html``) instead of a
+  PDF, because the tracking server records the click and then redirects the
+  browser client-side rather than via an HTTP 301/302 response that
+  ``urllib`` would have followed automatically.
+
+  Two complementary changes address this:
+
+  1. **HTML redirect follower in `_download_first_valid_pdf()`** — when a
+     fetched URL returns an HTML page, the code now inspects the HTML for
+     common client-side redirect mechanisms and, if one is found, fetches
+     the redirect target and validates it as a PDF before writing it to
+     disk.  Two redirect patterns are recognised:
+
+     - ``<meta http-equiv="refresh" content="N; url=…">``
+     - JavaScript ``window.location.href = '…'`` /
+       ``location.replace('…')`` / ``location.assign('…')`` assignments
+       inside ``<script>`` blocks.
+
+     A single redirect hop is followed per candidate URL to prevent loops.
+
+  2. **`fidelizador.com` added to `_PDF_HREF_KEYWORDS`** — ensures that
+     fidelizador.com tracking URLs discovered in email bodies (``<a href>``
+     or plain-text) are always classified as billing-related candidates and
+     included in the download attempt list, even when the URL path itself
+     carries no recognisable billing keyword.
+
 ## [0.6.9] - 2026-03-17
 
 ### Fixed

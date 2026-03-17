@@ -51,6 +51,7 @@ from __future__ import annotations
 import email as _email_lib
 import logging
 import os
+import quopri
 import re
 import time
 import urllib.error
@@ -98,7 +99,10 @@ _PDF_HREF_KEYWORDS = re.compile(
     r"|visualizar"
     # acepta.com is Chile's official electronic-document management portal;
     # any URL on that domain is a billing document viewer/download link.
-    r"|acepta\.com",
+    r"|acepta\.com"
+    # fidelizador.com is a Chilean email-marketing platform used by Metrogas
+    # and other utilities; their tracker URLs redirect to the real document.
+    r"|fidelizador\.com",
     re.IGNORECASE,
 )
 
@@ -126,13 +130,37 @@ _CONTAINER_TAGS = frozenset({
 })
 
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.9 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.12 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
 
 # First four bytes of every valid PDF file
 _PDF_MAGIC = b"%PDF"
+
+# <meta http-equiv="refresh" content="N; url=REDIRECT_URL"> — order of the
+# two attributes may be swapped, so we match both orderings separately.
+# Group 1 (when http-equiv comes first) or Group 2 (when content comes first)
+# holds the redirect URL.
+_META_REFRESH_RE = re.compile(
+    r'<meta\b[^>]*\bhttp-equiv\s*=\s*["\']?refresh["\']?\b[^>]*'
+    r'\bcontent\s*=\s*["\'][^"\']*;\s*url\s*=\s*([^"\'>\s]+)["\']'
+    r'|<meta\b[^>]*\bcontent\s*=\s*["\'][^"\']*;\s*url\s*=\s*([^"\'>\s]+)["\']'
+    r'[^>]*\bhttp-equiv\s*=\s*["\']?refresh["\']?',
+    re.IGNORECASE,
+)
+
+# JavaScript patterns that unconditionally redirect the browser to a URL:
+#   window.location.href = 'URL'
+#   window.location = 'URL'
+#   location.href = 'URL'
+#   location.replace('URL')
+#   location.assign('URL')
+_JS_LOCATION_RE = re.compile(
+    r'(?:window\.)?location(?:\.href)?\s*=\s*["\']([^"\']+)["\']'
+    r'|location\.(?:replace|assign)\s*\(\s*["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +191,24 @@ class _LinkExtractor(HTMLParser):
     a sibling text node placed after the closing ``</a>`` tag.  Context is
     reset at every :data:`_CONTAINER_TAGS` boundary so that text from
     unrelated table cells is never associated with a link.
+
+    **Embedded-resource URLs** — the following void/non-anchor elements
+    are also scanned because email senders (notably Metrogas / acepta.com)
+    sometimes embed the actual document viewer URL in them rather than in a
+    plain ``<a href>``:
+
+    - ``<iframe src="…">`` — the acepta.com document depot viewer is
+      commonly embedded as an inline frame in the email body or in the
+      redirect page served by the click-tracking platform (fidelizador.com).
+    - ``<frame src="…">`` — older frameset variant.
+    - ``<embed src="…">`` — plugin-based embedding (PDF viewer).
+    - ``<object data="…">`` — object-element embedding.
+    - ``<form action="…">`` — some acepta.com integrations use a GET form
+      whose ``action`` is the document depot URL.
+
+    URLs from these elements are added with an empty text label and
+    therefore classified purely by their URL content (tier 3 in the
+    priority scheme used by :func:`_find_pdf_links_in_html`).
     """
 
     def __init__(self) -> None:
@@ -235,6 +281,26 @@ class _LinkExtractor(HTMLParser):
             alt = (attr_dict.get("alt") or "").strip()
             if alt:
                 self._current_text.append(alt)
+        elif tag in ("iframe", "frame"):
+            # Inline-frame / frame: the document viewer URL is in "src".
+            # acepta.com depot viewer URLs appear here in Metrogas emails
+            # and in the redirect HTML served by fidelizador.com.
+            src = (attr_dict.get("src") or "").strip()
+            if src.startswith("http"):
+                self._links.append((src, ""))
+        elif tag == "embed":
+            src = (attr_dict.get("src") or "").strip()
+            if src.startswith("http"):
+                self._links.append((src, ""))
+        elif tag == "object":
+            data = (attr_dict.get("data") or "").strip()
+            if data.startswith("http"):
+                self._links.append((data, ""))
+        elif tag == "form":
+            # Some acepta.com integrations expose the depot URL as a GET form action.
+            action = (attr_dict.get("action") or "").strip()
+            if action.startswith("http"):
+                self._links.append((action, ""))
         elif tag in _CONTAINER_TAGS:
             # Entering a new container: reset context so text from the
             # previous cell/section is not carried over.
@@ -304,6 +370,58 @@ def _get_pdf_attachment_bytes(msg: _email_lib.message.Message) -> bytes | None:
     return None
 
 
+def _decode_qp_if_needed(
+    payload: bytes,
+    part: _email_lib.message.Message,
+) -> bytes:
+    """Apply Quoted-Printable decoding as a fallback when the CTE header is absent.
+
+    Python's :meth:`email.message.Message.get_payload` with ``decode=True``
+    only strips QP encoding when the part explicitly declares
+    ``Content-Transfer-Encoding: quoted-printable``.  Some email senders
+    (e.g. the *fidelizador.com* email-marketing platform used by Metrogas)
+    omit this header even though the body **is** QP-encoded.  Without the
+    header, ``get_payload(decode=True)`` returns the raw bytes unchanged, so
+    the HTML reaches :class:`_LinkExtractor` with:
+
+    * ``=3D`` in place of ``=`` in attribute assignments — causing
+      ``HTMLParser`` to misparse ``href=3D"..."`` as an unquoted attribute
+      value starting with ``3D"`` rather than the expected HTTP URL.
+    * ``=\\n`` (soft line-break) splitting a long URL across two lines — the
+      second fragment is parsed as a separate, meaningless attribute.
+
+    As a result, the fidelizador.com tracking URL for the *"Ver boleta"*
+    button is never extracted and the PDF cannot be downloaded.
+
+    This helper detects QP-encoded payloads by looking for the ``=\\n`` /
+    ``=\\r\\n`` soft line-break marker, which is unambiguous: it has no valid
+    meaning in HTML or plain-text outside of QP-encoded content.  When found,
+    :func:`quopri.decodestring` is applied so that the bytes passed to the
+    HTML/text parsers are always clean UTF-8 / charset-encoded text.
+
+    Args:
+        payload: Raw bytes returned by ``part.get_payload(decode=True)``.
+        part:    The MIME part (used to read the CTE header).
+
+    Returns:
+        QP-decoded bytes when a soft line-break is detected and the CTE header
+        does not already say ``quoted-printable``; otherwise *payload*
+        unchanged.
+    """
+    cte = (part.get("Content-Transfer-Encoding") or "").lower().strip()
+    if cte == "quoted-printable":
+        # Already decoded by get_payload(decode=True).
+        return payload
+    # Detect QP soft line-breaks, which are unambiguous indicators of
+    # QP-encoded content.
+    if b"=\r\n" in payload or b"=\n" in payload:
+        try:
+            return quopri.decodestring(payload)
+        except Exception:
+            pass
+    return payload
+
+
 def _get_html_body(msg: _email_lib.message.Message) -> str:
     """Return the raw HTML content of an email (concatenated parts)."""
     html_parts: list[str] = []
@@ -316,6 +434,7 @@ def _get_html_body(msg: _email_lib.message.Message) -> str:
                 continue
             payload = part.get_payload(decode=True)
             if payload:
+                payload = _decode_qp_if_needed(payload, part)  # type: ignore[arg-type]
                 charset = part.get_content_charset() or "utf-8"
                 html_parts.append(
                     payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
@@ -324,6 +443,7 @@ def _get_html_body(msg: _email_lib.message.Message) -> str:
         if msg.get_content_type() == "text/html":
             payload = msg.get_payload(decode=True)
             if payload:
+                payload = _decode_qp_if_needed(payload, msg)  # type: ignore[arg-type]
                 charset = msg.get_content_charset() or "utf-8"
                 html_parts.append(
                     payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
@@ -374,6 +494,201 @@ def _find_urls_in_script_tags(html_body: str) -> list[tuple[str, str]]:
             results.append((url, script_text[start:end]))
 
     return results
+
+
+def _extract_url_from_html_redirect(html: str) -> str | None:
+    """Try to find a redirect target URL from an HTML page.
+
+    Some email click-tracking services (e.g. *fidelizador.com*) serve a thin
+    HTML wrapper whose only purpose is to redirect the browser to the real
+    document URL.  Because ``urllib`` already follows HTTP-level redirects
+    (301/302/307/308), this function handles the two most common
+    *client-side* redirect mechanisms embedded in the HTML:
+
+    1. **``<meta http-equiv="refresh">``** — e.g.
+       ``<meta http-equiv="refresh" content="0; url=https://…">``.
+    2. **JavaScript location assignment** — e.g.
+       ``window.location.href = 'https://…'`` or
+       ``location.replace('https://…')``.
+
+    The first HTTP URL found by either mechanism is returned.  ``None`` is
+    returned when no redirect target can be extracted.
+
+    Args:
+        html: Raw HTML text of the response page.
+
+    Returns:
+        Absolute HTTP/HTTPS redirect target URL, or ``None``.
+    """
+    # 1. <meta http-equiv="refresh" …>
+    m = _META_REFRESH_RE.search(html)
+    if m:
+        url = (m.group(1) or m.group(2) or "").strip()
+        if url.startswith("http"):
+            return url
+
+    # 2. JavaScript location redirect inside <script> blocks
+    for script_m in _SCRIPT_TAG_RE.finditer(html):
+        script_text = script_m.group(1)
+        js_m = _JS_LOCATION_RE.search(script_text)
+        if js_m:
+            url = (js_m.group(1) or js_m.group(2) or "").strip()
+            if url.startswith("http"):
+                return url
+
+    return None
+
+
+def _charset_from_content_type(content_type: str, default: str = "utf-8") -> str:
+    """Parse the ``charset`` parameter from a ``Content-Type`` header value.
+
+    Args:
+        content_type: Raw ``Content-Type`` header string,
+                      e.g. ``"text/html; charset=iso-8859-1"``.
+        default:      Charset to return when none is found.
+
+    Returns:
+        Charset string (lowercased), or *default*.
+    """
+    for part in content_type.split(";"):
+        part = part.strip()
+        if part.lower().startswith("charset="):
+            return part.split("=", 1)[1].strip()
+    return default
+
+
+def _try_html_redirect_download(
+    original_url: str,
+    html_data: bytes,
+    content_type: str,
+    dest_path: str,
+    _depth: int = 0,
+) -> str | None:
+    """Attempt to extract a PDF from an HTML page returned instead of a PDF.
+
+    Called by :func:`_download_first_valid_pdf` when a candidate URL returns
+    an HTML page.  This covers two families of cases:
+
+    1. **Click-tracking redirects** (e.g. *fidelizador.com*) — the HTML is a
+       thin wrapper that redirects the browser to the real document URL via a
+       ``<meta http-equiv="refresh">`` tag or a JavaScript statement such as
+       ``window.location.href = '…'`` or ``window.location = variable``.
+
+    2. **Document viewer pages** (e.g. *acepta.com/depot/*) — the HTML is an
+       actual viewer page that embeds the PDF in an ``<iframe>``, an
+       ``<embed>``, an ``<object>``, or exposes a download ``<a href>`` link.
+
+    The function builds a prioritised candidate list and tries each URL in
+    order:
+
+    a. An explicit client-side redirect discovered by
+       :func:`_extract_url_from_html_redirect` (meta-refresh / direct JS
+       location assignment).
+    b. All billing-related URLs found anywhere in the HTML by
+       :func:`_find_pdf_links_in_html` — this covers ``<a href>``, script
+       variables (e.g. ``var url = "https://acepta.com/…"``), ``<iframe
+       src>``, ``<embed src>``, ``<object data>``, and ``<form action>``.
+
+    If a candidate itself returns HTML and the recursion depth is below
+    ``_MAX_HTML_DEPTH``, this function is called recursively so that a
+    two-hop chain (fidelizador → acepta viewer → PDF) is resolved
+    automatically.
+
+    Args:
+        original_url: The URL that returned the HTML page (for logging).
+        html_data:    Raw bytes of the HTML response body.
+        content_type: ``Content-Type`` header of the HTML response.
+        dest_path:    Destination path to write the PDF to.
+        _depth:       Current recursion depth (internal; callers omit this).
+
+    Returns:
+        *dest_path* on success, ``None`` if no valid PDF could be obtained.
+    """
+    _MAX_HTML_DEPTH = 2
+
+    charset = _charset_from_content_type(content_type, default="iso-8859-1")
+    try:
+        html_text = html_data.decode(charset, errors="ignore")
+    except Exception:
+        html_text = html_data.decode("utf-8", errors="ignore")
+
+    # --- Build a deduplicated, prioritised candidate list -----------------
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    # Priority 1 — explicit client-side redirect (meta-refresh / JS literal)
+    redirect_url = _extract_url_from_html_redirect(html_text)
+    if redirect_url:
+        seen.add(redirect_url)
+        candidates.append(redirect_url)
+
+    # Priority 2 — billing URLs found anywhere in the HTML
+    # (covers <a href>, <iframe src>, <embed>, <object>, <form action>,
+    #  <script> variables, etc.)
+    for url in _find_pdf_links_in_html(html_text):
+        if url not in seen:
+            seen.add(url)
+            candidates.append(url)
+
+    if not candidates:
+        _LOGGER.warning(
+            "URL %s returned HTML but no redirect target or billing URL found "
+            "(depth=%d)",
+            original_url,
+            _depth,
+        )
+        return None
+
+    _LOGGER.info(
+        "URL %s returned HTML (depth=%d); trying %d candidate(s): %s",
+        original_url,
+        _depth,
+        len(candidates),
+        candidates,
+    )
+
+    for url in candidates:
+        _LOGGER.info("Fetching HTML-page candidate: %s", url)
+        try:
+            rreq = urllib.request.Request(
+                url, headers={"User-Agent": _HTTP_USER_AGENT}
+            )
+            with urllib.request.urlopen(rreq, timeout=_DOWNLOAD_TIMEOUT) as rresp:
+                rct: str = rresp.headers.get("Content-Type", "")
+                rdata: bytes = rresp.read()
+        except urllib.error.URLError as err:
+            _LOGGER.warning("URL error fetching %s: %s", url, err)
+            continue
+
+        if "application/pdf" in rct or rdata[:4] == _PDF_MAGIC:
+            with open(dest_path, "wb") as fh:
+                fh.write(rdata)
+            _LOGGER.info(
+                "Downloaded PDF via HTML page (depth=%d) %s → %s",
+                _depth,
+                url,
+                dest_path,
+            )
+            return dest_path
+
+        # Another HTML response — recurse if depth budget allows
+        if "text/html" in rct and _depth < _MAX_HTML_DEPTH:
+            result = _try_html_redirect_download(
+                url, rdata, rct, dest_path, _depth + 1
+            )
+            if result:
+                return result
+            continue
+
+        _LOGGER.warning(
+            "Candidate %s did not return a PDF "
+            "(Content-Type: %s, first bytes: %r)",
+            url,
+            rct,
+            rdata[:16],
+        )
+
+    return None
 
 
 def _find_pdf_links_in_html(html_body: str) -> list[str]:
@@ -450,6 +765,7 @@ def _get_plain_text_body(msg: _email_lib.message.Message) -> str:
                 continue
             payload = part.get_payload(decode=True)
             if payload:
+                payload = _decode_qp_if_needed(payload, part)  # type: ignore[arg-type]
                 charset = part.get_content_charset() or "utf-8"
                 text_parts.append(
                     payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
@@ -458,6 +774,7 @@ def _get_plain_text_body(msg: _email_lib.message.Message) -> str:
         if msg.get_content_type() == "text/plain":
             payload = msg.get_payload(decode=True)
             if payload:
+                payload = _decode_qp_if_needed(payload, msg)  # type: ignore[arg-type]
                 charset = msg.get_content_charset() or "utf-8"
                 text_parts.append(
                     payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
@@ -714,23 +1031,31 @@ def _download_first_valid_pdf(
                 content_type: str = resp.headers.get("Content-Type", "")
                 pdf_data: bytes = resp.read()
 
-            # Validate PDF magic bytes or content-type header
-            if not (
-                "application/pdf" in content_type
-                or pdf_data[:4] == _PDF_MAGIC
-            ):
-                _LOGGER.warning(
-                    "URL %s did not return a PDF (Content-Type: %s, first bytes: %r)",
-                    url,
-                    content_type,
-                    pdf_data[:16],
+            # Validate PDF magic bytes or content-type header.
+            if "application/pdf" in content_type or pdf_data[:4] == _PDF_MAGIC:
+                with open(dest_path, "wb") as fh:
+                    fh.write(pdf_data)
+                _LOGGER.info("Downloaded PDF %s → %s", url, dest_path)
+                return dest_path
+
+            # If the response is HTML, attempt to follow a client-side
+            # redirect (meta-refresh or JS location assignment) that some
+            # click-tracking services (e.g. fidelizador.com) use to record
+            # clicks before sending the browser to the real document URL.
+            if "text/html" in content_type:
+                result = _try_html_redirect_download(
+                    url, pdf_data, content_type, dest_path
                 )
+                if result:
+                    return result
                 continue
 
-            with open(dest_path, "wb") as fh:
-                fh.write(pdf_data)
-            _LOGGER.info("Downloaded PDF %s → %s", url, dest_path)
-            return dest_path
+            _LOGGER.warning(
+                "URL %s did not return a PDF (Content-Type: %s, first bytes: %r)",
+                url,
+                content_type,
+                pdf_data[:16],
+            )
 
         except urllib.error.URLError as err:
             _LOGGER.warning("URL error downloading %s: %s", url, err)
