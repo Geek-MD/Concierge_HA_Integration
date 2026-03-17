@@ -72,6 +72,11 @@ _ELECTRICITY_ATTR_DEFAULTS: dict[str, Any] = {
     "stabilization_fund": 0,
     "electricity_consumption": 0,
     "cost_per_kwh": 0.0,
+    "tariff_code": 0,
+    "connected_power": 0,
+    "connected_power_unit": 0,
+    "area": 0,
+    "substation": 0,
 }
 # Water-specific attributes will be added here when defined.
 

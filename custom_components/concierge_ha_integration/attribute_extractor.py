@@ -627,6 +627,27 @@ _ELEC_PDF_TABLE_RE = re.compile(
     r"([0-9]{1,3}(?:[.,][0-9]{3})*)",        # stabilization_fund
     re.IGNORECASE,
 )
+# "Tipo de tarifa contratada: BT1-T2"
+_ELEC_PDF_TARIFF_CODE_RE = re.compile(
+    r"tipo\s+de\s+tarifa\s+contratada[:\s]+([^\n\r]{1,40})",
+    re.IGNORECASE,
+)
+# "Potencia conectada: 2,500 kW"
+# Group 1: numeric value (Chilean format), Group 2: unit (kW / kVA / MW)
+_ELEC_PDF_CONNECTED_POWER_RE = re.compile(
+    r"potencia\s+conectada[:\s]+([0-9]+(?:[.,][0-9]+)?)\s*(kVA|kW|MW)",
+    re.IGNORECASE,
+)
+# "Área Típica: AREA 1 S Caso 3 (a)"
+_ELEC_PDF_AREA_RE = re.compile(
+    r"[áa]rea\s+t[íi]pica[:\s]+([^\n\r]{1,80})",
+    re.IGNORECASE,
+)
+# "Subestación: SAN CRISTOBAL"
+_ELEC_PDF_SUBSTATION_RE = re.compile(
+    r"subestaci[oó]n[:\s]+([^\n\r]{1,80})",
+    re.IGNORECASE,
+)
 
 
 def _parse_spanish_date(day: str, month_str: str, year: str) -> str:
@@ -668,6 +689,11 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
         ``cost_per_kwh``           – cost per kWh (electricity_consumption /
                                      consumption, float); only set when both
                                      values are available and consumption > 0
+        ``tariff_code``            – contracted tariff type (e.g. ``"BT1-T2"``)
+        ``connected_power``        – contracted connected power (int, kW)
+        ``connected_power_unit``   – unit of connected power (e.g. ``"kW"``)
+        ``area``                   – typical area (e.g. ``"AREA 1 S Caso 3 (a)"``)
+        ``substation``             – supplying substation name
     """
     attrs: dict[str, Any] = {}
 
@@ -709,6 +735,27 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
     consumption_val = attrs.get("consumption")
     if elec_cost and consumption_val and consumption_val > 0:
         attrs["cost_per_kwh"] = round(elec_cost / consumption_val, 2)
+
+    # "Tipo de tarifa contratada: BT1-T2"
+    tariff_match = _ELEC_PDF_TARIFF_CODE_RE.search(text)
+    if tariff_match:
+        attrs["tariff_code"] = tariff_match.group(1).strip()
+
+    # "Potencia conectada: 2,500 kW"
+    power_match = _ELEC_PDF_CONNECTED_POWER_RE.search(text)
+    if power_match:
+        attrs["connected_power"] = _parse_amount_to_int(power_match.group(1).strip())
+        attrs["connected_power_unit"] = power_match.group(2)
+
+    # "Área Típica: AREA 1 S Caso 3 (a)"
+    area_match = _ELEC_PDF_AREA_RE.search(text)
+    if area_match:
+        attrs["area"] = area_match.group(1).strip()
+
+    # "Subestación: SAN CRISTOBAL"
+    substation_match = _ELEC_PDF_SUBSTATION_RE.search(text)
+    if substation_match:
+        attrs["substation"] = substation_match.group(1).strip()
 
     return attrs
 

@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-03-17
+
+### Added
+- **5 new electricity-specific PDF attributes** (`attribute_extractor.py`):
+  All extracted from the Enel PDF header block that appears at the very
+  beginning of the extracted text.
+
+  | Attribute | Source phrase | Value |
+  |---|---|---|
+  | `tariff_code` | `Tipo de tarifa contratada: BT1-T2` | `"BT1-T2"` |
+  | `connected_power` | `Potencia conectada: 2,500 kW` | `2500` (int) |
+  | `connected_power_unit` | `Potencia conectada: 2,500 kW` | `"kW"` |
+  | `area` | `Área Típica: AREA 1 S Caso 3 (a)` | `"AREA 1 S Caso 3 (a)"` |
+  | `substation` | `Subestación: SAN CRISTOBAL` | `"SAN CRISTOBAL"` |
+
+  New regexes: `_ELEC_PDF_TARIFF_CODE_RE`, `_ELEC_PDF_CONNECTED_POWER_RE`,
+  `_ELEC_PDF_AREA_RE`, `_ELEC_PDF_SUBSTATION_RE`.
+
+  `connected_power` is parsed by `_parse_amount_to_int` which correctly
+  handles the Chilean format ``2,500`` → ``2500``.
+
+### Changed
+- **`_ELECTRICITY_ATTR_DEFAULTS`** (`sensor.py`): Added `tariff_code` (default
+  `0`), `connected_power` (default `0`), `connected_power_unit` (default `0`),
+  `area` (default `0`), `substation` (default `0`) to the electricity sensor's
+  attribute set.
+- **`manifest.json`**: Version bumped to `0.6.4`.
+
 ## [0.6.3] - 2026-03-17
 
 ### Changed
