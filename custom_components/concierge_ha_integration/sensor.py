@@ -195,7 +195,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         try:
             cfg = self._cfg
-            imap = imaplib.IMAP4_SSL(cfg[CONF_IMAP_SERVER], cfg[CONF_IMAP_PORT])
+            imap = imaplib.IMAP4_SSL(
+                cfg[CONF_IMAP_SERVER], cfg[CONF_IMAP_PORT], timeout=30
+            )
             imap.login(cfg[CONF_EMAIL], cfg[CONF_PASSWORD])
             result["connection_status"] = "OK"
 
@@ -316,8 +318,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             )
                                             latest_attributes.update(pdf_attrs)
                                     except Exception as pdf_err:
-                                        _LOGGER.debug(
-                                            "PDF download skipped for service '%s': %s",
+                                        _LOGGER.warning(
+                                            "PDF download failed for service '%s': %s",
                                             service_id, pdf_err,
                                         )
                             except Exception:

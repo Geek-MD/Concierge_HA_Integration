@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] - 2026-03-17
+
+### Added
+- **PDF download logging** (`pdf_downloader.py`, `sensor.py`): Improved
+  observability for the PDF download pipeline by elevating key log messages
+  from DEBUG to INFO or WARNING level.  These messages are now visible in the
+  standard Home Assistant log without enabling debug logging:
+
+  - `INFO`  — PDF download started for each service, number of candidate URLs
+    found in the HTML body and plain-text body, each HTTP fetch attempt URL,
+    and successful downloads.
+  - `INFO`  — "No PDF links found in HTML/plain-text body" when the email
+    carries no recognisable billing links.
+  - `WARNING` — Failed HTTP requests (network or URL errors), responses that
+    are not a valid PDF (unexpected Content-Type / missing magic bytes, with
+    first 16 bytes logged for diagnosis), and the final "No PDF could be
+    obtained" outcome.
+  - `WARNING` — PDF download exceptions that were previously swallowed at
+    DEBUG level in the coordinator (`sensor.py`).
+
+### Fixed
+- **IMAP connection timeout** (`sensor.py`, `service_detector.py`): Added an
+  explicit ``timeout=30`` (seconds) to all ``imaplib.IMAP4_SSL`` constructor
+  calls.  Previously, if the IMAP server was unreachable or slow to respond
+  the socket would block indefinitely, causing the integration setup to hang
+  and triggering the Home Assistant bootstrap warning
+  *"Waiting for integrations to complete setup"*.
+
 ## [0.6.7] - 2026-03-17
 
 ### Fixed

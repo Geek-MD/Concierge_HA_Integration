@@ -105,7 +105,7 @@ _CONTAINER_TAGS = frozenset({
 })
 
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.7 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.8 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -516,8 +516,10 @@ def download_pdf_from_email(
     dest_path = os.path.join(pdf_dir, filename)
 
     if os.path.exists(dest_path):
-        _LOGGER.debug("PDF already present, skipping download: %s", dest_path)
+        _LOGGER.info("PDF already present, skipping download: %s", dest_path)
         return dest_path
+
+    _LOGGER.info("Starting PDF download for service '%s' (target: %s)", service_id, dest_path)
 
     # --- Strategy 1: PDF attachment ---
     pdf_bytes = _get_pdf_attachment_bytes(msg)
@@ -535,11 +537,20 @@ def download_pdf_from_email(
     if html_body:
         candidate_urls = _find_pdf_links_in_html(html_body)
         if not candidate_urls:
-            _LOGGER.debug("No PDF links found in HTML body for service '%s'", service_id)
+            _LOGGER.info(
+                "No PDF links found in HTML body for service '%s'", service_id
+            )
         else:
+            _LOGGER.info(
+                "Found %d PDF candidate URL(s) in HTML body for service '%s'",
+                len(candidate_urls),
+                service_id,
+            )
             result = _download_first_valid_pdf(candidate_urls, dest_path, service_id)
             if result:
                 return result
+    else:
+        _LOGGER.debug("No HTML body in email for service '%s'", service_id)
 
     # --- Strategy 3: URL in plain-text body ---
     text_body = _get_plain_text_body(msg)
@@ -548,15 +559,20 @@ def download_pdf_from_email(
     else:
         candidate_urls = _find_urls_in_plain_text(text_body)
         if not candidate_urls:
-            _LOGGER.debug(
+            _LOGGER.info(
                 "No PDF URLs found in plain-text body for service '%s'", service_id
             )
         else:
+            _LOGGER.info(
+                "Found %d PDF candidate URL(s) in plain-text body for service '%s'",
+                len(candidate_urls),
+                service_id,
+            )
             result = _download_first_valid_pdf(candidate_urls, dest_path, service_id)
             if result:
                 return result
 
-    _LOGGER.debug("No PDF could be obtained for service '%s'", service_id)
+    _LOGGER.warning("No PDF could be obtained for service '%s'", service_id)
     return None
 
 
@@ -573,7 +589,7 @@ def _download_first_valid_pdf(
     """
     for url in candidate_urls:
         try:
-            _LOGGER.debug("Attempting PDF download from %s", url)
+            _LOGGER.info("Attempting PDF download from %s", url)
             req = urllib.request.Request(
                 url, headers={"User-Agent": _HTTP_USER_AGENT}
             )
@@ -586,8 +602,11 @@ def _download_first_valid_pdf(
                 "application/pdf" in content_type
                 or pdf_data[:4] == _PDF_MAGIC
             ):
-                _LOGGER.debug(
-                    "URL %s did not return a PDF (Content-Type: %s)", url, content_type
+                _LOGGER.warning(
+                    "URL %s did not return a PDF (Content-Type: %s, first bytes: %r)",
+                    url,
+                    content_type,
+                    pdf_data[:16],
                 )
                 continue
 
@@ -597,7 +616,7 @@ def _download_first_valid_pdf(
             return dest_path
 
         except urllib.error.URLError as err:
-            _LOGGER.debug("URL error downloading %s: %s", url, err)
+            _LOGGER.warning("URL error downloading %s: %s", url, err)
         except OSError as err:
             _LOGGER.warning("Could not write downloaded PDF to %s: %s", dest_path, err)
 
