@@ -58,6 +58,11 @@ _STANDARD_ATTRS: tuple[str, ...] = (
     "consumption",
     "consumption_unit",
     "cost_per_m3s",
+    "service_administration",
+    "electricity_transport",
+    "stabilization_fund",
+    "electricity_consumption",
+    "cost_per_kwh",
 )
 
 # Webmail provider domains that are too generic for sender-domain matching.
@@ -513,6 +518,11 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
             "consumption": 0.0,
             "consumption_unit": 0,
             "cost_per_m3s": 0.0,
+            "service_administration": 0,
+            "electricity_transport": 0,
+            "stabilization_fund": 0,
+            "electricity_consumption": 0,
+            "cost_per_kwh": 0.0,
         }
 
         if self.coordinator.data:

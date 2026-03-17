@@ -570,6 +570,150 @@ def _extract_electricity_attributes(text: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Electricity-service PDF extractor (Enel Distribución Chile; Feb 2026)
+# ---------------------------------------------------------------------------
+# Spanish abbreviated month names used in Enel PDF date ranges.
+_SPANISH_MONTH_MAP: dict[str, int] = {
+    "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
+    "jul": 7, "ago": 8, "sep": 9, "oct": 10, "nov": 11, "dic": 12,
+}
+# Billing period date range with Spanish month names (primary source):
+# "30 Dic 2025 - 29 Ene 2026" — appears after "Monto del periodo" in the PDF.
+_ELEC_PDF_BILLING_PERIOD_RE = re.compile(
+    r"(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\.?\s+(\d{4})"
+    r"\s*[-–]\s*"
+    r"(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\.?\s+(\d{4})",
+    re.IGNORECASE,
+)
+# Fallback billing period from "Período de lectura: 30/12/2025 - 29/01/2026"
+# (DD/MM/YYYY format, always present in the Enel PDF).
+_ELEC_PDF_PERIOD_LECTURA_RE = re.compile(
+    r"per[íi]odo\s+de\s+lectura[:\s]+(\d{1,2}/\d{1,2}/\d{4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{4})",
+    re.IGNORECASE,
+)
+# Enel PDF billing breakdown — pdfminer reads the three-column table as
+# separate blocks: labels first, then a column of "$" signs, then amounts.
+# Exact structure extracted from Enel.pdf (Feb 2026):
+#
+#   Administración del servicio
+#   Electricidad Consumida (505kWh)
+#   Transporte de electricidad
+#   Cargo Fondo de Estabilización Ley 21.472
+#
+#   $              ← all $ signs stacked
+#   $
+#   $
+#   $
+#
+#   708            ← amounts in the same row order
+#   111.824
+#   8.479
+#   1.049
+#
+# Groups: (1) consumption value, (2) kWh unit,
+#         (3) service_administration, (4) electricity_consumption,
+#         (5) electricity_transport, (6) stabilization_fund
+_ELEC_PDF_TABLE_RE = re.compile(
+    r"administraci[oó]n\s+del\s+servicio\s*\n"
+    r"electricidad\s+consumida\s*\(([0-9]+(?:[.,][0-9]+)?)\s*(kWh)\)\s*\n"
+    r"transporte\s+de\s+electricidad\s*\n"
+    r"cargo\s+fondo\s+de\s+estabilizaci[oó]n[^\n]*\n"
+    r"\s*"                              # blank line between labels and $ column
+    r"\$\s*\n\$\s*\n\$\s*\n\$\s*\n"    # four "$" signs, one per line
+    r"\s*"                              # blank line between $ column and amounts
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)\s*\n"   # service_administration
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)\s*\n"   # electricity_consumption
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)\s*\n"   # electricity_transport
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)",        # stabilization_fund
+    re.IGNORECASE,
+)
+
+
+def _parse_spanish_date(day: str, month_str: str, year: str) -> str:
+    """Convert Spanish date parts to a ``DD-MM-YYYY`` string.
+
+    Returns an empty string if the month abbreviation is not recognised.
+    """
+    month_num = _SPANISH_MONTH_MAP.get(month_str[:3].lower(), 0)
+    if not month_num:
+        return ""
+    return f"{int(day):02d}-{month_num:02d}-{year}"
+
+
+def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
+    """Extract electricity-service attributes from an **Enel PDF** bill.
+
+    This extractor is dedicated to Enel Distribución Chile PDF bills and
+    handles patterns that appear exclusively in the PDF, not in the
+    notification email.
+
+    Key observations (reference PDF: February 2026):
+    - Billing period dates appear as ``30 Dic 2025 - 29 Ene 2026`` after
+      ``Monto del periodo`` and as ``30/12/2025 - 29/01/2026`` after
+      ``Período de lectura:``.
+    - The billing breakdown is a three-column table; pdfminer reads the
+      columns separately: label names, then ``$`` signs, then amounts
+      (each column as a block of newline-separated values).
+    - Amounts use Chilean thousands format: ``111.824`` → 111 824.
+
+    Extracted fields (all optional):
+        ``billing_period_start``   – start of the billing period (DD-MM-YYYY)
+        ``billing_period_end``     – end of the billing period (DD-MM-YYYY)
+        ``consumption``            – energy consumed (float, kWh, from PDF)
+        ``consumption_unit``       – ``"kWh"``
+        ``service_administration`` – administration fee (int)
+        ``electricity_consumption``– cost of consumed electricity (int)
+        ``electricity_transport``  – electricity transport charge (int)
+        ``stabilization_fund``     – stabilisation fund charge (int)
+        ``cost_per_kwh``           – cost per kWh (electricity_consumption /
+                                     consumption, float); only set when both
+                                     values are available and consumption > 0
+    """
+    attrs: dict[str, Any] = {}
+
+    # Billing period — primary: Spanish month format "30 Dic 2025 - 29 Ene 2026"
+    period_match = _ELEC_PDF_BILLING_PERIOD_RE.search(text)
+    if period_match:
+        start = _parse_spanish_date(
+            period_match.group(1), period_match.group(2), period_match.group(3)
+        )
+        end = _parse_spanish_date(
+            period_match.group(4), period_match.group(5), period_match.group(6)
+        )
+        if start:
+            attrs["billing_period_start"] = start
+        if end:
+            attrs["billing_period_end"] = end
+
+    # Billing period — fallback: DD/MM/YYYY format from "Período de lectura"
+    if "billing_period_start" not in attrs:
+        lectura_match = _ELEC_PDF_PERIOD_LECTURA_RE.search(text)
+        if lectura_match:
+            attrs["billing_period_start"] = lectura_match.group(1).replace("/", "-")
+            attrs["billing_period_end"] = lectura_match.group(2).replace("/", "-")
+
+    # Billing breakdown table — matches the column-separated layout extracted
+    # by pdfminer: labels / $ signs / amounts (each column as a separate block).
+    table_match = _ELEC_PDF_TABLE_RE.search(text)
+    if table_match:
+        attrs["consumption"] = _parse_consumption_to_float(table_match.group(1).strip())
+        attrs["consumption_unit"] = table_match.group(2)        # "kWh"
+        attrs["service_administration"] = _parse_amount_to_int(table_match.group(3).strip())
+        attrs["electricity_consumption"] = _parse_amount_to_int(table_match.group(4).strip())
+        attrs["electricity_transport"] = _parse_amount_to_int(table_match.group(5).strip())
+        attrs["stabilization_fund"] = _parse_amount_to_int(table_match.group(6).strip())
+
+    # cost_per_kwh — cost per kWh consumed.
+    # Calculated only when both values are available and consumption > 0.
+    elec_cost = attrs.get("electricity_consumption")
+    consumption_val = attrs.get("consumption")
+    if elec_cost and consumption_val and consumption_val > 0:
+        attrs["cost_per_kwh"] = round(elec_cost / consumption_val, 2)
+
+    return attrs
+
+
+# ---------------------------------------------------------------------------
 # Routing helpers
 # ---------------------------------------------------------------------------
 
@@ -594,6 +738,8 @@ def _extract_pdf_type_specific_attributes(text: str, service_type: str) -> dict[
     """
     if service_type == SERVICE_TYPE_GAS:
         return _extract_gas_pdf_attributes(text)
+    if service_type == SERVICE_TYPE_ELECTRICITY:
+        return _extract_electricity_pdf_attributes(text)
     return {}
 
 
@@ -776,6 +922,10 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
     Currently implemented PDF extractors:
     - **gas** — :func:`_extract_gas_pdf_attributes` (Metrogas, Jan 2026):
       ``consumption``, ``consumption_unit``, ``cost_per_m3s``, ``total_amount``
+    - **electricity** — :func:`_extract_electricity_pdf_attributes` (Enel, Feb 2026):
+      ``billing_period_start``, ``billing_period_end``, ``consumption``,
+      ``consumption_unit``, ``electricity_consumption``, ``service_administration``,
+      ``electricity_transport``, ``stabilization_fund``, ``cost_per_kwh``
 
     Args:
         pdf_path:     Absolute path to the downloaded PDF file.
@@ -807,8 +957,8 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
     attrs: dict[str, Any] = {}
     try:
         # Cap text length for performance (PDFs can be large)
-        if len(pdf_text) > 15000:
-            pdf_text = pdf_text[:15000]
+        if len(pdf_text) > 50000:
+            pdf_text = pdf_text[:50000]
 
         # Apply the PDF-specific extractor for this service type.
         # Each service type has its own PDF extractor tuned to that issuer's

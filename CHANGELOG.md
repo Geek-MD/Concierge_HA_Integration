@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-03-17
+
+### Added
+- **Electricity PDF extractor for Enel Distribución Chile** (`attribute_extractor.py`):
+  A new dedicated `_extract_electricity_pdf_attributes(text)` extracts attributes
+  that are only present in the Enel PDF bill, not in the notification email.
+
+  Key implementation detail: pdfminer reads the billing breakdown table as three
+  separate column blocks (labels / `$` signs / amounts), so the extractor uses a
+  single multi-line regex (`_ELEC_PDF_TABLE_RE`) that matches the full block in
+  column order rather than expecting label+amount on the same line.
+
+  New attributes extracted from the PDF:
+  - `billing_period_start` / `billing_period_end` – billing period dates
+    (DD-MM-YYYY), parsed from the Spanish-month format
+    "30 Dic 2025 - 29 Ene 2026" (primary) or the DD/MM/YYYY
+    "Período de lectura: 30/12/2025 - 29/01/2026" (fallback).
+  - `consumption` / `consumption_unit` – energy consumed confirmed from
+    the PDF (e.g. `505.0` / `"kWh"`).
+  - `service_administration` – administration fee in integer CLP.
+  - `electricity_consumption` – cost of consumed electricity in integer CLP.
+  - `electricity_transport` – electricity transport charge in integer CLP.
+  - `stabilization_fund` – stabilisation fund charge in integer CLP.
+  - `cost_per_kwh` – `electricity_consumption / consumption` (float, 2 dp).
+
+- **`_ELEC_PDF_BILLING_PERIOD_RE`** – regex for Spanish-month date range.
+- **`_ELEC_PDF_PERIOD_LECTURA_RE`** – fallback regex for DD/MM/YYYY date range.
+- **`_ELEC_PDF_TABLE_RE`** – column-aware regex for the Enel billing table.
+- **`_SPANISH_MONTH_MAP`** / **`_parse_spanish_date`** – helpers for
+  converting Spanish abbreviated month names to DD-MM-YYYY strings.
+
+### Changed
+- **`_extract_pdf_type_specific_attributes`** (`attribute_extractor.py`):
+  Routes `SERVICE_TYPE_ELECTRICITY` to `_extract_electricity_pdf_attributes`.
+- **PDF text cap** (`extract_attributes_from_pdf`): Increased from 15 000 to
+  50 000 characters.  The Enel PDF has key data at ~29 000–31 000 chars; the
+  old cap silently discarded all of it.
+- **`_STANDARD_ATTRS`** / **`extra_state_attributes`** (`sensor.py`): Added
+  `service_administration` (default `0`), `electricity_transport` (default `0`),
+  `stabilization_fund` (default `0`), `electricity_consumption` (default `0`),
+  and `cost_per_kwh` (default `0.0`) to the standard sensor attributes.
+- **`manifest.json`**: Version bumped to `0.6.2`.
+
+
 ## [0.6.1] - 2026-03-17
 
 ### Changed
