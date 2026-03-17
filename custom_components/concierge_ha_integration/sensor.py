@@ -36,7 +36,7 @@ from .const import (
     PDF_SUBDIR,
     SERVICE_TYPE_UNKNOWN,
 )
-from .attribute_extractor import extract_attributes_from_email_body, _strip_html
+from .attribute_extractor import extract_attributes_from_email_body, extract_attributes_from_pdf, _strip_html
 from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
 from .service_detector import classify_service_type
 
@@ -57,6 +57,7 @@ _STANDARD_ATTRS: tuple[str, ...] = (
     "total_amount",
     "consumption",
     "consumption_unit",
+    "cost_per_m3s",
 )
 
 # Webmail provider domains that are too generic for sender-domain matching.
@@ -267,6 +268,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         )
                                         if pdf_path:
                                             latest_attributes["pdf_path"] = pdf_path
+                                            # Extract additional attributes from the
+                                            # PDF (e.g. consumption for Metrogas).
+                                            # PDF values override email-derived values.
+                                            pdf_attrs = extract_attributes_from_pdf(
+                                                pdf_path, service_type
+                                            )
+                                            latest_attributes.update(pdf_attrs)
                                     except Exception as pdf_err:
                                         _LOGGER.debug(
                                             "PDF download skipped for service '%s': %s",
@@ -504,6 +512,7 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
             "total_amount": 0,
             "consumption": 0.0,
             "consumption_unit": 0,
+            "cost_per_m3s": 0.0,
         }
 
         if self.coordinator.data:

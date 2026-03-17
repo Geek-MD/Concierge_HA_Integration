@@ -5,7 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.6] - 2026-03-17
+## [0.6.0] - 2026-03-17
+
+### Added
+- **PDF data extraction for gas service** (`attribute_extractor.py`):
+  A new `extract_attributes_from_pdf()` function uses `pdfminer.six` to
+  convert downloaded bill PDFs to plain text and applies the
+  service-type-specific extractor.  For Metrogas, the PDF is the
+  authoritative source for gas consumption data not present in the
+  notification email.
+
+- **Gas consumption from Metrogas PDF** (`attribute_extractor.py`):
+  The gas extractor now recognises the PDF label
+  ``Gas consumido ( 5,95 m3s )`` in addition to generic email labels
+  (``Consumo gas:``, ``Volumen consumido:``).  The separator pattern was
+  extended to allow ``(`` so that the parenthesised format is parsed
+  correctly.
+
+- **`consumption_unit` correctly set to `"m3s"`** (`attribute_extractor.py`):
+  The unit of measurement is now extracted directly from the matched text
+  (group 2 of `_GAS_CONSUMPTION_RE`) instead of being hard-coded, so
+  ``"m3s"`` (Metrogas standardised cubic metres) is returned for Metrogas
+  PDFs while ``"m3"`` or ``"m³"`` is still returned for other formats.
+
+- **`cost_per_m3s` attribute** (`attribute_extractor.py`, `sensor.py`):
+  A new derived attribute ``cost_per_m3s`` (cost per standardised cubic metre)
+  is calculated as ``round(total_amount / consumption, 2)`` whenever both
+  values are available and consumption is positive.  It is exposed as a
+  standard sensor attribute with a default value of ``0``.
+
+- **`pdfminer.six` dependency** (`manifest.json`):
+  Added ``pdfminer.six>=20221105`` to the integration's pip requirements so
+  that Home Assistant installs the library automatically on first load.
+
+### Changed
+- **`_GAS_CONSUMPTION_RE`** (`attribute_extractor.py`): Extended to capture
+  the unit string (group 2: ``m3s`` / ``m3`` / ``m³``) alongside the
+  numeric value (group 1), enabling precise unit reporting.
+- **`_GAS_CONSUMPTION_LABELS`** (`attribute_extractor.py`): Added
+  ``gas\s+consumido`` as the primary label pattern (Metrogas PDF format) and
+  extended the separator to ``[:\s\(]+`` to handle the parenthesised value
+  format used in the Metrogas PDF.
+- **`sensor.py`**: After a bill PDF is downloaded, `extract_attributes_from_pdf`
+  is called automatically and its results are merged into the service
+  attributes (PDF values take precedence over email-derived values for the
+  same keys).
+- **`manifest.json`**: Version bumped to `0.6.0`.
+
 
 ### Added
 - **Richer PDF link detection in email bodies** (`pdf_downloader.py`):

@@ -335,18 +335,22 @@ def _extract_water_attributes(text: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Gas-service extractor (tuned for Metrogas; reference email: Jan 2026)
+# Gas-service extractor (tuned for Metrogas; reference email/PDF: Jan 2026)
 # ---------------------------------------------------------------------------
 # Consumption in cubic metres — label-based only.
 # NOTE: Metrogas does NOT include consumption in the email body; it is only
-# present in the PDF attachment.  The label-based pattern is kept for gas
-# companies that do include it in their email.
+# present in the PDF attachment.  The label-based pattern covers both the
+# PDF format ("Gas consumido ( 5,95 m3s )") and generic email formats.
+# Group 1 captures the numeric value; group 2 captures the unit (m3s / m3 / m³).
 _GAS_CONSUMPTION_RE = re.compile(
-    r"([0-9]+(?:[.,][0-9]+)?)\s*m[³3]",
+    r"([0-9]+(?:[.,][0-9]+)?)\s*(m[³3]s?)",
     re.IGNORECASE,
 )
+# "Gas consumido" is the label used in the Metrogas PDF; generic email labels
+# are kept for other gas issuers.  The separator allows ":", whitespace, and
+# "(" so that "Gas consumido ( 5,95 m3s )" is matched correctly.
 _GAS_CONSUMPTION_LABELS = re.compile(
-    r"(?:consumo\s+(?:de\s+)?gas|consumo|volumen\s+consumido)[:\s]+",
+    r"(?:gas\s+consumido|consumo\s+(?:de\s+)?gas|consumo|volumen\s+consumido)[:\s\(]+",
     re.IGNORECASE,
 )
 # Metropuntos loyalty-points label (Metrogas-specific) — kept for future use
@@ -361,26 +365,31 @@ _GAS_PLAIN_AMOUNT_RE = re.compile(
 def _extract_gas_attributes(text: str) -> dict[str, Any]:
     """Extract gas-service-specific attributes.
 
-    Tuned for Metrogas (reference email: January 2026).  Key observations:
+    Tuned for Metrogas (reference email: January 2026; reference PDF: January
+    2026).  Key observations:
     - The HTML-only email carries folio, customer number, address, billing
       period, total due, due date.
-    - Gas consumption (m³) is **not** included in the email — only in the PDF.
-    - ``Total a pagar`` has no ``$`` prefix (e.g. ``12.013``).
+    - Gas consumption (m³s) is **not** included in the email — only in the PDF.
+      The PDF label is ``Gas consumido ( 5,95 m3s )``.
+    - ``Total a pagar`` in the email has no ``$`` prefix (e.g. ``12.013``);
+      in the PDF it appears as ``$ 12.013``.
     - Customer label is ``Número Cliente:`` (no ``de`` — handled in the
       shared ``_CUSTOMER_LABELS`` pattern).
 
     Extracted fields (all optional):
-        ``total_amount``   – total amount due as integer (overrides generic)
-        ``consumption``    – gas consumed (label-based only, for issuers
-                             that include it in the email body)
-        ``consumption_unit``– unit of consumption (``"m3"``)
+        ``total_amount``    – total amount due as integer (overrides generic)
+        ``consumption``     – gas consumed in m3s
+        ``consumption_unit``– unit of consumption (``"m3s"`` for Metrogas)
+        ``cost_per_m3s``    – cost per m3s (total_amount / consumption),
+                              only set when both values are available and
+                              consumption > 0
     """
     attrs: dict[str, Any] = {}
 
-    # Total a pagar — Metrogas uses a plain number without a $ prefix.
-    # This overrides the generic extractor result (which would return nothing
-    # for plain numbers).  We reuse _TOTAL_LABELS for the label match so that
-    # the search window is anchored to the correct part of the text.
+    # Total a pagar — Metrogas uses a plain number without a $ prefix in the
+    # email body (e.g. "Total a pagar: 12.013").  In the PDF it appears as
+    # "$ 12.013" which _GAS_PLAIN_AMOUNT_RE still captures correctly by
+    # skipping the non-digit $ character.
     for label_match in _TOTAL_LABELS.finditer(text):
         rest = text[label_match.end():]
         val_match = _GAS_PLAIN_AMOUNT_RE.search(rest[:60])
@@ -390,15 +399,27 @@ def _extract_gas_attributes(text: str) -> dict[str, Any]:
                 attrs["total_amount"] = _parse_amount_to_int(raw)
                 break
 
-    # Gas consumption (m³) — label-based only; bare m³ fallback omitted to
+    # Gas consumption — label-based only; bare m³ fallback omitted to
     # avoid false positives in HTML that contains no consumption data.
+    # PDF format: "Gas consumido ( 5,95 m3s )"
+    # Email format (other issuers): "Consumo gas: 5.95 m3"
     for label_match in _GAS_CONSUMPTION_LABELS.finditer(text):
         rest = text[label_match.end():]
         val_match = _GAS_CONSUMPTION_RE.search(rest[:80])
         if val_match:
             attrs["consumption"] = _parse_consumption_to_float(val_match.group(1).strip())
-            attrs["consumption_unit"] = "m3"
+            # Normalise unit to lowercase; preserve "m3s" vs "m3"
+            raw_unit = val_match.group(2).lower()
+            attrs["consumption_unit"] = raw_unit
             break
+
+    # cost_per_m3s — cost per standardised cubic metre.
+    # Calculated only when both total_amount and consumption are available
+    # and consumption is positive (avoids division-by-zero).
+    total = attrs.get("total_amount")
+    consumption = attrs.get("consumption")
+    if total and consumption and consumption > 0:
+        attrs["cost_per_m3s"] = round(total / consumption, 2)
 
     return attrs
 
@@ -677,3 +698,59 @@ def extract_attributes_from_email(msg: Any) -> dict[str, Any]:
         _LOGGER.debug("Error extracting body for attribute extraction: %s", err)
     
     return extract_attributes_from_email_body(subject, body)
+
+
+def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_UNKNOWN) -> dict[str, Any]:
+    """Extract billing attributes from a downloaded PDF file.
+
+    Uses ``pdfminer.six`` to convert the PDF to plain text and then applies
+    the service-type-specific extractor (same as for email bodies).  Only
+    attributes that can be reliably sourced from the PDF are returned — the
+    caller is responsible for merging these with email-derived attributes.
+
+    For the gas service (Metrogas) the PDF is the authoritative source for:
+    - ``consumption``      – gas consumed (e.g. ``5.95``)
+    - ``consumption_unit`` – unit of consumption (``"m3s"``)
+    - ``cost_per_m3s``      – cost per m3s (total_amount / consumption)
+
+    Args:
+        pdf_path:     Absolute path to the downloaded PDF file.
+        service_type: One of the ``SERVICE_TYPE_*`` constants.
+
+    Returns:
+        Dictionary with attributes extracted from the PDF, or an empty dict
+        if the PDF could not be read or no attributes were found.
+    """
+    try:
+        from pdfminer.high_level import extract_text as _pdf_extract_text  # type: ignore[import-untyped]
+    except ImportError:
+        _LOGGER.warning(
+            "pdfminer.six is not installed; PDF attribute extraction is unavailable. "
+            "Install it via 'pip install pdfminer.six' or add it to manifest requirements."
+        )
+        return {}
+
+    try:
+        pdf_text = _pdf_extract_text(pdf_path)
+    except Exception as err:
+        _LOGGER.debug("Could not extract text from PDF '%s': %s", pdf_path, err)
+        return {}
+
+    if not pdf_text:
+        return {}
+
+    attrs: dict[str, Any] = {}
+    try:
+        # Cap text length for performance (PDFs can be large)
+        if len(pdf_text) > 15000:
+            pdf_text = pdf_text[:15000]
+
+        # Apply the service-type-specific extractor to the PDF text.
+        # For gas services this extracts consumption, consumption_unit, and
+        # cost_per_m3s from the Metrogas PDF format.
+        type_attrs = _extract_type_specific_attributes(pdf_text, service_type)
+        attrs.update(type_attrs)
+    except Exception as err:
+        _LOGGER.debug("Error extracting attributes from PDF '%s': %s", pdf_path, err)
+
+    return attrs
