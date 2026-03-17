@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.12] - 2026-03-17
+
+### Fixed
+- **Gas bill PDF download — Quoted-Printable email body without CTE header**
+  (`pdf_downloader.py`): Metrogas billing emails delivered by *fidelizador.com*
+  are Quoted-Printable encoded.  In a standards-compliant email the MIME part
+  carries a ``Content-Transfer-Encoding: quoted-printable`` header, which
+  causes Python's ``email`` library to decode the QP bytes automatically when
+  ``get_payload(decode=True)`` is called.  However, some fidelizador.com
+  messages omit this header even though the body is fully QP-encoded.  Without
+  the header, ``get_payload(decode=True)`` returns the raw bytes unchanged,
+  so the HTML body contains:
+
+  * ``=3D`` instead of ``=`` in HTML attribute assignments — for example the
+    anchor tag appears as ``<a href=3D"https://trackercl1.fidelizador.com/…">``.
+    ``HTMLParser`` treats the ``=`` immediately after ``href`` as the
+    attribute-assignment operator and parses ``3D"https://…"`` as an
+    *unquoted* attribute value, yielding a ``href`` value of
+    ``3D"https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807=``
+    instead of the correct URL — which never starts with ``http`` and is
+    therefore silently discarded.
+  * ``=\n`` (QP soft line-break) splitting the tracking URL across two lines
+    — the second fragment (``CB3HF4E1ADBBCE…``) is parsed as a separate,
+    meaningless attribute and the first fragment is truncated at ``=``.
+
+  A new private helper ``_decode_qp_if_needed()`` is called immediately after
+  ``get_payload(decode=True)`` in both ``_get_html_body()`` and
+  ``_get_plain_text_body()``.  It checks whether the raw payload contains
+  ``=\n`` or ``=\r\n`` (QP soft line-breaks) — an unambiguous indicator of
+  QP-encoded content — and, if so, applies ``quopri.decodestring()`` to strip
+  the encoding before the bytes are decoded as a character set and passed to
+  the HTML/text parsers.  The helper is a no-op when the ``Content-Transfer-
+  Encoding`` header is already ``quoted-printable`` (Python has decoded the
+  bytes) or when the payload contains no soft line-breaks.
+
 ## [0.6.11] - 2026-03-17
 
 ### Fixed

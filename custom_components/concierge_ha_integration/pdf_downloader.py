@@ -51,6 +51,7 @@ from __future__ import annotations
 import email as _email_lib
 import logging
 import os
+import quopri
 import re
 import time
 import urllib.error
@@ -129,7 +130,7 @@ _CONTAINER_TAGS = frozenset({
 })
 
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.11 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.12 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -369,6 +370,58 @@ def _get_pdf_attachment_bytes(msg: _email_lib.message.Message) -> bytes | None:
     return None
 
 
+def _decode_qp_if_needed(
+    payload: bytes,
+    part: _email_lib.message.Message,
+) -> bytes:
+    """Apply Quoted-Printable decoding as a fallback when the CTE header is absent.
+
+    Python's :meth:`email.message.Message.get_payload` with ``decode=True``
+    only strips QP encoding when the part explicitly declares
+    ``Content-Transfer-Encoding: quoted-printable``.  Some email senders
+    (e.g. the *fidelizador.com* email-marketing platform used by Metrogas)
+    omit this header even though the body **is** QP-encoded.  Without the
+    header, ``get_payload(decode=True)`` returns the raw bytes unchanged, so
+    the HTML reaches :class:`_LinkExtractor` with:
+
+    * ``=3D`` in place of ``=`` in attribute assignments — causing
+      ``HTMLParser`` to misparse ``href=3D"..."`` as an unquoted attribute
+      value starting with ``3D"`` rather than the expected HTTP URL.
+    * ``=\\n`` (soft line-break) splitting a long URL across two lines — the
+      second fragment is parsed as a separate, meaningless attribute.
+
+    As a result, the fidelizador.com tracking URL for the *"Ver boleta"*
+    button is never extracted and the PDF cannot be downloaded.
+
+    This helper detects QP-encoded payloads by looking for the ``=\\n`` /
+    ``=\\r\\n`` soft line-break marker, which is unambiguous: it has no valid
+    meaning in HTML or plain-text outside of QP-encoded content.  When found,
+    :func:`quopri.decodestring` is applied so that the bytes passed to the
+    HTML/text parsers are always clean UTF-8 / charset-encoded text.
+
+    Args:
+        payload: Raw bytes returned by ``part.get_payload(decode=True)``.
+        part:    The MIME part (used to read the CTE header).
+
+    Returns:
+        QP-decoded bytes when a soft line-break is detected and the CTE header
+        does not already say ``quoted-printable``; otherwise *payload*
+        unchanged.
+    """
+    cte = (part.get("Content-Transfer-Encoding") or "").lower().strip()
+    if cte == "quoted-printable":
+        # Already decoded by get_payload(decode=True).
+        return payload
+    # Detect QP soft line-breaks, which are unambiguous indicators of
+    # QP-encoded content.
+    if b"=\r\n" in payload or b"=\n" in payload:
+        try:
+            return quopri.decodestring(payload)
+        except Exception:
+            pass
+    return payload
+
+
 def _get_html_body(msg: _email_lib.message.Message) -> str:
     """Return the raw HTML content of an email (concatenated parts)."""
     html_parts: list[str] = []
@@ -381,6 +434,7 @@ def _get_html_body(msg: _email_lib.message.Message) -> str:
                 continue
             payload = part.get_payload(decode=True)
             if payload:
+                payload = _decode_qp_if_needed(payload, part)  # type: ignore[arg-type]
                 charset = part.get_content_charset() or "utf-8"
                 html_parts.append(
                     payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
@@ -389,6 +443,7 @@ def _get_html_body(msg: _email_lib.message.Message) -> str:
         if msg.get_content_type() == "text/html":
             payload = msg.get_payload(decode=True)
             if payload:
+                payload = _decode_qp_if_needed(payload, msg)  # type: ignore[arg-type]
                 charset = msg.get_content_charset() or "utf-8"
                 html_parts.append(
                     payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
@@ -710,6 +765,7 @@ def _get_plain_text_body(msg: _email_lib.message.Message) -> str:
                 continue
             payload = part.get_payload(decode=True)
             if payload:
+                payload = _decode_qp_if_needed(payload, part)  # type: ignore[arg-type]
                 charset = part.get_content_charset() or "utf-8"
                 text_parts.append(
                     payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
@@ -718,6 +774,7 @@ def _get_plain_text_body(msg: _email_lib.message.Message) -> str:
         if msg.get_content_type() == "text/plain":
             payload = msg.get_payload(decode=True)
             if payload:
+                payload = _decode_qp_if_needed(payload, msg)  # type: ignore[arg-type]
                 charset = msg.get_content_charset() or "utf-8"
                 text_parts.append(
                     payload.decode(charset, errors="ignore")  # type: ignore[union-attr]
