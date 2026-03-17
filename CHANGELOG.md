@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-03-17
+
+### Added
+- **Richer PDF link detection in email bodies** (`pdf_downloader.py`):
+  When no PDF attachment is found, the integration now searches for billing
+  PDF links using an improved three-tier heuristic:
+
+  1. **Keyword match on visible text or `<img alt>`** — links whose human-
+     readable label (including the `alt` text of button images) matches
+     expanded Spanish/English billing vocabulary (*"ver boleta"*, *"revisar
+     tu factura"*, *"descargar comprobante"*, *"visualizar documento"*,
+     *"view invoice"*, etc.).
+  2. **`.pdf` href suffix** — links whose URL ends in `.pdf` (with optional
+     query string).
+  3. **Billing-term href match** — links whose URL contains billing-related
+     path segments or query parameters (*pdf*, *boleta*, *factura*,
+     *invoice*, *bill*, *comprobante*, *descargar*, *download*, etc.)
+     anywhere in the URL.
+
+- **Plain-text body search** (`pdf_downloader.py`): A new **Strategy 3**
+  scans `text/plain` MIME parts (or plain-text-only emails) for bare
+  HTTP/HTTPS URLs that reference a PDF or contain billing-related terms.
+  This covers services that send only a text email with a link rather than
+  styled HTML.
+
+- **Image-link support** (`_LinkExtractor`): The HTML parser now captures
+  the `alt` attribute of `<img>` tags nested inside `<a>` elements, so
+  image-only buttons (e.g.
+  `<a href="…"><img alt="Ver boleta" …></a>`) are treated the same as
+  text links.
+
+- **Expanded billing keywords** (`_PDF_LINK_KEYWORDS`): Added *"revisar
+  boleta/factura"*, *"ver comprobante"*, *"descargar comprobante"*,
+  *"bajar / obtener pdf"*, *"imprimir boleta/factura"*, *"visualizar
+  documento"*, *"ver cobro"*, and broader English patterns
+  (*"view invoice/bill/statement/receipt"*, *"get invoice/bill/pdf"*).
+
+### Changed
+- **`manifest.json`**: Version bumped to `0.5.6`.
+- **`_HTTP_USER_AGENT`**: Updated to reflect the new version string
+  (`ConciergeHAIntegration/0.5.6`).
+- **`_download_first_valid_pdf` helper extracted**: The fetch-and-validate
+  loop shared by HTML and plain-text strategies is now a private helper
+  function (`_download_first_valid_pdf`) to eliminate code duplication.
+
 ## [0.5.5] - 2026-03-08
 
 ### Added
