@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **``pdf_url`` attribute for electricity sensor** (`sensor.py`):
   The ``pdf_url`` attribute (introduced for the gas sensor in v0.6.14) is now
-  also available on the electricity-service sensor.  It defaults to ``0`` and
+  also available on the electricity-service sensor.  It defaults to ``""`` and
   is overridden with the bill download URL whenever a matching email is
   processed and a fidelizador.com URL is reconstructed.
 
@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ``attributes["pdf_url"]`` before attempting the download, making the URL
     available even if the download fails.
   - A new **``pdf_url``** attribute is added to the gas-service sensor
-    (``_GAS_ATTR_DEFAULTS``).  It defaults to ``0`` and is overridden with the
+    (``_GAS_ATTR_DEFAULTS``).  It defaults to ``""`` and is overridden with the
     actual reconstructed URL whenever a Metrogas / fidelizador.com email is
     processed.
 

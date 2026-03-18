@@ -42,11 +42,27 @@
     `total_amount` (integer), `due_date`
   - Account: `customer_number`, `address`
   - Usage: `consumption`, `consumption_unit`
+- 📋 **Type-specific Attributes**: In addition to the standard set, each service
+  type exposes its own extra attributes (numeric attributes default to `0`;
+  `pdf_url` defaults to `""`):
+  - **Electricity** (`service_type: electricity`):
+    `service_administration`, `electricity_transport`, `stabilization_fund`,
+    `electricity_consumption`, `cost_per_kwh`, `tariff_code`,
+    `connected_power`, `connected_power_unit`, `area`, `substation`, `pdf_url`
+  - **Gas** (`service_type: gas`):
+    `cost_per_m3s`, `pdf_url`
+  - **Water** (`service_type: water`):
+    `fixed_charge`, `cubic_meter_peak_water_cost`,
+    `cubic_meter_non_peak_water_cost`, `cubic_meter_overconsumption`,
+    `cubic_meter_collection`, `cubic_meter_treatment`, `water_consumption`,
+    `wastewater_recolection`, `wastewater_treatment`, `subtotal`,
+    `other_charges`
 - 📄 **Heuristic PDF Download**: Automatically downloads the billing PDF for each matched email:
   - If the email has a PDF attachment it is saved directly
   - Otherwise the HTML body is scanned for billing links (*"ver boleta"*, *"descargue su boleta"*, etc.) and the first valid PDF URL is downloaded
   - Files are saved as `{service_id}_{YYYY-MM}_{folio}.pdf` under `config/concierge_ha_integration/pdfs/`
   - PDFs older than one year are purged automatically
+  - The reconstructed bill download URL is also exposed as the `pdf_url` sensor attribute (electricity and gas sensors)
 - 🔧 **Device Architecture**: Each service appears as a separate device
 - 📊 **Status Sensor**: Monitor email connection status in real-time
 
@@ -201,6 +217,8 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Heuristic PDF download: attachment → billing link in HTML body (v0.4.10)
 - ✅ Deterministic PDF filename: `{service_id}_{YYYY-MM}_{folio}.pdf` (v0.4.10)
 - ✅ Automatic purge of PDFs older than 1 year (v0.4.10)
+- ✅ `pdf_url` attribute on gas sensor (v0.6.14): exposes the reconstructed bill download URL
+- ✅ `pdf_url` attribute on electricity sensor (v0.6.15): same attribute available for Enel/electricity bills
 - ✅ Passes ruff, mypy and hassfest checks
 
 ### 🔮 Future Enhancements
