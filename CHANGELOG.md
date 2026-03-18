@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-03-18
+
+### Fixed
+- **Spurious warnings eliminated from PDF downloader** (`pdf_downloader.py`):
+  Five intermediate-probe log messages that were emitted at `WARNING` level
+  (and therefore appeared in the Home Assistant issue/error panel) have been
+  downgraded to `DEBUG`.  These messages represent **expected** failures while
+  the downloader heuristically probes multiple candidate URLs:
+
+  - `"URL … returned HTML but no redirect target or billing URL found"` —
+    emitted when a click-tracker page (e.g. fidelizador.com) does not contain
+    a recognisable redirect or billing link.
+  - `"URL error fetching …"` — emitted when a candidate URL inside an HTML
+    redirect page returns a network error (e.g. HTTP 404/400).
+  - `"Candidate … did not return a PDF"` — emitted when a URL fetched from an
+    HTML page returns a non-PDF content type (e.g. a CDN JS file or a video).
+  - `"URL … did not return a PDF"` — same as above, in the top-level candidate
+    loop.
+  - `"URL error downloading …"` — emitted when a top-level candidate URL
+    returns an HTTP error (404, 400, etc.).
+
+  Real disk-write failures (`OSError`) continue to be logged at `WARNING`
+  level since they represent genuine operational problems.
+
+- **`manifest.json`**: Version bumped to `0.7.3`.
+
 ## [0.7.2] - 2026-03-18
 
 ### Fixed

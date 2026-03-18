@@ -877,7 +877,7 @@ def _try_html_redirect_download(
             candidates.append(url)
 
     if not candidates:
-        _LOGGER.warning(
+        _LOGGER.debug(
             "URL %s returned HTML but no redirect target or billing URL found "
             "(depth=%d)",
             original_url,
@@ -903,7 +903,7 @@ def _try_html_redirect_download(
                 rct: str = rresp.headers.get("Content-Type", "")
                 rdata: bytes = rresp.read()
         except urllib.error.URLError as err:
-            _LOGGER.warning("URL error fetching %s: %s", url, err)
+            _LOGGER.debug("URL error fetching %s: %s", url, err)
             continue
 
         if "application/pdf" in rct or rdata[:4] == _PDF_MAGIC:
@@ -926,7 +926,7 @@ def _try_html_redirect_download(
                 return result
             continue
 
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Candidate %s did not return a PDF "
             "(Content-Type: %s, first bytes: %r)",
             url,
@@ -1375,7 +1375,7 @@ def _download_first_valid_pdf(
                     return result
                 continue
 
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "URL %s did not return a PDF (Content-Type: %s, first bytes: %r)",
                 url,
                 content_type,
@@ -1383,7 +1383,7 @@ def _download_first_valid_pdf(
             )
 
         except urllib.error.URLError as err:
-            _LOGGER.warning("URL error downloading %s: %s", url, err)
+            _LOGGER.debug("URL error downloading %s: %s", url, err)
         except OSError as err:
             _LOGGER.warning("Could not write downloaded PDF to %s: %s", dest_path, err)
 
