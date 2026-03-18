@@ -66,6 +66,7 @@ _COMMON_ATTRS: tuple[str, ...] = (
 # keeping each sensor's attribute set clean and relevant.
 _GAS_ATTR_DEFAULTS: dict[str, Any] = {
     "cost_per_m3s": 0.0,
+    "pdf_url": 0,
 }
 _ELECTRICITY_ATTR_DEFAULTS: dict[str, Any] = {
     "service_administration": 0,

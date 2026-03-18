@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.14] - 2026-03-18
+
+### Fixed
+- **Gas bill PDF download — definitive fix for incorrect URL selection**
+  (`pdf_downloader.py`, `sensor.py`):
+  The v0.6.13 strategy used the *first*
+  ``trackercl1.fidelizador.com`` URL found in the raw QP bytes, which turned
+  out to be the "Ver en el navegador" view-in-browser link from the
+  ``text/plain`` part — not the actual bill download button URL.  Following
+  that URL yielded the wrong document.
+
+  The definitive fix introduces a new helper
+  ``_find_fidelizador_href_in_html_qp()`` that targets exclusively the
+  ``text/html`` part and searches the raw QP bytes for
+  ``href=3D"https://trackercl1.fidelizador.com/…"`` attributes (the
+  Quoted-Printable encoding of ``href="…"``).  Among all matching ``<a href>``
+  tags the function returns the **last** one in document order: social-media
+  icon links and account-management buttons appear earlier in the HTML body,
+  while the bill download button's ``<a>`` element is the last billing CTA.
+
+  URL reconstruction follows the approach required by the problem specification:
+
+  1. Locate the div containing the bill download ``<a>`` element.
+  2. Extract the raw bytes of the ``href`` value from ``href=3D"…"``, spanning
+     any ``=\\r?\\n`` soft line-breaks.
+  3. Apply ``quopri.decodestring()`` to remove soft line-breaks and decode
+     ``=XX`` hex codes, yielding the clean URL.
+
+  This is now the **sole** authoritative method for reconstructing the gas bill
+  PDF URL from Metrogas / fidelizador.com emails; all previous approaches
+  (plain-text part scan, general HTML link extraction) have been shown to
+  return incorrect URLs and are no longer used for this purpose.
+
+  Additionally:
+
+  - ``download_pdf_from_email()`` stores the reconstructed URL in
+    ``attributes["pdf_url"]`` before attempting the download, making the URL
+    available even if the download fails.
+  - A new **``pdf_url``** attribute is added to the gas-service sensor
+    (``_GAS_ATTR_DEFAULTS``).  It defaults to ``0`` and is overridden with the
+    actual reconstructed URL whenever a Metrogas / fidelizador.com email is
+    processed.
+
 ## [0.6.13] - 2026-03-17
 
 ### Fixed
