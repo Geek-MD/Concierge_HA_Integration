@@ -172,7 +172,6 @@ class ConciergeServiceStatusBinarySensor(
             "service_id": self._service_id,
             "service_name": self._service_name,
             "service_type": service_type,
-            "last_updated_datetime": 0,
             "folio": 0,
             "billing_period_start": 0,
             "billing_period_end": 0,
@@ -190,10 +189,6 @@ class ConciergeServiceStatusBinarySensor(
         if self.coordinator.data:
             service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
             if service_data:
-                last_updated = service_data.get("last_updated")
-                if last_updated:
-                    attrs["last_updated_datetime"] = last_updated.isoformat()
-
                 extracted_attrs = service_data.get("attributes", {})
                 if extracted_attrs:
                     # Override universal attributes with extracted values.

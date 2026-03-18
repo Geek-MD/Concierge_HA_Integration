@@ -33,30 +33,31 @@
 - 📍 **Area Assignment**: Associate integrations with specific areas in your home
 - 🔍 **Automatic Service Detection**: Detects utility services from your inbox automatically
 - 🔎 **IMAP Discovery**: After setup, the integration automatically scans the inbox every hour for new services and surfaces them in **Configuration → Integrations** as devices available to be added — no manual "Add Device" click needed for discovered services (requires HA 2025.4 or newer)
-- 🤖 **Standard Attribute Set**: Every service sensor always exposes the full
-  set of standard attributes.  Missing values default to `0`:
-  - Service identity: `service_id`, `service_name`, `service_type`,
-    `friendly_name`, `icon`
-  - Timing: `last_updated_datetime`
-  - Billing: `folio`, `billing_period_start`, `billing_period_end`,
-    `total_amount` (integer), `due_date`
-  - Account: `customer_number`, `address`
-  - Usage: `consumption`, `consumption_unit`
-- 📋 **Type-specific Attributes**: In addition to the standard set, each service
-  type exposes its own extra attributes (numeric attributes default to `0`;
-  `pdf_url` defaults to `""`):
-  - **Electricity** (`service_type: electricity`):
-    `service_administration`, `electricity_transport`, `stabilization_fund`,
-    `electricity_consumption`, `cost_per_kwh`, `tariff_code`,
+- 📡 **Per-Service Entity Architecture** (v0.7.0+): Each configured service device
+  exposes five entities:
+
+  | Entity | Type | Category | Value / Purpose |
+  |---|---|---|---|
+  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
+  | `sensor.concierge_{id}_last_update` | Sensor | Configuration | Full ISO 8601 datetime of the latest processed bill |
+  | `sensor.concierge_{id}_consumption` | Sensor | — | m³ (gas/water) or kWh (electricity) |
+  | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ (gas) or $/kWh (electricity) |
+  | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
+
+- 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
+  entity always exposes the following attributes (missing values default to `0`):
+  - Service identity: `service_id`, `service_name`, `service_type`, `friendly_name`, `icon`
+  - Billing: `folio`, `billing_period_start`, `billing_period_end`, `customer_number`,
+    `address`, `due_date`
+  - When a PDF has been downloaded: `pdf_path`
+  - **Electricity** extras: `service_administration`, `electricity_transport`,
+    `stabilization_fund`, `electricity_consumption`, `tariff_code`,
     `connected_power`, `connected_power_unit`, `area`, `substation`, `pdf_url`
-  - **Gas** (`service_type: gas`):
-    `cost_per_m3s`, `pdf_url`
-  - **Water** (`service_type: water`):
-    `fixed_charge`, `cubic_meter_peak_water_cost`,
+  - **Gas** extras: `pdf_url`
+  - **Water** extras: `fixed_charge`, `cubic_meter_peak_water_cost`,
     `cubic_meter_non_peak_water_cost`, `cubic_meter_overconsumption`,
     `cubic_meter_collection`, `cubic_meter_treatment`, `water_consumption`,
-    `wastewater_recolection`, `wastewater_treatment`, `subtotal`,
-    `other_charges`
+    `wastewater_recolection`, `wastewater_treatment`, `subtotal`, `other_charges`
 - 📄 **Heuristic PDF Download**: Automatically downloads the billing PDF for each matched email:
   - If the email has a PDF attachment it is saved directly
   - Otherwise the HTML body is scanned for billing links (*"ver boleta"*, *"descargue su boleta"*, etc.) and the first valid PDF URL is downloaded
@@ -70,7 +71,6 @@
 
 - 📱 **Service Configuration UI**: Edit detected services after initial discovery
 - 📈 **Historical Data**: Track billing history over time
-- 📑 **PDF Analysis**: Extract structured billing data directly from downloaded PDFs
 
 ---
 
@@ -82,20 +82,20 @@
 2. Go to **Integrations → Custom Repositories**
 3. Add this repository:
    ```
-   https://github.com/Geek-MD/Concierge_Services
+   https://github.com/Geek-MD/Concierge_HA_Integration
    ```
    Select type: **Integration**
 4. Install and restart Home Assistant
-5. Go to **Settings → Devices & Services → Add Integration** and select **Concierge Services**
+5. Go to **Settings → Devices & Services → Add Integration** and select **Concierge HA Integration**
 
 ---
 
 ### Option 2: Manual Installation
 
 1. Download this repository
-2. Copy the `custom_components/concierge_services/` folder to your Home Assistant `config/custom_components/` directory
+2. Copy the `custom_components/concierge_ha_integration/` folder to your Home Assistant `config/custom_components/` directory
 3. Restart Home Assistant
-4. Add the integration through the UI
+4. Add the integration through the UI and search for **Concierge HA Integration**
 
 ---
 
@@ -107,7 +107,7 @@ All configuration is done through the user interface:
 
 1. Go to **Settings** → **Devices & Services**
 2. Click the **+ Add Integration** button
-3. Search for **Concierge Services**
+3. Search for **Concierge HA Integration**
 4. Enter your email account details:
    - **IMAP Server**: Your IMAP email server
    - **IMAP Port**: The IMAP port (default: `993`)
@@ -125,7 +125,7 @@ Once the integration is set up, service devices can be added in two ways:
 
 #### 🔎 Automatic Discovery (recommended — requires HA 2025.4+)
 Right after setup the integration scans your inbox for service providers.
-Discovered services appear on the **Concierge Services** integration card as
+Discovered services appear on the **Concierge HA Integration** integration card as
 **"Discovered: {service_name}"** — click the card to confirm and the device is added
 automatically.  The scan repeats every hour so newly-arrived bills are noticed.
 
@@ -136,7 +136,7 @@ Use the **ADD DEVICE** button on the integration card:
 - Repeat for each service you want to track
 - Each service can be reconfigured later via its device page
 
-> **Note**: Only one Concierge Services instance is allowed per Home Assistant installation
+> **Note**: Only one Concierge HA Integration instance is allowed per Home Assistant installation
 > (`single_config_entry`). To monitor a different email account, reconfigure the existing
 > entry using the **CONFIGURE** button.
 
@@ -166,25 +166,36 @@ Use the **ADD DEVICE** button on the integration card:
 
 After configuration, the integration creates:
 
-### Main Device
-- **Name**: Your configured friendly name (e.g., "Casa Principal")
-- **Area**: Your selected area (if configured)
-- **Manufacturer**: Concierge Services
-- **Model**: Email Integration
+### Connection Sensor (standalone entity, no device)
+- **Entity ID**: `sensor.concierge_services_status`
+- **State**: `OK` or `Problem`
+- **Attributes**: `email`, `imap_server`, `imap_port`
 
-### Status Sensor
-- **Name**: "Concierge Services - Status"
-- **State**: "OK" or "Problem"
-- **Attributes**:
-  - Email address
-  - IMAP server
-  - IMAP port
+### Service Devices (Auto-detected or manually added)
+One device per configured service (e.g., "Aguas Andinas", "Enel", "Metrogas"), each
+with five entities:
 
-### Service Devices (Auto-detected)
-As the integration scans your inbox, it automatically detects utility services and will create:
-- Individual devices per service (e.g., "Aguas Andinas", "Enel")
-- Sensors with extracted billing information
-- Device hierarchy linked to the main integration
+#### Diagnostic: Status Binary Sensor
+- **Entity ID**: `binary_sensor.concierge_{service_id}_status`
+- **State**: `on` (Problem — no bill data found) / `off` (OK — data retrieved)
+- **Attributes**: billing metadata (folio, period, address, due date, pdf_path) and
+  service-type-specific fields (pdf_url, electricity breakdowns, water components, etc.)
+
+#### Configuration: Last Update Sensor
+- **Entity ID**: `sensor.concierge_{service_id}_last_update`
+- **State**: Full ISO 8601 datetime of the most recently processed bill
+
+#### Consumption Sensor
+- **Entity ID**: `sensor.concierge_{service_id}_consumption`
+- **Unit**: `m³` (gas/water) or `kWh` (electricity)
+
+#### Cost Per Unit Sensor
+- **Entity ID**: `sensor.concierge_{service_id}_cost_per_unit`
+- **Unit**: `$/m³` (gas) or `$/kWh` (electricity); `None` for water/unknown
+
+#### Total Amount Sensor
+- **Entity ID**: `sensor.concierge_{service_id}_total_amount`
+- **Unit**: `$`
 
 ---
 
@@ -196,35 +207,28 @@ As the integration scans your inbox, it automatically detects utility services a
 - ✅ Secure credential storage
 - ✅ Interface in Spanish and English
 - ✅ HACS compatibility
-- ✅ Device architecture with proper device_info
-- ✅ Status sensor: "Concierge Services - Status"
+- ✅ Status sensor: `sensor.concierge_services_status` (`OK` / `Problem`)
 - ✅ Automatic service detection from inbox
-- ✅ Support for detecting multiple service types
+- ✅ Support for detecting multiple service types (electricity, gas, water)
 - ✅ Service-specific device creation via ADD DEVICE button
-- ✅ Individual sensors per configured service
-- ✅ MQTT-style architecture: email as hub, services as devices
+- ✅ MQTT-style architecture: email as hub, services as subentry devices
 - ✅ Options flow: CONFIGURE button to update IMAP credentials without reinstalling
 - ✅ Subentry reconfigure: update service name from the device page
-- ✅ Targeted attribute extraction (8 defined fields, no heuristic noise)
-- ✅ HTML email body stripping (prefers text/plain, strips text/html)
-- ✅ Folio extracted from subject, ready for PDF confirmation
-- ✅ Billing period start/end, total amount, customer number, address
-- ✅ Fix: AttributeError when clicking ADD DEVICE button (v0.4.3)
-- ✅ Standard attribute set with defaults (v0.5.0): `folio`, `billing_period_start`, `billing_period_end`, `total_amount` (int), `customer_number`, `address`, `due_date`, `consumption`, `consumption_unit`, `icon`, `friendly_name`
-- ✅ Device grouping fix (v0.5.0): service devices now appear correctly grouped under their subentry (no more "Dispositivos que no pertenecen a una subentrada")
-- ✅ Hub device removed (v0.5.1): the connection/status sensor is now a standalone entity with no device, eliminating the "Dispositivos que no pertenecen a una subentrada" section entirely
-- ✅ Automatic migration (v0.5.1): upgrading from v0.4.x no longer requires deleting and re-adding the integration; entity/device registry is migrated automatically on first startup
-- ✅ Heuristic PDF download: attachment → billing link in HTML body (v0.4.10)
-- ✅ Deterministic PDF filename: `{service_id}_{YYYY-MM}_{folio}.pdf` (v0.4.10)
-- ✅ Automatic purge of PDFs older than 1 year (v0.4.10)
-- ✅ `pdf_url` attribute on gas sensor (v0.6.14): exposes the reconstructed bill download URL
-- ✅ `pdf_url` attribute on electricity sensor (v0.6.15): same attribute available for Enel/electricity bills
+- ✅ Automatic migration (v0.5.1): upgrading from older versions no longer requires reinstalling
+- ✅ Automatic discovery (v0.5.2): inbox is scanned periodically; new services surface in the integration card for one-click confirmation (requires HA 2025.4+)
+- ✅ Heuristic PDF download: attachment → billing link in HTML → plain-text URL
+- ✅ Deterministic PDF filename: `{service_id}_{YYYY-MM}_{folio}.pdf`
+- ✅ Automatic purge of PDFs older than 1 year
+- ✅ Billing attribute extraction from email body and PDF (folio, billing period, amounts, consumption, customer number, address, due date, etc.)
+- ✅ PDF content analysis: extracts structured billing data from downloaded PDFs (Enel, Metrogas)
+- ✅ `pdf_url` attribute on electricity and gas status binary sensors — exposes the bill download URL; correctly restored from companion `.url` file on cached PDFs (v0.7.1)
+- ✅ Per-service entity architecture (v0.7.0): each service device exposes `binary_sensor.concierge_{id}_status` (Diagnostic) + `sensor.concierge_{id}_last_update` (Configuration) + `sensor.concierge_{id}_consumption` + `sensor.concierge_{id}_cost_per_unit` + `sensor.concierge_{id}_total_amount`
+- ✅ `sensor.concierge_{id}_last_update` holds the full ISO 8601 bill datetime (v0.7.1)
 - ✅ Passes ruff, mypy and hassfest checks
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services
 - Enhanced attribute display in sensor states
-- PDF content analysis for structured data extraction
 - Historical billing data tracking
 - Consumption trends and analytics
 - Payment reminders and automations
@@ -245,7 +249,7 @@ As the integration scans your inbox, it automatically detects utility services a
 
 ## 📜 License
 
-MIT License. See [LICENSE](https://github.com/Geek-MD/Concierge_Services/blob/main/LICENSE) for details.
+MIT License. See [LICENSE](https://github.com/Geek-MD/Concierge_HA_Integration/blob/main/LICENSE) for details.
 
 ---
 
