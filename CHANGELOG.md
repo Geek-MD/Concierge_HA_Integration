@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.7] - 2026-03-18
+
+### Changed
+- **Electricity service — billing charge fields promoted to dedicated sensor entities**
+  (`sensor.py`, `binary_sensor.py`):
+
+  The following fields, previously bundled as attributes on
+  `binary_sensor.concierge_{service}_status`, are now individual sensor entities:
+
+  | New entity | Attribute replaced | Unit |
+  |---|---|---|
+  | `sensor.concierge_{service}_service_administration` | `service_administration` | `$` |
+  | `sensor.concierge_{service}_electricity_transport` | `electricity_transport` | `$` |
+  | `sensor.concierge_{service}_stabilization_fund` | `stabilization_fund` | `$` |
+  | `sensor.concierge_{service}_electricity_consumption` | `electricity_consumption` | `$` |
+
+  All four are backed by the now-generic `ConciergeServiceBillingBreakdownSensor`
+  class (renamed from `ConciergeWaterSpecificSensor`, which was already fully
+  parameterised).
+
+- **`ConciergeWaterSpecificSensor` → `ConciergeServiceBillingBreakdownSensor`**
+  (`sensor.py`): class renamed to reflect its use for both water and electricity
+  billing breakdowns.
+
+- **`manifest.json`**: Version bumped to `0.7.7`.
+
 ## [0.7.6] - 2026-03-18
 
 ### Changed

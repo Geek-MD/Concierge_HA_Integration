@@ -36,15 +36,29 @@
 - 📡 **Per-Service Entity Architecture** (v0.7.0+): Each configured service device
   exposes entities based on service type:
 
-  **Gas / Electricity (4 entities):**
+  **Gas (5 entities):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
   | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
-  | `sensor.concierge_{id}_consumption` | Sensor | — | m³ (gas) or kWh (electricity) |
-  | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ (gas) or $/kWh (electricity) |
+  | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
+  | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ |
   | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
+
+  **Electricity (9 entities):**
+
+  | Entity | Type | Category | Value / Purpose |
+  |---|---|---|---|
+  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_consumption` | Sensor | — | kWh consumed |
+  | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/kWh |
+  | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
+  | `sensor.concierge_{id}_service_administration` | Sensor | — | Administration fee (`$`) |
+  | `sensor.concierge_{id}_electricity_transport` | Sensor | — | Electricity transport charge (`$`) |
+  | `sensor.concierge_{id}_stabilization_fund` | Sensor | — | Stabilisation fund charge (`$`) |
+  | `sensor.concierge_{id}_electricity_consumption` | Sensor | — | Cost of consumed electricity (`$`) |
 
   **Water (14 entities — `cost_per_unit` is replaced by granular sensors):**
 
@@ -72,9 +86,8 @@
   - Billing: `folio`, `billing_period_start`, `billing_period_end`, `customer_number`,
     `address`, `due_date`
   - When a PDF has been downloaded: `pdf_path`
-  - **Electricity** extras: `service_administration`, `electricity_transport`,
-    `stabilization_fund`, `electricity_consumption`, `tariff_code`,
-    `connected_power`, `connected_power_unit`, `area`, `substation`, `pdf_url`
+  - **Electricity** extras: `tariff_code`, `connected_power`, `connected_power_unit`,
+    `area`, `substation`, `pdf_url`
   - **Gas** extras: `pdf_url`
 - 📄 **Heuristic PDF Download**: Automatically downloads the billing PDF for each matched email:
   - If the email has a PDF attachment it is saved directly

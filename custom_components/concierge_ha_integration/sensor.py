@@ -68,9 +68,11 @@ _COST_PER_UNIT_UNITS: dict[str, str] = {
     SERVICE_TYPE_ELECTRICITY: "$/kWh",
 }
 
-# Water-specific sensor definitions.
+# Billing-breakdown sensor definitions per service type.
 # Each tuple: (extracted_attr_key, name_suffix, unit, unique_id_suffix)
-# The two cost-per-unit peak/non-peak sensors are renamed per spec v0.7.6.
+# Used by ConciergeServiceBillingBreakdownSensor (one instance per row).
+
+# Water: the two cost-per-unit peak/non-peak sensors renamed per spec v0.7.6.
 _WATER_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("fixed_charge",                 "Fixed Charge",                 "$",     "water_fixed_charge"),
     ("cubic_meter_peak_water_cost",  "Cost Per Unit Peak",           "$/m³",  "cost_per_unit_peak"),
@@ -83,6 +85,14 @@ _WATER_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("wastewater_treatment",         "Wastewater Treatment",         "$",     "wastewater_treatment"),
     ("subtotal",                     "Subtotal",                     "$",     "water_subtotal"),
     ("other_charges",                "Other Charges",                "$",     "water_other_charges"),
+]
+
+# Electricity: billing charge breakdown (all CLP amounts).
+_ELECTRICITY_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
+    ("service_administration", "Service Administration", "$", "electricity_service_administration"),
+    ("electricity_transport",  "Electricity Transport",  "$", "electricity_transport"),
+    ("stabilization_fund",     "Stabilization Fund",     "$", "electricity_stabilization_fund"),
+    ("electricity_consumption","Electricity Consumption", "$", "electricity_consumption_charge"),
 ]
 
 # Webmail provider domains that are too generic for sender-domain matching.
@@ -116,10 +126,13 @@ async def async_setup_entry(
     sub-entry" category.
     Per-subentry sensors:
     - All service types: last_update, consumption, total_amount.
-    - Non-water service types: cost_per_unit (generic $/unit sensor).
-    - Water service type: cost_per_unit is replaced by 11 water-specific
-      sensors (fixed_charge, cost_per_unit_peak, cost_per_unit_non_peak, and
-      other water billing breakdown fields).
+    - Gas: cost_per_unit (generic $/unit sensor).
+    - Electricity: cost_per_unit + 4 billing-breakdown sensors
+      (service_administration, electricity_transport, stabilization_fund,
+      electricity_consumption).
+    - Water: cost_per_unit is replaced by 11 water-specific sensors
+      (fixed_charge, cost_per_unit_peak, cost_per_unit_non_peak, and other
+      water billing breakdown fields).
     Each entity is associated with its own subentry so it appears correctly
     grouped in the HA device registry.
     """
@@ -153,7 +166,7 @@ async def async_setup_entry(
             # sensors.
             for attr_key, name_suffix, unit, uid_suffix in _WATER_SPECIFIC_SENSORS:
                 entities.append(
-                    ConciergeWaterSpecificSensor(
+                    ConciergeServiceBillingBreakdownSensor(
                         coordinator,
                         config_entry,
                         subentry_id,
@@ -171,6 +184,21 @@ async def async_setup_entry(
                     coordinator, config_entry, subentry_id, subentry.data
                 )
             )
+            # Electricity also exposes billing-charge breakdown sensors.
+            if service_type == SERVICE_TYPE_ELECTRICITY:
+                for attr_key, name_suffix, unit, uid_suffix in _ELECTRICITY_SPECIFIC_SENSORS:
+                    entities.append(
+                        ConciergeServiceBillingBreakdownSensor(
+                            coordinator,
+                            config_entry,
+                            subentry_id,
+                            subentry.data,
+                            attr_key=attr_key,
+                            name_suffix=name_suffix,
+                            unit=unit,
+                            uid_suffix=uid_suffix,
+                        )
+                    )
 
         async_add_entities(
             entities,
@@ -653,15 +681,16 @@ class ConciergeServiceTotalAmountSensor(_ConciergeServiceBaseSensor):
         return self._get_extracted_attrs().get("total_amount")
 
 
-class ConciergeWaterSpecificSensor(_ConciergeServiceBaseSensor):
-    """Sensor exposing a single water-billing attribute as a dedicated entity.
+class ConciergeServiceBillingBreakdownSensor(_ConciergeServiceBaseSensor):
+    """Sensor exposing a single billing-breakdown attribute as a dedicated entity.
 
-    Instances are created at setup time from the ``_WATER_SPECIFIC_SENSORS``
-    table, one per billing field.  This replaces the attribute-based approach
-    where all water fields were bundled into the status binary sensor.
+    Instances are created at setup time from the service-type sensor tables
+    (``_WATER_SPECIFIC_SENSORS``, ``_ELECTRICITY_SPECIFIC_SENSORS``), one per
+    billing field.  This replaces the attribute-based approach where these
+    fields were bundled into the status binary sensor.
     """
 
-    _attr_icon = "mdi:water"
+    _attr_icon = "mdi:currency-usd"
 
     def __init__(
         self,
@@ -675,7 +704,7 @@ class ConciergeWaterSpecificSensor(_ConciergeServiceBaseSensor):
         unit: str,
         uid_suffix: str,
     ) -> None:
-        """Initialize the water-specific sensor."""
+        """Initialize the billing-breakdown sensor."""
         super().__init__(coordinator, config_entry, subentry_id, subentry_data)
         self._attr_key = attr_key
         self._attr_name = f"Concierge {self._service_id} {name_suffix}"
@@ -684,7 +713,7 @@ class ConciergeWaterSpecificSensor(_ConciergeServiceBaseSensor):
 
     @property
     def native_value(self) -> float | int | None:
-        """Return the water billing attribute value."""
+        """Return the billing breakdown attribute value."""
         return self._get_extracted_attrs().get(self._attr_key)
 
 
