@@ -1,7 +1,10 @@
 """Binary sensor platform for Concierge Services."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+
+from dateutil.relativedelta import relativedelta
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -133,13 +136,26 @@ class ConciergeServiceStatusBinarySensor(
 
     @property
     def is_on(self) -> bool:
-        """Return True when there is a problem (no bill data found for this service)."""
+        """Return True when there is a problem with this service's bill data.
+
+        A problem is reported when:
+        - No coordinator data is available.
+        - No bill data has been found for this service.
+        - The most recent bill is older than one calendar month.
+        """
         if not self.coordinator.data:
             return True
         service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
         if not service_data:
             return True
-        return service_data.get("last_updated") is None
+        last_updated: datetime | None = service_data.get("last_updated")
+        if last_updated is None:
+            return True
+        now = datetime.now(timezone.utc)
+        # Ensure last_updated is timezone-aware before comparing.
+        if last_updated.tzinfo is None:
+            last_updated = last_updated.replace(tzinfo=timezone.utc)
+        return last_updated + relativedelta(months=1) < now
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

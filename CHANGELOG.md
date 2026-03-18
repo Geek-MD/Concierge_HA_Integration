@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.8] - 2026-03-18
+
+### Changed
+- **Stale-data Problem detection in `binary_sensor.concierge_{service}_status`**
+  (`binary_sensor.py`):
+
+  The status binary sensor now reports **Problem** (`is_on = True`) in an
+  additional scenario: when the most recently processed bill
+  (`sensor.concierge_{service}_last_update`) is **older than one calendar
+  month**.  The previous behaviour only flagged a Problem when no bill data
+  had ever been found.
+
+  | Condition | State |
+  |---|---|
+  | No coordinator data | Problem |
+  | No bill data for service | Problem |
+  | `last_update` is `None` | Problem |
+  | `last_update` older than 1 calendar month | **Problem** *(new)* |
+  | `last_update` within the last month | OK |
+
+  Calendar-month arithmetic uses `dateutil.relativedelta` (a core HA
+  dependency) to handle month-boundary edge cases correctly.  Timezone-naive
+  datetimes are safely normalised to UTC before comparison.
+
+- **`requirements.txt`**: `types-python-dateutil` added as a dev dependency
+  so that `mypy` can type-check the new `dateutil.relativedelta` import
+  without raising `[import-untyped]`.
+
+- **`manifest.json`**: Version bumped to `0.7.8`.
+
 ## [0.7.7] - 2026-03-18
 
 ### Changed

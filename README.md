@@ -40,7 +40,7 @@
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
-  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
+  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
   | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
   | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
   | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ |
@@ -50,7 +50,7 @@
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
-  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
+  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
   | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
   | `sensor.concierge_{id}_consumption` | Sensor | — | kWh consumed |
   | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/kWh |
@@ -64,7 +64,7 @@
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
-  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
+  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
   | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
   | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
   | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
@@ -208,7 +208,7 @@ with five entities:
 
 #### Diagnostic: Status Binary Sensor
 - **Entity ID**: `binary_sensor.concierge_{service_id}_status`
-- **State**: `on` (Problem — no bill data found) / `off` (OK — data retrieved)
+- **State**: `on` (Problem — no bill data found or last update older than 1 month) / `off` (OK — data retrieved within the last month)
 - **Attributes**: billing metadata (folio, period, address, due date, pdf_path) and
   service-type-specific fields (pdf_url, electricity breakdowns, water components, etc.)
 
