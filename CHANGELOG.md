@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.16] - 2026-03-18
+
+### Fixed
+- **``pdf_url`` attribute empty in both sensors** (`pdf_downloader.py`):
+  Previously the ``pdf_url`` sensor attribute was only populated when the
+  fidelizador.com bill download URL was found in the raw Quoted-Printable HTML
+  (strategy 2a, Metrogas emails).  For all other download paths — HTML link
+  extraction (strategy 2b) and plain-text URL scan (strategy 3) — the
+  attribute was never set and always remained ``""``.
+
+  ``_download_first_valid_pdf()`` now accepts an optional *attributes* dict
+  parameter.  Whenever a URL in the candidate list yields a valid PDF, the
+  function stores that URL in ``attributes["pdf_url"]``.  All three call sites
+  inside ``download_pdf_from_email()`` pass the shared *attributes* dict, so
+  ``pdf_url`` is populated regardless of which strategy produces the download.
+
+- **Wrong PDF downloaded for gas service** (`pdf_downloader.py`):
+  The previous ``_HTTP_USER_AGENT`` value identified the client as a Home
+  Assistant custom integration.  Click-tracking servers such as
+  *fidelizador.com* inspect the User-Agent header and may return a different
+  document (or an error page) when they detect a non-browser client, causing
+  the wrong PDF to be saved.
+
+  ``_HTTP_USER_AGENT`` is now set to a standard Mozilla/Chrome browser
+  string::
+
+      Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+      (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+
+  This causes the fidelizador.com tracker to follow its normal browser
+  redirect chain and serve the correct bill PDF.
+
 ## [0.6.15] - 2026-03-18
 
 ### Added

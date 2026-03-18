@@ -129,8 +129,15 @@ _CONTAINER_TAGS = frozenset({
     "section", "article", "table", "tbody", "thead", "tfoot",
 })
 
-# HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.15 (Home Assistant custom integration)"
+# HTTP User-Agent sent when fetching PDF links from email bodies.
+# A browser-like User-Agent string is required so that click-tracking servers
+# (e.g. fidelizador.com) follow their normal redirect chain and serve the
+# correct document instead of a generic / error page.
+_HTTP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -1245,7 +1252,7 @@ def download_pdf_from_email(
             )
             if attributes is not None:
                 attributes["pdf_url"] = fidelizador_href_url
-            result = _download_first_valid_pdf([fidelizador_href_url], dest_path, service_id)
+            result = _download_first_valid_pdf([fidelizador_href_url], dest_path, service_id, attributes)
             if result:
                 return result
 
@@ -1262,7 +1269,7 @@ def download_pdf_from_email(
                 len(candidate_urls),
                 service_id,
             )
-            result = _download_first_valid_pdf(candidate_urls, dest_path, service_id)
+            result = _download_first_valid_pdf(candidate_urls, dest_path, service_id, attributes)
             if result:
                 return result
     else:
@@ -1284,7 +1291,7 @@ def download_pdf_from_email(
                 len(candidate_urls),
                 service_id,
             )
-            result = _download_first_valid_pdf(candidate_urls, dest_path, service_id)
+            result = _download_first_valid_pdf(candidate_urls, dest_path, service_id, attributes)
             if result:
                 return result
 
@@ -1296,12 +1303,17 @@ def _download_first_valid_pdf(
     candidate_urls: list[str],
     dest_path: str,
     service_id: str,
+    attributes: dict[str, Any] | None = None,
 ) -> str | None:
     """Try each URL in *candidate_urls* until a valid PDF is saved.
 
     The response is validated by magic-byte check (``%PDF``) and/or the
     ``Content-Type`` header.  Returns *dest_path* on success, ``None`` if
     all candidates failed.
+
+    When *attributes* is provided and a download succeeds, the successful URL
+    is stored in ``attributes["pdf_url"]`` so that the sensor can expose it
+    regardless of which download strategy was used.
     """
     for url in candidate_urls:
         try:
@@ -1318,6 +1330,8 @@ def _download_first_valid_pdf(
                 with open(dest_path, "wb") as fh:
                     fh.write(pdf_data)
                 _LOGGER.info("Downloaded PDF %s → %s", url, dest_path)
+                if attributes is not None:
+                    attributes["pdf_url"] = url
                 return dest_path
 
             # If the response is HTML, attempt to follow a client-side
@@ -1329,6 +1343,8 @@ def _download_first_valid_pdf(
                     url, pdf_data, content_type, dest_path
                 )
                 if result:
+                    if attributes is not None:
+                        attributes["pdf_url"] = url
                     return result
                 continue
 
