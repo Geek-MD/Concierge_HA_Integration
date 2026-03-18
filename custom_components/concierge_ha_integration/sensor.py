@@ -496,10 +496,10 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
 class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
     """Sensor reporting the date of the latest processed bill for a service.
 
-    Entity category: Configuration — appears in the device Configuration panel.
+    Entity category: Diagnostic — appears in the device Diagnostic panel.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:calendar-clock"
 
     def __init__(

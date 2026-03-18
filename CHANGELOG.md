@@ -5,6 +5,91 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-03-18
+
+### Fixed
+- **mypy type error in `_find_fidelizador_href_in_html_qp`** (`pdf_downloader.py`):
+
+  `get_payload(decode=True)` returns `bytes | str | None`.  Mypy therefore
+  typed the `payload` variable as `bytes | str | None`, which caused a type
+  error on the `_FIDELIZADOR_BILLING_CONTEXT_RE.search(context_window)` call
+  because `Pattern[bytes].search()` requires a `Buffer` (bytes-like object),
+  not `str`.
+
+  **Fix:** an `isinstance(payload, bytes)` guard is added immediately after
+  the `if not payload` early-exit.  This narrows the type to `bytes` for the
+  rest of the loop body, eliminating the error and removing the three
+  `# type: ignore` suppressions that were masking the same underlying issue
+  on the `finditer`, `find`, `min`, and slice calls.
+
+- **`manifest.json`**: Version bumped to `0.7.5`.
+
+## [0.7.4] - 2026-03-18
+
+### Fixed
+- **Gas bill PDF download — wrong fidelizador.com URL selected** (`pdf_downloader.py`):
+
+  `_find_fidelizador_href_in_html_qp` was choosing the **last**
+  `trackercl1.fidelizador.com` URL in the raw QP HTML body, based on the
+  incorrect assumption that the "Ver boleta" download button always appears
+  last.  In practice Metrogas emails contain footer/unsubscribe tracking links
+  **after** the bill-download button, so the last URL is always a footer link,
+  not the billing button.
+
+  **Fix:** The function now identifies the correct URL by searching for billing
+  keywords (`ver boleta`, `descargar boleta`, `ver factura`, etc.) within a
+  bounded context window in the raw HTML bytes around each candidate URL
+  (200 bytes before the `href=3D"` + the link text up to the closing `</a>`).
+  The **first URL whose context contains a billing keyword** is returned as
+  the preferred bill-download URL.  Bounding the window at the closing `</a>`
+  prevents the window from bleeding into the link text of the *next* anchor
+  and falsely matching social-media or footer links.  When no billing-context
+  match is found the previous last-URL logic is kept as a fallback.
+
+  New module-level constant `_FIDELIZADOR_BILLING_CONTEXT_RE` (bytes pattern)
+  encodes the same keyword set as `_PDF_LINK_KEYWORDS`, adapted for matching
+  against raw QP-encoded HTML bytes.
+
+- **`manifest.json`**: Version bumped to `0.7.4`.
+
+## [0.7.3] - 2026-03-18
+
+### Fixed
+- **Spurious warnings eliminated from PDF downloader** (`pdf_downloader.py`):
+  Five intermediate-probe log messages that were emitted at `WARNING` level
+  (and therefore appeared in the Home Assistant issue/error panel) have been
+  downgraded to `DEBUG`.  These messages represent **expected** failures while
+  the downloader heuristically probes multiple candidate URLs:
+
+  - `"URL … returned HTML but no redirect target or billing URL found"` —
+    emitted when a click-tracker page (e.g. fidelizador.com) does not contain
+    a recognisable redirect or billing link.
+  - `"URL error fetching …"` — emitted when a candidate URL inside an HTML
+    redirect page returns a network error (e.g. HTTP 404/400).
+  - `"Candidate … did not return a PDF"` — emitted when a URL fetched from an
+    HTML page returns a non-PDF content type (e.g. a CDN JS file or a video).
+  - `"URL … did not return a PDF"` — same as above, in the top-level candidate
+    loop.
+  - `"URL error downloading …"` — emitted when a top-level candidate URL
+    returns an HTTP error (404, 400, etc.).
+
+  Real disk-write failures (`OSError`) continue to be logged at `WARNING`
+  level since they represent genuine operational problems.
+
+- **`manifest.json`**: Version bumped to `0.7.3`.
+
+## [0.7.2] - 2026-03-18
+
+### Fixed
+- **`sensor.concierge_*_last_update` entity category changed from `CONFIG` to
+  `DIAGNOSTIC`** (`sensor.py`): Home Assistant does not allow sensor entities to
+  use `EntityCategory.CONFIG`; attempting to register them raised a
+  `HomeAssistantError` and the sensors were never added.  The category has been
+  corrected to `EntityCategory.DIAGNOSTIC`, which is the appropriate category for
+  informational read-only sensors.
+
+- **`manifest.json`**: Version bumped to `0.7.2`.
+
 ## [0.7.1] - 2026-03-18
 
 ### Changed
@@ -54,7 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   | Entity ID | Category | Value |
   |---|---|---|
-  | `sensor.concierge_{service_id}_last_update` | Configuration | Last bill date (ISO 8601) |
+  | `sensor.concierge_{service_id}_last_update` | Diagnostic | Last bill date (ISO 8601) |
   | `sensor.concierge_{service_id}_consumption` | — | m³ (gas/water) or kWh (electricity) |
   | `sensor.concierge_{service_id}_cost_per_unit` | — | $/m³ (gas) or $/kWh (electricity); `None` for water/unknown |
   | `sensor.concierge_{service_id}_total_amount` | — | Total bill amount (`$`) |
