@@ -5,12 +5,12 @@ import email
 import imaplib
 import logging
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -68,6 +68,33 @@ _COST_PER_UNIT_UNITS: dict[str, str] = {
     SERVICE_TYPE_ELECTRICITY: "$/kWh",
 }
 
+# Billing-breakdown sensor definitions per service type.
+# Each tuple: (extracted_attr_key, name_suffix, unit, unique_id_suffix)
+# Used by ConciergeServiceBillingBreakdownSensor (one instance per row).
+
+# Water: the two cost-per-unit peak/non-peak sensors renamed per spec v0.7.6.
+_WATER_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
+    ("fixed_charge",                 "Fixed Charge",                 "$",     "water_fixed_charge"),
+    ("cubic_meter_peak_water_cost",  "Cost Per Unit Peak",           "$/m³",  "cost_per_unit_peak"),
+    ("cubic_meter_non_peak_water_cost", "Cost Per Unit Non Peak",    "$/m³",  "cost_per_unit_non_peak"),
+    ("cubic_meter_overconsumption",  "Cubic Meter Overconsumption",  "$/m³",  "water_cubic_meter_overconsumption"),
+    ("cubic_meter_collection",       "Cubic Meter Collection",       "$/m³",  "water_cubic_meter_collection"),
+    ("cubic_meter_treatment",        "Cubic Meter Treatment",        "$/m³",  "water_cubic_meter_treatment"),
+    ("water_consumption",            "Water Consumption",            "$",     "water_consumption_charge"),
+    ("wastewater_recolection",       "Wastewater Recolection",       "$",     "wastewater_recolection"),
+    ("wastewater_treatment",         "Wastewater Treatment",         "$",     "wastewater_treatment"),
+    ("subtotal",                     "Subtotal",                     "$",     "water_subtotal"),
+    ("other_charges",                "Other Charges",                "$",     "water_other_charges"),
+]
+
+# Electricity: billing charge breakdown (all CLP amounts).
+_ELECTRICITY_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
+    ("service_administration", "Service Administration", "$", "electricity_service_administration"),
+    ("electricity_transport",  "Electricity Transport",  "$", "electricity_transport"),
+    ("stabilization_fund",     "Stabilization Fund",     "$", "electricity_stabilization_fund"),
+    ("electricity_consumption","Electricity Consumption", "$", "electricity_consumption_charge"),
+]
+
 # Webmail provider domains that are too generic for sender-domain matching.
 # Emails forwarded through these services carry the forwarder's address, not
 # the original utility company's address.
@@ -97,10 +124,17 @@ async def async_setup_entry(
     One connection sensor is created for the main entry as a standalone entity
     (no device) so it does not appear in the "Devices that don't belong to a
     sub-entry" category.
-    Four service sensors are created for every subentry (service device):
-    last_update, consumption, cost_per_unit, and total_amount — each associated
-    with its own subentry so they appear correctly grouped in the HA device
-    registry.
+    Per-subentry sensors:
+    - All service types: last_update, consumption, total_amount.
+    - Gas: cost_per_unit (generic $/unit sensor).
+    - Electricity: cost_per_unit + 4 billing-breakdown sensors
+      (service_administration, electricity_transport, stabilization_fund,
+      electricity_consumption).
+    - Water: cost_per_unit is replaced by 11 water-specific sensors
+      (fixed_charge, cost_per_unit_peak, cost_per_unit_non_peak, and other
+      water billing breakdown fields).
+    Each entity is associated with its own subentry so it appears correctly
+    grouped in the HA device registry.
     """
     # The coordinator is initialised in __init__.async_setup_entry before the
     # platforms are forwarded, so it is always present at this point.
@@ -111,23 +145,63 @@ async def async_setup_entry(
     # Main connection sensor (standalone entity, not linked to any device or subentry)
     async_add_entities([ConciergeServicesConnectionSensor(coordinator, config_entry)])
 
-    # Four service sensors per subentry, each linked to its own subentry.
     for subentry_id, subentry in config_entry.subentries.items():  # type: ignore[attr-defined]
-        async_add_entities(
-            [
-                ConciergeServiceLastUpdateSensor(
-                    coordinator, config_entry, subentry_id, subentry.data
-                ),
-                ConciergeServiceConsumptionSensor(
-                    coordinator, config_entry, subentry_id, subentry.data
-                ),
+        service_type = subentry.data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
+
+        entities: list[SensorEntity] = [
+            ConciergeServiceLastUpdateSensor(
+                coordinator, config_entry, subentry_id, subentry.data
+            ),
+            ConciergeServiceConsumptionSensor(
+                coordinator, config_entry, subentry_id, subentry.data
+            ),
+            ConciergeServiceTotalAmountSensor(
+                coordinator, config_entry, subentry_id, subentry.data
+            ),
+        ]
+
+        if service_type == SERVICE_TYPE_WATER:
+            # Water services use granular peak/non-peak cost sensors instead of
+            # the generic cost_per_unit sensor, plus additional billing breakdown
+            # sensors.
+            for attr_key, name_suffix, unit, uid_suffix in _WATER_SPECIFIC_SENSORS:
+                entities.append(
+                    ConciergeServiceBillingBreakdownSensor(
+                        coordinator,
+                        config_entry,
+                        subentry_id,
+                        subentry.data,
+                        attr_key=attr_key,
+                        name_suffix=name_suffix,
+                        unit=unit,
+                        uid_suffix=uid_suffix,
+                    )
+                )
+        else:
+            # Gas and electricity expose a single cost-per-unit sensor.
+            entities.append(
                 ConciergeServiceCostPerUnitSensor(
                     coordinator, config_entry, subentry_id, subentry.data
-                ),
-                ConciergeServiceTotalAmountSensor(
-                    coordinator, config_entry, subentry_id, subentry.data
-                ),
-            ],
+                )
+            )
+            # Electricity also exposes billing-charge breakdown sensors.
+            if service_type == SERVICE_TYPE_ELECTRICITY:
+                for attr_key, name_suffix, unit, uid_suffix in _ELECTRICITY_SPECIFIC_SENSORS:
+                    entities.append(
+                        ConciergeServiceBillingBreakdownSensor(
+                            coordinator,
+                            config_entry,
+                            subentry_id,
+                            subentry.data,
+                            attr_key=attr_key,
+                            name_suffix=name_suffix,
+                            unit=unit,
+                            uid_suffix=uid_suffix,
+                        )
+                    )
+
+        async_add_entities(
+            entities,
             config_subentry_id=subentry_id,  # type: ignore[call-arg]
         )
 
@@ -496,9 +570,14 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
 class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
     """Sensor reporting the date of the latest processed bill for a service.
 
+    Device class TIMESTAMP causes the HA frontend to render the value as a
+    relative time string ("hace 2 días", "2 days ago", etc.) in the user's
+    configured language.
+
     Entity category: Diagnostic — appears in the device Diagnostic panel.
     """
 
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:calendar-clock"
 
@@ -515,17 +594,14 @@ class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
         self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}_last_update"
 
     @property
-    def native_value(self) -> str | None:
-        """Return the last bill datetime as a full ISO-format datetime string."""
+    def native_value(self) -> datetime | None:
+        """Return the last bill datetime; HA renders it as a relative time string."""
         if not self.coordinator.data:
             return None
         service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
         if not service_data:
             return None
-        last_updated = service_data.get("last_updated")
-        if last_updated:
-            return last_updated.isoformat()
-        return None
+        return service_data.get("last_updated")
 
 
 class ConciergeServiceConsumptionSensor(_ConciergeServiceBaseSensor):
@@ -603,6 +679,42 @@ class ConciergeServiceTotalAmountSensor(_ConciergeServiceBaseSensor):
     def native_value(self) -> float | None:
         """Return the total bill amount."""
         return self._get_extracted_attrs().get("total_amount")
+
+
+class ConciergeServiceBillingBreakdownSensor(_ConciergeServiceBaseSensor):
+    """Sensor exposing a single billing-breakdown attribute as a dedicated entity.
+
+    Instances are created at setup time from the service-type sensor tables
+    (``_WATER_SPECIFIC_SENSORS``, ``_ELECTRICITY_SPECIFIC_SENSORS``), one per
+    billing field.  This replaces the attribute-based approach where these
+    fields were bundled into the status binary sensor.
+    """
+
+    _attr_icon = "mdi:currency-usd"
+
+    def __init__(
+        self,
+        coordinator: ConciergeServicesCoordinator,
+        config_entry: ConfigEntry,
+        subentry_id: str,
+        subentry_data: dict[str, Any],
+        *,
+        attr_key: str,
+        name_suffix: str,
+        unit: str,
+        uid_suffix: str,
+    ) -> None:
+        """Initialize the billing-breakdown sensor."""
+        super().__init__(coordinator, config_entry, subentry_id, subentry_data)
+        self._attr_key = attr_key
+        self._attr_name = f"Concierge {self._service_id} {name_suffix}"
+        self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}_{uid_suffix}"
+        self._attr_native_unit_of_measurement = unit
+
+    @property
+    def native_value(self) -> float | int | None:
+        """Return the billing breakdown attribute value."""
+        return self._get_extracted_attrs().get(self._attr_key)
 
 
 class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):

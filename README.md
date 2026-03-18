@@ -34,15 +34,51 @@
 - 🔍 **Automatic Service Detection**: Detects utility services from your inbox automatically
 - 🔎 **IMAP Discovery**: After setup, the integration automatically scans the inbox every hour for new services and surfaces them in **Configuration → Integrations** as devices available to be added — no manual "Add Device" click needed for discovered services (requires HA 2025.4 or newer)
 - 📡 **Per-Service Entity Architecture** (v0.7.0+): Each configured service device
-  exposes five entities:
+  exposes entities based on service type:
+
+  **Gas (5 entities):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
-  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Full ISO 8601 datetime of the latest processed bill |
-  | `sensor.concierge_{id}_consumption` | Sensor | — | m³ (gas/water) or kWh (electricity) |
-  | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ (gas) or $/kWh (electricity) |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
+  | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ |
   | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
+
+  **Electricity (9 entities):**
+
+  | Entity | Type | Category | Value / Purpose |
+  |---|---|---|---|
+  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_consumption` | Sensor | — | kWh consumed |
+  | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/kWh |
+  | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
+  | `sensor.concierge_{id}_service_administration` | Sensor | — | Administration fee (`$`) |
+  | `sensor.concierge_{id}_electricity_transport` | Sensor | — | Electricity transport charge (`$`) |
+  | `sensor.concierge_{id}_stabilization_fund` | Sensor | — | Stabilisation fund charge (`$`) |
+  | `sensor.concierge_{id}_electricity_consumption` | Sensor | — | Cost of consumed electricity (`$`) |
+
+  **Water (14 entities — `cost_per_unit` is replaced by granular sensors):**
+
+  | Entity | Type | Category | Value / Purpose |
+  |---|---|---|---|
+  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
+  | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
+  | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Fixed service charge (`$`) |
+  | `sensor.concierge_{id}_cost_per_unit_peak` | Sensor | — | Cost per m³ — peak (`$/m³`) |
+  | `sensor.concierge_{id}_cost_per_unit_non_peak` | Sensor | — | Cost per m³ — non-peak (`$/m³`) |
+  | `sensor.concierge_{id}_cubic_meter_overconsumption` | Sensor | — | Cost per m³ — overconsumption (`$/m³`) |
+  | `sensor.concierge_{id}_cubic_meter_collection` | Sensor | — | Cost per m³ — collection (`$/m³`) |
+  | `sensor.concierge_{id}_cubic_meter_treatment` | Sensor | — | Cost per m³ — treatment (`$/m³`) |
+  | `sensor.concierge_{id}_water_consumption` | Sensor | — | Potable water charge (`$`) |
+  | `sensor.concierge_{id}_wastewater_recolection` | Sensor | — | Wastewater collection charge (`$`) |
+  | `sensor.concierge_{id}_wastewater_treatment` | Sensor | — | Wastewater treatment charge (`$`) |
+  | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal before surcharges (`$`) |
+  | `sensor.concierge_{id}_other_charges` | Sensor | — | Net surcharges (`$`) |
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
@@ -50,14 +86,9 @@
   - Billing: `folio`, `billing_period_start`, `billing_period_end`, `customer_number`,
     `address`, `due_date`
   - When a PDF has been downloaded: `pdf_path`
-  - **Electricity** extras: `service_administration`, `electricity_transport`,
-    `stabilization_fund`, `electricity_consumption`, `tariff_code`,
-    `connected_power`, `connected_power_unit`, `area`, `substation`, `pdf_url`
+  - **Electricity** extras: `tariff_code`, `connected_power`, `connected_power_unit`,
+    `area`, `substation`, `pdf_url`
   - **Gas** extras: `pdf_url`
-  - **Water** extras: `fixed_charge`, `cubic_meter_peak_water_cost`,
-    `cubic_meter_non_peak_water_cost`, `cubic_meter_overconsumption`,
-    `cubic_meter_collection`, `cubic_meter_treatment`, `water_consumption`,
-    `wastewater_recolection`, `wastewater_treatment`, `subtotal`, `other_charges`
 - 📄 **Heuristic PDF Download**: Automatically downloads the billing PDF for each matched email:
   - If the email has a PDF attachment it is saved directly
   - Otherwise the HTML body is scanned for billing links (*"ver boleta"*, *"descargue su boleta"*, etc.) and the first valid PDF URL is downloaded

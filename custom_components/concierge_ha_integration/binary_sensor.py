@@ -43,10 +43,6 @@ _GAS_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
     "pdf_url": "",
 }
 _ELECTRICITY_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
-    "service_administration": 0,
-    "electricity_transport": 0,
-    "stabilization_fund": 0,
-    "electricity_consumption": 0,
     "tariff_code": 0,
     "connected_power": 0,
     "connected_power_unit": 0,
@@ -55,17 +51,6 @@ _ELECTRICITY_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
     "pdf_url": "",
 }
 _WATER_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
-    "fixed_charge": 0,
-    "cubic_meter_peak_water_cost": 0.0,
-    "cubic_meter_non_peak_water_cost": 0.0,
-    "cubic_meter_overconsumption": 0.0,
-    "cubic_meter_collection": 0.0,
-    "cubic_meter_treatment": 0.0,
-    "water_consumption": 0,
-    "wastewater_recolection": 0,
-    "wastewater_treatment": 0,
-    "subtotal": 0,
-    "other_charges": 0,
 }
 
 _SERVICE_TYPE_STATUS_ATTR_DEFAULTS: dict[str, dict[str, Any]] = {

@@ -5,7 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.5] - 2026-03-18
+## [0.7.7] - 2026-03-18
+
+### Changed
+- **Electricity service — billing charge fields promoted to dedicated sensor entities**
+  (`sensor.py`, `binary_sensor.py`):
+
+  The following fields, previously bundled as attributes on
+  `binary_sensor.concierge_{service}_status`, are now individual sensor entities:
+
+  | New entity | Attribute replaced | Unit |
+  |---|---|---|
+  | `sensor.concierge_{service}_service_administration` | `service_administration` | `$` |
+  | `sensor.concierge_{service}_electricity_transport` | `electricity_transport` | `$` |
+  | `sensor.concierge_{service}_stabilization_fund` | `stabilization_fund` | `$` |
+  | `sensor.concierge_{service}_electricity_consumption` | `electricity_consumption` | `$` |
+
+  All four are backed by the now-generic `ConciergeServiceBillingBreakdownSensor`
+  class (renamed from `ConciergeWaterSpecificSensor`, which was already fully
+  parameterised).
+
+- **`ConciergeWaterSpecificSensor` → `ConciergeServiceBillingBreakdownSensor`**
+  (`sensor.py`): class renamed to reflect its use for both water and electricity
+  billing breakdowns.
+
+- **`manifest.json`**: Version bumped to `0.7.7`.
+
+## [0.7.6] - 2026-03-18
+
+### Changed
+- **Water service — water billing fields promoted to dedicated sensor entities**
+  (`sensor.py`, `binary_sensor.py`):
+
+  The 11 water-specific billing fields that were previously bundled as
+  attributes on `binary_sensor.concierge_{service}_status` are now exposed as
+  individual sensor entities:
+
+  | New entity | Attribute replaced | Unit |
+  |---|---|---|
+  | `sensor.concierge_{service}_fixed_charge` | `fixed_charge` | `$` |
+  | `sensor.concierge_{service}_cost_per_unit_peak` | `cubic_meter_peak_water_cost` | `$/m³` |
+  | `sensor.concierge_{service}_cost_per_unit_non_peak` | `cubic_meter_non_peak_water_cost` | `$/m³` |
+  | `sensor.concierge_{service}_cubic_meter_overconsumption` | `cubic_meter_overconsumption` | `$/m³` |
+  | `sensor.concierge_{service}_cubic_meter_collection` | `cubic_meter_collection` | `$/m³` |
+  | `sensor.concierge_{service}_cubic_meter_treatment` | `cubic_meter_treatment` | `$/m³` |
+  | `sensor.concierge_{service}_water_consumption` | `water_consumption` | `$` |
+  | `sensor.concierge_{service}_wastewater_recolection` | `wastewater_recolection` | `$` |
+  | `sensor.concierge_{service}_wastewater_treatment` | `wastewater_treatment` | `$` |
+  | `sensor.concierge_{service}_subtotal` | `subtotal` | `$` |
+  | `sensor.concierge_{service}_other_charges` | `other_charges` | `$` |
+
+  The generic `sensor.concierge_{service}_cost_per_unit` sensor is **not**
+  created for water service subentries; the new `cost_per_unit_peak` and
+  `cost_per_unit_non_peak` sensors replace it entirely.
+
+- **`sensor.concierge_{service}_last_update` — relative-time display** (`sensor.py`):
+
+  The sensor now carries `device_class: timestamp` and returns a native
+  `datetime` object instead of an ISO-format string.  The Home Assistant
+  frontend automatically renders this as a locale-aware relative time string
+  ("hace 2 días", "hace 1 semana", "2 days ago", etc.) in the user's
+  configured language.
+
+- **`manifest.json`**: Version bumped to `0.7.6`.
+
+
 
 ### Fixed
 - **mypy type error in `_find_fidelizador_href_in_html_qp`** (`pdf_downloader.py`):
