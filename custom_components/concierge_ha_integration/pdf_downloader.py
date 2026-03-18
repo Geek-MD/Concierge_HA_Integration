@@ -236,6 +236,45 @@ _FIDELIZADOR_HTML_HREF_QP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Billing-keyword pattern used to identify which fidelizador.com tracking URL
+# belongs to the bill-download button.  Matched against a bounded context
+# window in the raw QP-encoded HTML bytes around each candidate URL:
+#   [m.start() - 200, first </a> after m.end()]
+#
+# The window is deliberately bounded by the closing </a> of the current anchor
+# so that the link text of the *next* anchor element is never included, which
+# would otherwise cause a false billing-context match on social-media or footer
+# links that happen to precede a "Ver boleta" button.
+#
+# Metrogas billing emails contain *multiple* fidelizador.com tracking URLs:
+# social-media icon links, account-management buttons, the bill-download
+# button ("Ver boleta"), and footer/unsubscribe links.  The bill-download
+# button is *not* the last URL in the document — footer links appear after it,
+# so a "take the last URL" strategy consistently returns the wrong link.
+#
+# By requiring that the selected URL's bounded context contains at least one
+# billing keyword (e.g. "Ver boleta"), we reliably identify the download
+# button regardless of its position in the document.
+_FIDELIZADOR_BILLING_CONTEXT_RE = re.compile(
+    rb"ver\s+boleta"
+    rb"|descarg(?:ar?|ue[ns]?)\s+(?:su\s+|tu\s+)?boleta"
+    rb"|revisa(?:r)?\s+(?:tu\s+|su\s+)?boleta"
+    rb"|ver\s+factura"
+    rb"|descarg(?:ar?|ue[ns]?)\s+(?:su\s+|tu\s+)?factura"
+    rb"|ver\s+(?:tu\s+|su\s+)?factura"
+    rb"|ver\s+cuenta"
+    rb"|ver\s+comprobante"
+    rb"|descarg(?:ar?|ue[ns]?)\s+comprobante"
+    rb"|ver\s+documento"
+    rb"|descarg(?:ar?|ue[ns]?)\s+(?:pdf|documento|archivo)"
+    rb"|bajar\s+(?:pdf|boleta|factura)"
+    rb"|obtener\s+(?:pdf|boleta|factura)"
+    rb"|imprimir\s+boleta"
+    rb"|imprimir\s+factura"
+    rb"|visualizar\s+(?:boleta|factura|documento)",
+    re.IGNORECASE,
+)
+
 
 class _LinkExtractor(HTMLParser):
     """Extract (href, link_text) pairs from an HTML document.
@@ -589,33 +628,45 @@ def _find_fidelizador_links_in_raw_qp_parts(
 def _find_fidelizador_href_in_html_qp(
     msg: _email_lib.message.Message,
 ) -> str | None:
-    """Find the gas bill download URL from the ``<a href>`` div in raw QP HTML.
+    """Find the gas bill download URL from the ``<a href>`` attribute in raw QP HTML.
 
     Metrogas billing emails (delivered via *fidelizador.com*) contain **multiple**
     ``trackercl1.fidelizador.com`` click-tracking URLs embedded in the HTML body:
-    social-media icon links and account-management buttons appear **earlier** in
-    the document, while the bill download button appears **later**.  This means
-    the last ``href=3D"https://trackercl1.fidelizador.com/…"`` occurrence in the
-    raw HTML bytes belongs to the correct download button.
+    social-media icon links, account-management buttons, the bill-download button
+    ("Ver boleta"), and footer/unsubscribe links.  Because these URLs share the
+    same domain they are indistinguishable by domain alone.
+
+    **Selection strategy — billing context window:**
+
+    The bill-download button is identified by searching for a billing keyword
+    (e.g. ``"Ver boleta"``, ``"Descargar boleta"``) within a bounded context
+    window in the raw HTML bytes around each candidate URL:
+
+    * **Before the URL** — up to 200 bytes before the ``href=3D"`` start, to
+      catch patterns where the visible label sits in a sibling element (e.g.
+      ``<td>Ver boleta</td><td><a href="…"><img></a></td>``).
+    * **After the URL** — from the URL end to the first ``</a>`` closing tag
+      that follows it (capped at 200 bytes), which is the link text of *this*
+      anchor only.  Stopping at ``</a>`` prevents the context window from
+      bleeding into the text of the *next* anchor element.
+
+    The **first** URL whose bounded context matches
+    :data:`_FIDELIZADOR_BILLING_CONTEXT_RE` is returned as the preferred
+    bill-download URL.
+
+    This replaces the former "take the last URL" heuristic, which was incorrect:
+    footer/unsubscribe links appear **after** the "Ver boleta" button in the
+    HTML, making the last URL a footer link rather than the billing button.
+
+    **Fallback:**  If no URL with billing context is found (e.g. different email
+    layout), the last fidelizador.com URL in the HTML is returned so that the
+    function still has a chance to find any document link.
 
     The email HTML is Quoted-Printable encoded without a
     ``Content-Transfer-Encoding`` header.  Inside the raw bytes, the
-    ``href`` attribute assignment appears as ``href=3D"URL"`` (the ``=`` character
-    in ``="`` is itself QP-encoded as ``=3D``).  The URL token may additionally
+    ``href`` attribute assignment appears as ``href=3D"URL"`` (the ``=`` in
+    ``="`` is itself QP-encoded as ``=3D``).  The URL token may additionally
     span a ``=\\r?\\n`` soft line-break.
-
-    Reconstruction steps (matching the problem statement requirements):
-
-    1. Locate the last ``href=3D"https://trackercl1.fidelizador.com/…"`` in the
-       raw HTML bytes.
-    2. Capture everything between ``href=3D"`` and the closing ``"``, which may
-       span QP soft line-breaks.
-    3. Apply :func:`quopri.decodestring` to remove ``=\\n`` soft line-breaks and
-       decode any ``=XX`` hex codes, yielding the clean URL.
-
-    This is the **sole** authoritative method for obtaining the gas bill PDF URL
-    from Metrogas / fidelizador.com emails; all other extraction paths (plain-text
-    part, general HTML link extraction) have been shown to return incorrect URLs.
 
     Args:
         msg: Parsed email message.
@@ -627,7 +678,8 @@ def _find_fidelizador_href_in_html_qp(
     parts: list[_email_lib.message.Message] = (
         list(msg.walk()) if msg.is_multipart() else [msg]
     )
-    last_url: str | None = None
+    billing_url: str | None = None  # First URL with billing keyword in context
+    last_url: str | None = None     # Fallback: last URL seen in the HTML
 
     for part in parts:
         if part.get_content_type() != "text/html":
@@ -653,19 +705,52 @@ def _find_fidelizador_href_in_html_qp(
             except Exception:
                 url = raw_url.decode("ascii", errors="ignore")
             url = url.strip()
-            if url.startswith("https://trackercl1.fidelizador.com/"):
-                # Keep updating last_url: the final occurrence in the HTML
-                # is the bill download button (social-media links appear
-                # earlier in the document).
-                last_url = url
-                _LOGGER.debug(
-                    "Fidelizador.com href found in raw QP HTML (updating last): %s",
-                    url,
-                )
+            if not url.startswith("https://trackercl1.fidelizador.com/"):
+                continue
 
-    if last_url:
-        _LOGGER.debug("Fidelizador.com bill download URL (last href in HTML): %s", last_url)
-    return last_url
+            last_url = url
+            _LOGGER.debug("Fidelizador.com href found in raw QP HTML: %s", url)
+
+            # Check a bounded context window for billing keywords to identify
+            # the bill-download button rather than a social-media or footer
+            # tracking link that shares the same fidelizador.com domain.
+            #
+            # The window is:
+            #   [m.start() - 200, first </a> after m.end()]
+            #
+            # Stopping at the closing </a> of the current anchor is critical:
+            # a naively large window would bleed into the link text of the
+            # *next* anchor and falsely associate its billing keyword with the
+            # current (wrong) URL.
+            if billing_url is None:
+                ctx_start = max(0, m.start() - 200)
+                # Find the </a> that closes this anchor to bound the window.
+                a_close_idx = payload.lower().find(b"</a>", m.end())  # type: ignore[union-attr]
+                if a_close_idx == -1:
+                    ctx_end = min(len(payload), m.end() + 200)  # type: ignore[arg-type]
+                else:
+                    ctx_end = a_close_idx + 4  # include the </a> itself
+                context_window = payload[ctx_start:ctx_end]  # type: ignore[index]
+                if _FIDELIZADOR_BILLING_CONTEXT_RE.search(context_window):
+                    billing_url = url
+                    _LOGGER.debug(
+                        "Fidelizador.com href with billing context (preferred): %s",
+                        url,
+                    )
+
+    result = billing_url or last_url
+    if result:
+        if billing_url:
+            _LOGGER.debug(
+                "Fidelizador.com bill download URL (billing-context match): %s",
+                result,
+            )
+        else:
+            _LOGGER.debug(
+                "Fidelizador.com bill download URL (last-href fallback): %s",
+                result,
+            )
+    return result
 
 
 def _get_html_body(msg: _email_lib.message.Message) -> str:
@@ -1157,13 +1242,14 @@ def download_pdf_from_email(
           the **sole** authoritative method for Metrogas emails.  The raw HTML
           bytes are scanned for ``href=3D"https://trackercl1.fidelizador.com/…"``
           attributes (using :func:`_find_fidelizador_href_in_html_qp`).  The
-          *last* such ``href`` in document order is the bill download button;
-          social-media icon links and account-management buttons appear earlier
-          in the HTML.  The URL is reconstructed by removing the QP soft
-          line-break (``=\\n``) and the ``3D`` encoding of the ``=`` sign in
-          the attribute assignment (``href=3D"…"`` → ``href="…"``).  When a URL
-          is found it is stored in ``attributes["pdf_url"]`` before the download
-          is attempted.
+          bill-download button URL is identified by searching for billing
+          keywords (e.g. *"Ver boleta"*) within a bounded context window
+          (200 bytes before the URL + link text up to ``</a>``) around each
+          candidate; the first URL with a matching context is preferred.  A
+          last-URL fallback is used when no billing-context match is found.
+          The URL is reconstructed by QP-decoding the raw bytes (soft
+          line-breaks removed, ``=3D`` → ``=``).  When a URL is found it is
+          stored in ``attributes["pdf_url"]`` before the download is attempted.
 
        b. **HTML link extraction** — the decoded HTML is parsed for
           ``<a href>`` elements and ``<script>`` blocks.  Three tiers of
@@ -1244,14 +1330,15 @@ def download_pdf_from_email(
     html_body = _get_html_body(msg)
     if html_body:
         # Attempt 2a: fidelizador.com bill download URL extracted from the
-        # ``href=3D"…"`` attribute inside its specific div in the raw QP HTML.
+        # ``href=3D"…"`` attribute in the raw QP HTML bytes.
         # This is the sole authoritative method for Metrogas / fidelizador.com
-        # emails: the URL is the *last* ``href=3D"trackercl1.fidelizador.com/…"``
-        # in the HTML body, because social-media icon links and account-management
-        # buttons appear earlier in the document whereas the bill download button
-        # comes later.  The URL is reconstructed by removing QP soft line-breaks
-        # (``=\n``) and stripping the ``3D`` that encodes the ``=`` sign in the
-        # attribute assignment (``href=3D"…"`` → ``href="…"``).
+        # emails.  The function identifies the bill-download button URL by
+        # searching for billing keywords (e.g. "Ver boleta") within a bounded
+        # context window (200 bytes before + link text up to </a>) around each
+        # candidate URL, then falls back to the last fidelizador.com URL if no
+        # billing-context match is found.  The URL is reconstructed by
+        # QP-decoding the raw bytes (removing ``=\n`` soft line-breaks and
+        # ``=3D`` → ``=``).
         fidelizador_href_url = _find_fidelizador_href_in_html_qp(msg)
         if fidelizador_href_url:
             _LOGGER.info(

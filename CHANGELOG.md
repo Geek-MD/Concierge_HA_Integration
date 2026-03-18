@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-03-18
+
+### Fixed
+- **Gas bill PDF download — wrong fidelizador.com URL selected** (`pdf_downloader.py`):
+
+  `_find_fidelizador_href_in_html_qp` was choosing the **last**
+  `trackercl1.fidelizador.com` URL in the raw QP HTML body, based on the
+  incorrect assumption that the "Ver boleta" download button always appears
+  last.  In practice Metrogas emails contain footer/unsubscribe tracking links
+  **after** the bill-download button, so the last URL is always a footer link,
+  not the billing button.
+
+  **Fix:** The function now identifies the correct URL by searching for billing
+  keywords (`ver boleta`, `descargar boleta`, `ver factura`, etc.) within a
+  bounded context window in the raw HTML bytes around each candidate URL
+  (200 bytes before the `href=3D"` + the link text up to the closing `</a>`).
+  The **first URL whose context contains a billing keyword** is returned as
+  the preferred bill-download URL.  Bounding the window at the closing `</a>`
+  prevents the window from bleeding into the link text of the *next* anchor
+  and falsely matching social-media or footer links.  When no billing-context
+  match is found the previous last-URL logic is kept as a fallback.
+
+  New module-level constant `_FIDELIZADOR_BILLING_CONTEXT_RE` (bytes pattern)
+  encodes the same keyword set as `_PDF_LINK_KEYWORDS`, adapted for matching
+  against raw QP-encoded HTML bytes.
+
+- **`manifest.json`**: Version bumped to `0.7.4`.
+
 ## [0.7.3] - 2026-03-18
 
 ### Fixed
