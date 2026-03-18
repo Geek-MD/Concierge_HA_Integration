@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-03-18
+
+### Fixed
+- **mypy type error in `_find_fidelizador_href_in_html_qp`** (`pdf_downloader.py`):
+
+  `get_payload(decode=True)` returns `bytes | str | None`.  Mypy therefore
+  typed the `payload` variable as `bytes | str | None`, which caused a type
+  error on the `_FIDELIZADOR_BILLING_CONTEXT_RE.search(context_window)` call
+  because `Pattern[bytes].search()` requires a `Buffer` (bytes-like object),
+  not `str`.
+
+  **Fix:** an `isinstance(payload, bytes)` guard is added immediately after
+  the `if not payload` early-exit.  This narrows the type to `bytes` for the
+  rest of the loop body, eliminating the error and removing the three
+  `# type: ignore` suppressions that were masking the same underlying issue
+  on the `finditer`, `find`, `min`, and slice calls.
+
+- **`manifest.json`**: Version bumped to `0.7.5`.
+
 ## [0.7.4] - 2026-03-18
 
 ### Fixed

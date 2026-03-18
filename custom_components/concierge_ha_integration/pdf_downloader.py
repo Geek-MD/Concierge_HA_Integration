@@ -693,11 +693,13 @@ def _find_fidelizador_href_in_html_qp(
         payload = part.get_payload(decode=True)
         if not payload:
             continue
+        if not isinstance(payload, bytes):
+            continue
         # Only process payloads that show QP soft line-breaks, the
         # unambiguous sign that the body is QP-encoded without a CTE header.
-        if b"=\r\n" not in payload and b"=\n" not in payload:  # type: ignore[operator]
+        if b"=\r\n" not in payload and b"=\n" not in payload:
             continue
-        for m in _FIDELIZADOR_HTML_HREF_QP_RE.finditer(payload):  # type: ignore[arg-type]
+        for m in _FIDELIZADOR_HTML_HREF_QP_RE.finditer(payload):
             raw_url: bytes = m.group(1)
             # QP-decode: removes =\n soft line-breaks and =XX hex codes.
             try:
@@ -725,12 +727,12 @@ def _find_fidelizador_href_in_html_qp(
             if billing_url is None:
                 ctx_start = max(0, m.start() - 200)
                 # Find the </a> that closes this anchor to bound the window.
-                a_close_idx = payload.lower().find(b"</a>", m.end())  # type: ignore[union-attr]
+                a_close_idx = payload.lower().find(b"</a>", m.end())
                 if a_close_idx == -1:
-                    ctx_end = min(len(payload), m.end() + 200)  # type: ignore[arg-type]
+                    ctx_end = min(len(payload), m.end() + 200)
                 else:
                     ctx_end = a_close_idx + 4  # include the </a> itself
-                context_window = payload[ctx_start:ctx_end]  # type: ignore[index]
+                context_window = payload[ctx_start:ctx_end]
                 if _FIDELIZADOR_BILLING_CONTEXT_RE.search(context_window):
                     billing_url = url
                     _LOGGER.debug(
