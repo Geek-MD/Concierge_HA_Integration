@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-03-18
+
+### Fixed
+- **`sensor.concierge_*_last_update` entity category changed from `CONFIG` to
+  `DIAGNOSTIC`** (`sensor.py`): Home Assistant does not allow sensor entities to
+  use `EntityCategory.CONFIG`; attempting to register them raised a
+  `HomeAssistantError` and the sensors were never added.  The category has been
+  corrected to `EntityCategory.DIAGNOSTIC`, which is the appropriate category for
+  informational read-only sensors.
+
+- **`manifest.json`**: Version bumped to `0.7.2`.
+
 ## [0.7.1] - 2026-03-18
 
 ### Changed
@@ -54,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   | Entity ID | Category | Value |
   |---|---|---|
-  | `sensor.concierge_{service_id}_last_update` | Configuration | Last bill date (ISO 8601) |
+  | `sensor.concierge_{service_id}_last_update` | Diagnostic | Last bill date (ISO 8601) |
   | `sensor.concierge_{service_id}_consumption` | — | m³ (gas/water) or kWh (electricity) |
   | `sensor.concierge_{service_id}_cost_per_unit` | — | $/m³ (gas) or $/kWh (electricity); `None` for water/unknown |
   | `sensor.concierge_{service_id}_total_amount` | — | Total bill amount (`$`) |

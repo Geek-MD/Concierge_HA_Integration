@@ -39,7 +39,7 @@
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data), `off` = OK |
-  | `sensor.concierge_{id}_last_update` | Sensor | Configuration | Full ISO 8601 datetime of the latest processed bill |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Full ISO 8601 datetime of the latest processed bill |
   | `sensor.concierge_{id}_consumption` | Sensor | — | m³ (gas/water) or kWh (electricity) |
   | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ (gas) or $/kWh (electricity) |
   | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
@@ -181,7 +181,7 @@ with five entities:
 - **Attributes**: billing metadata (folio, period, address, due date, pdf_path) and
   service-type-specific fields (pdf_url, electricity breakdowns, water components, etc.)
 
-#### Configuration: Last Update Sensor
+#### Diagnostic: Last Update Sensor
 - **Entity ID**: `sensor.concierge_{service_id}_last_update`
 - **State**: Full ISO 8601 datetime of the most recently processed bill
 
@@ -222,7 +222,7 @@ with five entities:
 - ✅ Billing attribute extraction from email body and PDF (folio, billing period, amounts, consumption, customer number, address, due date, etc.)
 - ✅ PDF content analysis: extracts structured billing data from downloaded PDFs (Enel, Metrogas)
 - ✅ `pdf_url` attribute on electricity and gas status binary sensors — exposes the bill download URL; correctly restored from companion `.url` file on cached PDFs (v0.7.1)
-- ✅ Per-service entity architecture (v0.7.0): each service device exposes `binary_sensor.concierge_{id}_status` (Diagnostic) + `sensor.concierge_{id}_last_update` (Configuration) + `sensor.concierge_{id}_consumption` + `sensor.concierge_{id}_cost_per_unit` + `sensor.concierge_{id}_total_amount`
+- ✅ Per-service entity architecture (v0.7.0): each service device exposes `binary_sensor.concierge_{id}_status` (Diagnostic) + `sensor.concierge_{id}_last_update` (Diagnostic) + `sensor.concierge_{id}_consumption` + `sensor.concierge_{id}_cost_per_unit` + `sensor.concierge_{id}_total_amount`
 - ✅ `sensor.concierge_{id}_last_update` holds the full ISO 8601 bill datetime (v0.7.1)
 - ✅ Passes ruff, mypy and hassfest checks
 
