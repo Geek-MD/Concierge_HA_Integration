@@ -1215,6 +1215,16 @@ def download_pdf_from_email(
 
     if os.path.exists(dest_path):
         _LOGGER.info("PDF already present, skipping download: %s", dest_path)
+        if attributes is not None:
+            url_file = dest_path + ".url"
+            if os.path.exists(url_file):
+                try:
+                    with open(url_file, encoding="utf-8") as fh:
+                        attributes["pdf_url"] = fh.read().strip()
+                except OSError as err:
+                    _LOGGER.debug(
+                        "Could not read URL companion file %s: %s", url_file, err
+                    )
         return dest_path
 
     _LOGGER.info("Starting PDF download for service '%s' (target: %s)", service_id, dest_path)
@@ -1299,6 +1309,19 @@ def download_pdf_from_email(
     return None
 
 
+def _save_url_companion(pdf_path: str, url: str) -> None:
+    """Save the download URL to a companion ``.url`` file alongside the PDF.
+
+    The companion file is used to restore ``pdf_url`` in subsequent coordinator
+    cycles when the PDF is already cached on disk and the download is skipped.
+    """
+    try:
+        with open(pdf_path + ".url", "w", encoding="utf-8") as fh:
+            fh.write(url)
+    except OSError as err:
+        _LOGGER.debug("Could not save URL companion file for %s: %s", pdf_path, err)
+
+
 def _download_first_valid_pdf(
     candidate_urls: list[str],
     dest_path: str,
@@ -1313,7 +1336,9 @@ def _download_first_valid_pdf(
 
     When *attributes* is provided and a download succeeds, the successful URL
     is stored in ``attributes["pdf_url"]`` so that the sensor can expose it
-    regardless of which download strategy was used.
+    regardless of which download strategy was used.  The URL is also persisted
+    to a companion ``{dest_path}.url`` file so it can be restored on subsequent
+    coordinator cycles when the PDF is already cached.
     """
     for url in candidate_urls:
         try:
@@ -1332,6 +1357,7 @@ def _download_first_valid_pdf(
                 _LOGGER.info("Downloaded PDF %s → %s", url, dest_path)
                 if attributes is not None:
                     attributes["pdf_url"] = url
+                _save_url_companion(dest_path, url)
                 return dest_path
 
             # If the response is HTML, attempt to follow a client-side
@@ -1345,6 +1371,7 @@ def _download_first_valid_pdf(
                 if result:
                     if attributes is not None:
                         attributes["pdf_url"] = url
+                    _save_url_companion(dest_path, url)
                     return result
                 continue
 
@@ -1364,7 +1391,8 @@ def _download_first_valid_pdf(
 
 
 def purge_old_pdfs(pdf_dir: str, max_age_days: int = 365) -> int:
-    """Delete ``.pdf`` files in *pdf_dir* that are older than *max_age_days*.
+    """Delete ``.pdf`` files (and their companion ``.url`` files) in *pdf_dir*
+    that are older than *max_age_days*.
 
     Args:
         pdf_dir:      Directory to scan.
@@ -1387,6 +1415,13 @@ def purge_old_pdfs(pdf_dir: str, max_age_days: int = 365) -> int:
             if os.path.getmtime(fpath) < cutoff:
                 os.remove(fpath)
                 _LOGGER.info("Purged old PDF: %s", fpath)
+                # Also remove companion URL file if present.
+                url_fpath = fpath + ".url"
+                if os.path.exists(url_fpath):
+                    try:
+                        os.remove(url_fpath)
+                    except OSError:
+                        pass
                 deleted += 1
         except OSError as err:
             _LOGGER.debug("Could not check/remove %s: %s", fpath, err)

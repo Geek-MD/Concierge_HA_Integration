@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-03-18
+
+### Changed
+- **`sensor.concierge_*_last_update` now holds the full datetime** (`sensor.py`):
+  `ConciergeServiceLastUpdateSensor.native_value` now returns the full
+  ISO 8601 datetime string (``last_updated.isoformat()``) instead of only the
+  date portion (``last_updated.date().isoformat()``).  This is the information
+  that was previously exposed as the ``last_updated_datetime`` attribute on the
+  companion binary sensor.
+
+- **`last_updated_datetime` attribute removed from status binary sensor**
+  (`binary_sensor.py`): The ``last_updated_datetime`` attribute has been dropped
+  from ``binary_sensor.concierge_*_status``.  The equivalent information is now
+  available directly as the state value of ``sensor.concierge_*_last_update``.
+
+### Fixed
+- **`pdf_url` attribute now populated after PDF is cached** (`pdf_downloader.py`):
+  When the bill PDF was already present on disk from a previous coordinator
+  cycle, ``download_pdf_from_email()`` returned early without setting
+  ``attributes["pdf_url"]``, causing the attribute to be empty on every run
+  after the first download.
+
+  The fix introduces a companion ``.url`` file (``{pdf_path}.url``) that is
+  written alongside the PDF whenever a successful URL-based download completes.
+  On subsequent cycles the early-return path reads the companion file and
+  restores ``attributes["pdf_url"]`` so the sensor always exposes the correct
+  download URL.  ``purge_old_pdfs()`` is updated to also delete companion
+  ``.url`` files when the associated PDF is purged.
+
 ## [0.7.0] - 2026-03-18
 
 ### Added

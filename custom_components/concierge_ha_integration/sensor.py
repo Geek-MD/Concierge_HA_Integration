@@ -516,7 +516,7 @@ class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
 
     @property
     def native_value(self) -> str | None:
-        """Return the last bill date as an ISO-format date string."""
+        """Return the last bill datetime as a full ISO-format datetime string."""
         if not self.coordinator.data:
             return None
         service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
@@ -524,7 +524,7 @@ class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
             return None
         last_updated = service_data.get("last_updated")
         if last_updated:
-            return last_updated.date().isoformat()
+            return last_updated.isoformat()
         return None
 
 
