@@ -130,7 +130,7 @@ _CONTAINER_TAGS = frozenset({
 })
 
 # HTTP User-Agent sent when fetching PDF links from email bodies
-_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.13 (Home Assistant custom integration)"
+_HTTP_USER_AGENT = "ConciergeHAIntegration/0.6.15 (Home Assistant custom integration)"
 
 # Timeout (seconds) for each HTTP download attempt
 _DOWNLOAD_TIMEOUT = 30
@@ -214,6 +214,20 @@ _FIDELIZADOR_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches a QP-encoded ``href=3D"https://trackercl1.fidelizador.com/…"``
+# attribute in the **raw bytes** of a Quoted-Printable HTML body.
+#
+# fidelizador.com emails QP-encode the HTML including the ``=`` attribute
+# assignment operator, producing ``href=3D"URL"`` in the raw stream.  The URL
+# token itself may be split across lines via a ``=\r?\n`` soft line-break.
+#
+# The captured group (group 1) is the raw URL bytes; pass them through
+# ``quopri.decodestring()`` to reconstruct the clean URL.
+_FIDELIZADOR_HTML_HREF_QP_RE = re.compile(
+    rb'href=3D"(https://trackercl1\.fidelizador\.com/'
+    rb'(?:[^\r\n"<>=]|=[0-9A-Fa-f]{2}|=\r?\n)*)',
+    re.IGNORECASE,
+)
 
 
 class _LinkExtractor(HTMLParser):
@@ -563,6 +577,88 @@ def _find_fidelizador_links_in_raw_qp_parts(
                 )
 
     return results
+
+
+def _find_fidelizador_href_in_html_qp(
+    msg: _email_lib.message.Message,
+) -> str | None:
+    """Find the gas bill download URL from the ``<a href>`` div in raw QP HTML.
+
+    Metrogas billing emails (delivered via *fidelizador.com*) contain **multiple**
+    ``trackercl1.fidelizador.com`` click-tracking URLs embedded in the HTML body:
+    social-media icon links and account-management buttons appear **earlier** in
+    the document, while the bill download button appears **later**.  This means
+    the last ``href=3D"https://trackercl1.fidelizador.com/…"`` occurrence in the
+    raw HTML bytes belongs to the correct download button.
+
+    The email HTML is Quoted-Printable encoded without a
+    ``Content-Transfer-Encoding`` header.  Inside the raw bytes, the
+    ``href`` attribute assignment appears as ``href=3D"URL"`` (the ``=`` character
+    in ``="`` is itself QP-encoded as ``=3D``).  The URL token may additionally
+    span a ``=\\r?\\n`` soft line-break.
+
+    Reconstruction steps (matching the problem statement requirements):
+
+    1. Locate the last ``href=3D"https://trackercl1.fidelizador.com/…"`` in the
+       raw HTML bytes.
+    2. Capture everything between ``href=3D"`` and the closing ``"``, which may
+       span QP soft line-breaks.
+    3. Apply :func:`quopri.decodestring` to remove ``=\\n`` soft line-breaks and
+       decode any ``=XX`` hex codes, yielding the clean URL.
+
+    This is the **sole** authoritative method for obtaining the gas bill PDF URL
+    from Metrogas / fidelizador.com emails; all other extraction paths (plain-text
+    part, general HTML link extraction) have been shown to return incorrect URLs.
+
+    Args:
+        msg: Parsed email message.
+
+    Returns:
+        Reconstructed ``https://trackercl1.fidelizador.com/…`` URL, or ``None``
+        when no matching ``href=3D"…"`` attribute is found.
+    """
+    parts: list[_email_lib.message.Message] = (
+        list(msg.walk()) if msg.is_multipart() else [msg]
+    )
+    last_url: str | None = None
+
+    for part in parts:
+        if part.get_content_type() != "text/html":
+            continue
+        if "attachment" in str(part.get("Content-Disposition", "")):
+            continue
+        cte = (part.get("Content-Transfer-Encoding") or "").lower().strip()
+        if cte == "quoted-printable":
+            # Python already decoded this part — raw QP patterns are gone.
+            continue
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        # Only process payloads that show QP soft line-breaks, the
+        # unambiguous sign that the body is QP-encoded without a CTE header.
+        if b"=\r\n" not in payload and b"=\n" not in payload:  # type: ignore[operator]
+            continue
+        for m in _FIDELIZADOR_HTML_HREF_QP_RE.finditer(payload):  # type: ignore[arg-type]
+            raw_url: bytes = m.group(1)
+            # QP-decode: removes =\n soft line-breaks and =XX hex codes.
+            try:
+                url = quopri.decodestring(raw_url).decode("utf-8", errors="ignore")
+            except Exception:
+                url = raw_url.decode("ascii", errors="ignore")
+            url = url.strip()
+            if url.startswith("https://trackercl1.fidelizador.com/"):
+                # Keep updating last_url: the final occurrence in the HTML
+                # is the bill download button (social-media links appear
+                # earlier in the document).
+                last_url = url
+                _LOGGER.debug(
+                    "Fidelizador.com href found in raw QP HTML (updating last): %s",
+                    url,
+                )
+
+    if last_url:
+        _LOGGER.debug("Fidelizador.com bill download URL (last href in HTML): %s", last_url)
+    return last_url
 
 
 def _get_html_body(msg: _email_lib.message.Message) -> str:
@@ -1050,17 +1146,17 @@ def download_pdf_from_email(
        If found, write bytes to *pdf_dir* and return the path.
     2. Parse ``text/html`` parts.  Two sub-steps are tried in order:
 
-       a. **Raw QP fidelizador.com URL** (Metrogas / fidelizador.com) —
-          when any MIME part (``text/plain`` or ``text/html``) is
-          Quoted-Printable encoded without a CTE header, the raw bytes are
-          scanned for ``https://trackercl1.fidelizador.com/…`` URLs.
-          Parts are walked in document order, so the ``text/plain`` part
-          is searched first: in a Metrogas email the plain-text body
-          contains the tracker URL as its very first RFC 2396 link (the
-          "Ver en el navegador" view-in-browser reference), and this URL
-          appears **before** any social-media or account links.
-          QP soft line-breaks (``=\\n``) embedded in the URL are removed
-          by :func:`quopri.decodestring` to reconstruct the complete URL.
+       a. **Raw QP fidelizador.com href URL** (Metrogas / fidelizador.com) —
+          the **sole** authoritative method for Metrogas emails.  The raw HTML
+          bytes are scanned for ``href=3D"https://trackercl1.fidelizador.com/…"``
+          attributes (using :func:`_find_fidelizador_href_in_html_qp`).  The
+          *last* such ``href`` in document order is the bill download button;
+          social-media icon links and account-management buttons appear earlier
+          in the HTML.  The URL is reconstructed by removing the QP soft
+          line-break (``=\\n``) and the ``3D`` encoding of the ``=`` sign in
+          the attribute assignment (``href=3D"…"`` → ``href="…"``).  When a URL
+          is found it is stored in ``attributes["pdf_url"]`` before the download
+          is attempted.
 
        b. **HTML link extraction** — the decoded HTML is parsed for
           ``<a href>`` elements and ``<script>`` blocks.  Three tiers of
@@ -1095,6 +1191,8 @@ def download_pdf_from_email(
         email_date: Parsed ``Date`` header of the email (used in filename).
         attributes: Already-extracted billing attributes; used to get
                     ``billing_period_start`` and ``folio`` for the filename.
+                    When a fidelizador.com bill URL is found it is also stored
+                    here as ``attributes["pdf_url"]``.
 
     Returns:
         Absolute path of the saved PDF, or ``None`` if nothing was found.
@@ -1128,25 +1226,26 @@ def download_pdf_from_email(
     # --- Strategy 2: Link in HTML body ---
     html_body = _get_html_body(msg)
     if html_body:
-        # Attempt 2a: fidelizador.com bill URL found in raw QP bytes.
-        # Metrogas emails are QP-encoded without a CTE header; the tracker
-        # URL appears in the plain-text part first (view-in-browser link at
-        # the top of the body) and again in the HTML part (bill download
-        # button).  Walking parts in document order gives the plain-text URL
-        # priority, which is the correct one to follow — the HTML body
-        # contains other fidelizador.com URLs (social-media icons, account
-        # links) that appear earlier in the HTML and would redirect to
-        # unrelated pages.
-        qp_bill_urls = _find_fidelizador_links_in_raw_qp_parts(msg)
-        if qp_bill_urls:
+        # Attempt 2a: fidelizador.com bill download URL extracted from the
+        # ``href=3D"…"`` attribute inside its specific div in the raw QP HTML.
+        # This is the sole authoritative method for Metrogas / fidelizador.com
+        # emails: the URL is the *last* ``href=3D"trackercl1.fidelizador.com/…"``
+        # in the HTML body, because social-media icon links and account-management
+        # buttons appear earlier in the document whereas the bill download button
+        # comes later.  The URL is reconstructed by removing QP soft line-breaks
+        # (``=\n``) and stripping the ``3D`` that encodes the ``=`` sign in the
+        # attribute assignment (``href=3D"…"`` → ``href="…"``).
+        fidelizador_href_url = _find_fidelizador_href_in_html_qp(msg)
+        if fidelizador_href_url:
             _LOGGER.info(
-                "Found %d fidelizador.com bill URL(s) in raw QP parts for "
+                "Found fidelizador.com bill download URL in raw QP HTML href for "
                 "service '%s': %s",
-                len(qp_bill_urls),
                 service_id,
-                qp_bill_urls,
+                fidelizador_href_url,
             )
-            result = _download_first_valid_pdf(qp_bill_urls, dest_path, service_id)
+            if attributes is not None:
+                attributes["pdf_url"] = fidelizador_href_url
+            result = _download_first_valid_pdf([fidelizador_href_url], dest_path, service_id)
             if result:
                 return result
 
