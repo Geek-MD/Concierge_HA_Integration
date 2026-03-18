@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from ``binary_sensor.concierge_*_status``.  The equivalent information is now
   available directly as the state value of ``sensor.concierge_*_last_update``.
 
+- **`manifest.json`**: Version bumped to `0.7.1`.
+
 ### Fixed
 - **`pdf_url` attribute now populated after PDF is cached** (`pdf_downloader.py`):
   When the bill PDF was already present on disk from a previous coordinator
