@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-03-18
+
+### Added
+- **`binary_sensor.py`** (new file): `ConciergeServiceStatusBinarySensor` — a
+  `BinarySensorDeviceClass.PROBLEM` entity with `EntityCategory.DIAGNOSTIC`.
+  One status binary sensor is created per service sub-entry and appears in the
+  HA device Diagnostic panel.  `is_on = True` means no bill data was found for
+  that service; `is_on = False` means data was retrieved successfully.  All
+  attributes that were not promoted to dedicated sensors (folio, billing period,
+  address, due date, service-type-specific fields, ``pdf_path``) are retained
+  here as `extra_state_attributes`.
+
+- **New per-service sensor entities** (`sensor.py`): The single monolithic
+  service sensor has been replaced by four focused sensors per sub-entry,
+  aligned with Home Assistant device conventions:
+
+  | Entity ID | Category | Value |
+  |---|---|---|
+  | `sensor.concierge_{service_id}_last_update` | Configuration | Last bill date (ISO 8601) |
+  | `sensor.concierge_{service_id}_consumption` | — | m³ (gas/water) or kWh (electricity) |
+  | `sensor.concierge_{service_id}_cost_per_unit` | — | $/m³ (gas) or $/kWh (electricity); `None` for water/unknown |
+  | `sensor.concierge_{service_id}_total_amount` | — | Total bill amount (`$`) |
+
+  These are implemented as a `_ConciergeServiceBaseSensor` base class plus
+  four subclasses: `ConciergeServiceLastUpdateSensor`,
+  `ConciergeServiceConsumptionSensor`, `ConciergeServiceCostPerUnitSensor`,
+  and `ConciergeServiceTotalAmountSensor`.
+
+### Changed
+- **`__init__.py`**: The shared `ConciergeServicesCoordinator` is now
+  initialised (including its first refresh) inside `async_setup_entry`,
+  *before* `async_forward_entry_setups` is called.  This eliminates the race
+  condition that existed when both the `sensor` and `binary_sensor` platforms
+  tried to create the coordinator independently.  Both platforms now read the
+  coordinator from `hass.data[DOMAIN][entry_id]["coordinator"]`.
+
+- **`__init__.py`**: `PLATFORMS` list extended from `["sensor"]` to
+  `["sensor", "binary_sensor"]`.
+
+- **`sensor.py`**: `async_setup_entry` now reads the pre-initialised
+  coordinator from `hass.data` instead of creating its own instance.
+  `ConciergeServiceSensor` (the old monolithic sensor) has been removed.
+
+- **`config_flow.py`** / **`manifest.json`**: `MINOR_VERSION` bumped to `3`,
+  integration version updated to `0.7.0`.
+
+### Removed
+- **Legacy single-service sensor** (`sensor.py`): `ConciergeServiceSensor`
+  and its single-entity-per-service approach have been removed.  Existing
+  installations are migrated automatically via `_migrate_1_2_to_1_3`, which
+  removes all stale `sensor.concierge_services_*` entities from the entity
+  registry on upgrade (schema version 1.2 → 1.3).
+
 ## [0.6.16] - 2026-03-18
 
 ### Fixed
