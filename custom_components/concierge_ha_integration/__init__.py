@@ -19,12 +19,13 @@ from .const import (
     CONF_SERVICE_ID,
     DOMAIN,
 )
+from .sensor import ConciergeServicesCoordinator
 from .service_detector import detect_services_from_imap
 
 _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to support
-PLATFORMS: list[str] = ["sensor"]
+PLATFORMS: list[str] = ["sensor", "binary_sensor"]
 
 # How often to re-scan the inbox for new services
 _DISCOVERY_INTERVAL = timedelta(hours=1)
@@ -40,6 +41,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     - 1.1 (≤ v0.4.x): entities registered without config_subentry_id; hub device
       associated with the main config entry.
     - 1.2 (≥ v0.5.x): service entities carry config_subentry_id; hub device removed.
+    - 1.3 (≥ v0.7.0): single service sensor split into binary_sensor + 4 sensors;
+      old sensor.concierge_services_* entities removed from entity registry.
     """
     _LOGGER.info(
         "Migrating Concierge Services config entry from version %s.%s",
@@ -51,6 +54,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_1_1_to_1_2(hass, entry)
         hass.config_entries.async_update_entry(entry, minor_version=2)  # type: ignore[call-arg]
         _LOGGER.info("Concierge Services migration to version 1.2 completed")
+
+    if entry.version == 1 and entry.minor_version < 3:
+        _migrate_1_2_to_1_3(hass, entry)
+        hass.config_entries.async_update_entry(entry, minor_version=3)  # type: ignore[call-arg]
+        _LOGGER.info("Concierge Services migration to version 1.3 completed")
 
     return True
 
@@ -129,13 +137,46 @@ def _migrate_1_1_to_1_2(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
 
 
+@callback
+def _migrate_1_2_to_1_3(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Migrate entity registry from v1.2 (≤ v0.6.x) to v1.3 (≥ v0.7.0).
+
+    Removes the old single-sensor entities (unique_id = entry_id + "_" + subentry_id)
+    that have been replaced by binary_sensor + 4 dedicated sensors.
+    """
+    ent_reg = er.async_get(hass)
+    subentries = entry.subentries  # type: ignore[attr-defined]
+
+    old_unique_ids: set[str] = {
+        f"{entry.entry_id}_{sub_id}" for sub_id in subentries
+    }
+
+    for entity_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if entity_entry.unique_id in old_unique_ids:
+            ent_reg.async_remove(entity_entry.entity_id)
+            _LOGGER.debug(
+                "Removed legacy service sensor entity %s (unique_id: %s)",
+                entity_entry.entity_id,
+                entity_entry.unique_id,
+            )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Concierge Services from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault(entry.entry_id, {})
     hass.data[DOMAIN][entry.entry_id][_PENDING_DISCOVERIES_KEY] = set()
 
-    # Forward the setup to the sensor platform
+    # Effective config merges original data with any options overrides
+    effective_cfg = {**entry.data, **entry.options}
+
+    # Initialise the shared coordinator here so that both the sensor and
+    # binary_sensor platforms can access it from hass.data without a race.
+    coordinator = ConciergeServicesCoordinator(hass, entry, effective_cfg)
+    await coordinator.async_config_entry_first_refresh()
+    hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
+
+    # Forward the setup to sensor and binary_sensor platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Reload the entry whenever it is updated (options changed, subentries

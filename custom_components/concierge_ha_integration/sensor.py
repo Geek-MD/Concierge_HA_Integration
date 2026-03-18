@@ -12,6 +12,7 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -48,58 +49,23 @@ _LOGGER = logging.getLogger(__name__)
 # Update interval for checking mail server connection
 SCAN_INTERVAL = timedelta(minutes=30)
 
-# Attributes common to every service sensor (always present, default 0).
-_COMMON_ATTRS: tuple[str, ...] = (
-    "folio",
-    "billing_period_start",
-    "billing_period_end",
-    "customer_number",
-    "address",
-    "due_date",
-    "total_amount",
-    "consumption",
-    "consumption_unit",
-)
-
-# Service-type-specific attribute defaults.
-# Keys present here are added to the sensor only for the matching service type,
-# keeping each sensor's attribute set clean and relevant.
-_GAS_ATTR_DEFAULTS: dict[str, Any] = {
-    "cost_per_m3s": 0.0,
-    "pdf_url": "",
-}
-_ELECTRICITY_ATTR_DEFAULTS: dict[str, Any] = {
-    "service_administration": 0,
-    "electricity_transport": 0,
-    "stabilization_fund": 0,
-    "electricity_consumption": 0,
-    "cost_per_kwh": 0.0,
-    "tariff_code": 0,
-    "connected_power": 0,
-    "connected_power_unit": 0,
-    "area": 0,
-    "substation": 0,
-    "pdf_url": "",
-}
-_WATER_ATTR_DEFAULTS: dict[str, Any] = {
-    "fixed_charge": 0,
-    "cubic_meter_peak_water_cost": 0.0,
-    "cubic_meter_non_peak_water_cost": 0.0,
-    "cubic_meter_overconsumption": 0.0,
-    "cubic_meter_collection": 0.0,
-    "cubic_meter_treatment": 0.0,
-    "water_consumption": 0,
-    "wastewater_recolection": 0,
-    "wastewater_treatment": 0,
-    "subtotal": 0,
-    "other_charges": 0,
+# Consumption unit of measure by service type.
+_CONSUMPTION_UNITS: dict[str, str] = {
+    SERVICE_TYPE_GAS: "m³",
+    SERVICE_TYPE_WATER: "m³",
+    SERVICE_TYPE_ELECTRICITY: "kWh",
 }
 
-# Mapping from service type → its specific attribute defaults dict.
-_SERVICE_TYPE_ATTR_DEFAULTS: dict[str, dict[str, Any]] = {
-    SERVICE_TYPE_WATER: _WATER_ATTR_DEFAULTS,
-    SERVICE_TYPE_GAS: _GAS_ATTR_DEFAULTS,
-    SERVICE_TYPE_ELECTRICITY: _ELECTRICITY_ATTR_DEFAULTS,
+# The extracted attribute key that holds the cost-per-unit value, per service type.
+_COST_PER_UNIT_ATTR: dict[str, str] = {
+    SERVICE_TYPE_GAS: "cost_per_m3s",
+    SERVICE_TYPE_ELECTRICITY: "cost_per_kwh",
+}
+
+# Unit of measure for cost-per-unit sensors, per service type.
+_COST_PER_UNIT_UNITS: dict[str, str] = {
+    SERVICE_TYPE_GAS: "$/m³",
+    SERVICE_TYPE_ELECTRICITY: "$/kWh",
 }
 
 # Webmail provider domains that are too generic for sender-domain matching.
@@ -131,31 +97,37 @@ async def async_setup_entry(
     One connection sensor is created for the main entry as a standalone entity
     (no device) so it does not appear in the "Devices that don't belong to a
     sub-entry" category.
-    One service sensor is created for every subentry (service device),
-    each associated with its own subentry so it appears correctly grouped
-    in the Home Assistant device registry.
+    Four service sensors are created for every subentry (service device):
+    last_update, consumption, cost_per_unit, and total_amount — each associated
+    with its own subentry so they appear correctly grouped in the HA device
+    registry.
     """
-    # Effective config merges original data with any options overrides
-    effective_cfg = {**config_entry.data, **config_entry.options}
-
-    coordinator = ConciergeServicesCoordinator(hass, config_entry, effective_cfg)
-    await coordinator.async_config_entry_first_refresh()
-
-    # Store coordinator under a sub-key so the pending-discoveries dict
-    # initialised by async_setup_entry in __init__.py is not overwritten.
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN].setdefault(config_entry.entry_id, {})
-    hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
+    # The coordinator is initialised in __init__.async_setup_entry before the
+    # platforms are forwarded, so it is always present at this point.
+    coordinator: ConciergeServicesCoordinator = (
+        hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    )
 
     # Main connection sensor (standalone entity, not linked to any device or subentry)
     async_add_entities([ConciergeServicesConnectionSensor(coordinator, config_entry)])
 
-    # One service sensor per subentry, each linked to its own subentry so
-    # devices appear grouped under the subentry in the HA UI (not under
-    # "Dispositivos que no pertenecen a una subentrada").
+    # Four service sensors per subentry, each linked to its own subentry.
     for subentry_id, subentry in config_entry.subentries.items():  # type: ignore[attr-defined]
         async_add_entities(
-            [ConciergeServiceSensor(coordinator, config_entry, subentry_id, subentry.data)],
+            [
+                ConciergeServiceLastUpdateSensor(
+                    coordinator, config_entry, subentry_id, subentry.data
+                ),
+                ConciergeServiceConsumptionSensor(
+                    coordinator, config_entry, subentry_id, subentry.data
+                ),
+                ConciergeServiceCostPerUnitSensor(
+                    coordinator, config_entry, subentry_id, subentry.data
+                ),
+                ConciergeServiceTotalAmountSensor(
+                    coordinator, config_entry, subentry_id, subentry.data
+                ),
+            ],
             config_subentry_id=subentry_id,  # type: ignore[call-arg]
         )
 
@@ -481,8 +453,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return False
 
 
-class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):
-    """Sensor for a specific service device (one per subentry)."""
+class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):
+    """Shared base for per-subentry service sensors."""
 
     def __init__(
         self,
@@ -491,7 +463,7 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
         subentry_id: str,
         subentry_data: dict[str, Any],
     ) -> None:
-        """Initialize the sensor."""
+        """Initialize the base sensor."""
         super().__init__(coordinator)
         self._subentry_id = subentry_id
         self._service_id = subentry_data.get(CONF_SERVICE_ID, subentry_id)
@@ -502,11 +474,8 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
         )
         self._subentry_data = subentry_data
         self._config_entry = config_entry
-        self._attr_name = f"Concierge Services - {self._service_name}"
-        self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}"
-        self._attr_icon = "mdi:file-document-outline"
 
-        # Service device associated with its own subentry
+        # All service sensors share the same device (identified by the subentry).
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{config_entry.entry_id}_{subentry_id}")},
             name=self._service_name,
@@ -514,81 +483,126 @@ class ConciergeServiceSensor(CoordinatorEntity[ConciergeServicesCoordinator], Se
             model="Service Account",
         )
 
+    def _get_extracted_attrs(self) -> dict[str, Any]:
+        """Return the extracted attribute dict from coordinator data, or empty dict."""
+        if not self.coordinator.data:
+            return {}
+        service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
+        if not service_data:
+            return {}
+        return service_data.get("attributes", {})
+
+
+class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
+    """Sensor reporting the date of the latest processed bill for a service.
+
+    Entity category: Configuration — appears in the device Configuration panel.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:calendar-clock"
+
+    def __init__(
+        self,
+        coordinator: ConciergeServicesCoordinator,
+        config_entry: ConfigEntry,
+        subentry_id: str,
+        subentry_data: dict[str, Any],
+    ) -> None:
+        """Initialize the last-update sensor."""
+        super().__init__(coordinator, config_entry, subentry_id, subentry_data)
+        self._attr_name = f"Concierge {self._service_id} Last Update"
+        self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}_last_update"
+
     @property
     def native_value(self) -> str | None:
-        """Return the state of the sensor (last update date)."""
+        """Return the last bill date as an ISO-format date string."""
         if not self.coordinator.data:
             return None
-
         service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
         if not service_data:
             return None
-
         last_updated = service_data.get("last_updated")
         if last_updated:
             return last_updated.date().isoformat()
-
         return None
 
+
+class ConciergeServiceConsumptionSensor(_ConciergeServiceBaseSensor):
+    """Sensor reporting the consumption value extracted from the latest bill."""
+
+    _attr_icon = "mdi:gauge"
+
+    def __init__(
+        self,
+        coordinator: ConciergeServicesCoordinator,
+        config_entry: ConfigEntry,
+        subentry_id: str,
+        subentry_data: dict[str, Any],
+    ) -> None:
+        """Initialize the consumption sensor."""
+        super().__init__(coordinator, config_entry, subentry_id, subentry_data)
+        service_type = subentry_data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
+        self._attr_name = f"Concierge {self._service_id} Consumption"
+        self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}_consumption"
+        self._attr_native_unit_of_measurement = _CONSUMPTION_UNITS.get(service_type)
+
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes.
+    def native_value(self) -> float | None:
+        """Return the consumption value."""
+        return self._get_extracted_attrs().get("consumption")
 
-        Universal attributes are always present with a default of ``0``.
-        Service-type-specific attributes (gas, electricity, …) are added only
-        for the matching service type, keeping each sensor's attribute set clean.
-        """
-        service_type = self._subentry_data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
 
-        # Universal attributes — present for every service type.
-        attrs: dict[str, Any] = {
-            "service_id": self._service_id,
-            "service_name": self._service_name,
-            "service_type": service_type,
-            "last_updated_datetime": 0,
-            "folio": 0,
-            "billing_period_start": 0,
-            "billing_period_end": 0,
-            "customer_number": 0,
-            "address": 0,
-            "due_date": 0,
-            "icon": "mdi:file-document-outline",
-            "friendly_name": self._service_name,
-            "total_amount": 0,
-            "consumption": 0.0,
-            "consumption_unit": 0,
-        }
+class ConciergeServiceCostPerUnitSensor(_ConciergeServiceBaseSensor):
+    """Sensor reporting the cost per consumption unit extracted from the latest bill."""
 
-        # Service-type-specific attributes — only for the matching type.
-        type_specific_defaults = _SERVICE_TYPE_ATTR_DEFAULTS.get(service_type, {})
-        attrs.update(type_specific_defaults)
+    _attr_icon = "mdi:currency-usd"
 
-        if self.coordinator.data:
-            service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
-            if service_data:
-                last_updated = service_data.get("last_updated")
-                if last_updated:
-                    attrs["last_updated_datetime"] = last_updated.isoformat()
+    def __init__(
+        self,
+        coordinator: ConciergeServicesCoordinator,
+        config_entry: ConfigEntry,
+        subentry_id: str,
+        subentry_data: dict[str, Any],
+    ) -> None:
+        """Initialize the cost-per-unit sensor."""
+        super().__init__(coordinator, config_entry, subentry_id, subentry_data)
+        service_type = subentry_data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
+        self._cost_attr_key: str | None = _COST_PER_UNIT_ATTR.get(service_type)
+        self._attr_name = f"Concierge {self._service_id} Cost Per Unit"
+        self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}_cost_per_unit"
+        self._attr_native_unit_of_measurement = _COST_PER_UNIT_UNITS.get(service_type)
 
-                extracted_attrs = service_data.get("attributes", {})
-                if extracted_attrs:
-                    # Override universal attributes with extracted values.
-                    for key in _COMMON_ATTRS:
-                        value = extracted_attrs.get(key)
-                        if value is not None:
-                            attrs[key] = value
+    @property
+    def native_value(self) -> float | None:
+        """Return the cost-per-unit value, or None for service types without one."""
+        if not self._cost_attr_key:
+            return None
+        return self._get_extracted_attrs().get(self._cost_attr_key)
 
-                    # Override service-type-specific attributes.
-                    for key in type_specific_defaults:
-                        value = extracted_attrs.get(key)
-                        if value is not None:
-                            attrs[key] = value
 
-                    # Include pdf_path when a bill PDF was downloaded.
-                    if pdf_path := extracted_attrs.get("pdf_path"):
-                        attrs["pdf_path"] = pdf_path
+class ConciergeServiceTotalAmountSensor(_ConciergeServiceBaseSensor):
+    """Sensor reporting the total bill amount extracted from the latest bill."""
 
-        return attrs
+    _attr_icon = "mdi:cash"
+    _attr_native_unit_of_measurement = "$"
+
+    def __init__(
+        self,
+        coordinator: ConciergeServicesCoordinator,
+        config_entry: ConfigEntry,
+        subentry_id: str,
+        subentry_data: dict[str, Any],
+    ) -> None:
+        """Initialize the total-amount sensor."""
+        super().__init__(coordinator, config_entry, subentry_id, subentry_data)
+        self._attr_name = f"Concierge {self._service_id} Total Amount"
+        self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}_total_amount"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the total bill amount."""
+        return self._get_extracted_attrs().get("total_amount")
 
 
 class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):
