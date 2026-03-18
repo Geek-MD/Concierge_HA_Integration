@@ -79,6 +79,7 @@ _ELECTRICITY_ATTR_DEFAULTS: dict[str, Any] = {
     "connected_power_unit": 0,
     "area": 0,
     "substation": 0,
+    "pdf_url": 0,
 }
 _WATER_ATTR_DEFAULTS: dict[str, Any] = {
     "fixed_charge": 0,

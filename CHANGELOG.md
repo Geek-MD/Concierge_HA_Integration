@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.15] - 2026-03-18
+
+### Added
+- **``pdf_url`` attribute for electricity sensor** (`sensor.py`):
+  The ``pdf_url`` attribute (introduced for the gas sensor in v0.6.14) is now
+  also available on the electricity-service sensor.  It defaults to ``0`` and
+  is overridden with the bill download URL whenever a matching email is
+  processed and a fidelizador.com URL is reconstructed.
+
 ## [0.6.14] - 2026-03-18
 
 ### Fixed
