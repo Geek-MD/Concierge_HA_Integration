@@ -1298,8 +1298,8 @@ def download_pdf_from_email(
         email_date: Parsed ``Date`` header of the email (used in filename).
         attributes: Already-extracted billing attributes; used to get
                     ``billing_period_start`` and ``folio`` for the filename.
-                    When a fidelizador.com bill URL is found it is also stored
-                    here as ``attributes["pdf_url"]``.
+                    The bill download URL (when found) is stored here as
+                    ``attributes["pdf_url"]``.
 
     Returns:
         Absolute path of the saved PDF, or ``None`` if nothing was found.
@@ -1313,35 +1313,12 @@ def download_pdf_from_email(
     filename = _build_filename(service_id, email_date, attributes)
     dest_path = os.path.join(pdf_dir, filename)
 
-    if os.path.exists(dest_path):
-        _LOGGER.info("PDF already present, skipping download: %s", dest_path)
-        if attributes is not None:
-            url_file = dest_path + ".url"
-            if os.path.exists(url_file):
-                try:
-                    with open(url_file, encoding="utf-8") as fh:
-                        attributes["pdf_url"] = fh.read().strip()
-                except OSError as err:
-                    _LOGGER.debug(
-                        "Could not read URL companion file %s: %s", url_file, err
-                    )
-        return dest_path
-
-    _LOGGER.info("Starting PDF download for service '%s' (target: %s)", service_id, dest_path)
-
-    # --- Strategy 1: PDF attachment ---
-    pdf_bytes = _get_pdf_attachment_bytes(msg)
-    if pdf_bytes:
-        try:
-            with open(dest_path, "wb") as fh:
-                fh.write(pdf_bytes)
-            _LOGGER.info("Saved PDF attachment → %s", dest_path)
-            return dest_path
-        except OSError as err:
-            _LOGGER.warning("Could not write PDF attachment to %s: %s", dest_path, err)
-
-    # --- Strategy 2: Link in HTML body ---
+    # Extract candidate URLs from the email body before the cached-file early
+    # return so that ``pdf_url`` is populated in the sensor attributes even
+    # when the PDF already exists on disk and the download is skipped.
     html_body = _get_html_body(msg)
+    fidelizador_href_url: str | None = None
+    html_candidate_urls: list[str] = []
     if html_body:
         # Attempt 2a: fidelizador.com bill download URL extracted from the
         # ``href=3D"…"`` attribute in the raw QP HTML bytes.
@@ -1363,28 +1340,49 @@ def download_pdf_from_email(
             )
             if attributes is not None:
                 attributes["pdf_url"] = fidelizador_href_url
+        else:
+            # Attempt 2b: regular HTML link extraction (keyword / .pdf /
+            # billing-term priority tiers).
+            html_candidate_urls = _find_pdf_links_in_html(html_body)
+    else:
+        _LOGGER.debug("No HTML body in email for service '%s'", service_id)
+
+    if os.path.exists(dest_path):
+        _LOGGER.info("PDF already present, skipping download: %s", dest_path)
+        return dest_path
+
+    _LOGGER.info("Starting PDF download for service '%s' (target: %s)", service_id, dest_path)
+
+    # --- Strategy 1: PDF attachment ---
+    pdf_bytes = _get_pdf_attachment_bytes(msg)
+    if pdf_bytes:
+        try:
+            with open(dest_path, "wb") as fh:
+                fh.write(pdf_bytes)
+            _LOGGER.info("Saved PDF attachment → %s", dest_path)
+            return dest_path
+        except OSError as err:
+            _LOGGER.warning("Could not write PDF attachment to %s: %s", dest_path, err)
+
+    # --- Strategy 2: Link in HTML body ---
+    if html_body:
+        if fidelizador_href_url:
             result = _download_first_valid_pdf([fidelizador_href_url], dest_path, service_id, attributes)
             if result:
                 return result
-
-        # Attempt 2b: regular HTML link extraction (keyword / .pdf /
-        # billing-term priority tiers).
-        candidate_urls = _find_pdf_links_in_html(html_body)
-        if not candidate_urls:
+        elif html_candidate_urls:
+            _LOGGER.info(
+                "Found %d PDF candidate URL(s) in HTML body for service '%s'",
+                len(html_candidate_urls),
+                service_id,
+            )
+            result = _download_first_valid_pdf(html_candidate_urls, dest_path, service_id, attributes)
+            if result:
+                return result
+        else:
             _LOGGER.info(
                 "No PDF links found in HTML body for service '%s'", service_id
             )
-        else:
-            _LOGGER.info(
-                "Found %d PDF candidate URL(s) in HTML body for service '%s'",
-                len(candidate_urls),
-                service_id,
-            )
-            result = _download_first_valid_pdf(candidate_urls, dest_path, service_id, attributes)
-            if result:
-                return result
-    else:
-        _LOGGER.debug("No HTML body in email for service '%s'", service_id)
 
     # --- Strategy 3: URL in plain-text body ---
     text_body = _get_plain_text_body(msg)
@@ -1410,19 +1408,6 @@ def download_pdf_from_email(
     return None
 
 
-def _save_url_companion(pdf_path: str, url: str) -> None:
-    """Save the download URL to a companion ``.url`` file alongside the PDF.
-
-    The companion file is used to restore ``pdf_url`` in subsequent coordinator
-    cycles when the PDF is already cached on disk and the download is skipped.
-    """
-    try:
-        with open(pdf_path + ".url", "w", encoding="utf-8") as fh:
-            fh.write(url)
-    except OSError as err:
-        _LOGGER.debug("Could not save URL companion file for %s: %s", pdf_path, err)
-
-
 def _download_first_valid_pdf(
     candidate_urls: list[str],
     dest_path: str,
@@ -1437,9 +1422,7 @@ def _download_first_valid_pdf(
 
     When *attributes* is provided and a download succeeds, the successful URL
     is stored in ``attributes["pdf_url"]`` so that the sensor can expose it
-    regardless of which download strategy was used.  The URL is also persisted
-    to a companion ``{dest_path}.url`` file so it can be restored on subsequent
-    coordinator cycles when the PDF is already cached.
+    regardless of which download strategy was used.
     """
     for url in candidate_urls:
         try:
@@ -1458,7 +1441,6 @@ def _download_first_valid_pdf(
                 _LOGGER.info("Downloaded PDF %s → %s", url, dest_path)
                 if attributes is not None:
                     attributes["pdf_url"] = url
-                _save_url_companion(dest_path, url)
                 return dest_path
 
             # If the response is HTML, attempt to follow a client-side
@@ -1472,7 +1454,6 @@ def _download_first_valid_pdf(
                 if result:
                     if attributes is not None:
                         attributes["pdf_url"] = url
-                    _save_url_companion(dest_path, url)
                     return result
                 continue
 
@@ -1492,8 +1473,7 @@ def _download_first_valid_pdf(
 
 
 def purge_old_pdfs(pdf_dir: str, max_age_days: int = 365) -> int:
-    """Delete ``.pdf`` files (and their companion ``.url`` files) in *pdf_dir*
-    that are older than *max_age_days*.
+    """Delete ``.pdf`` files in *pdf_dir* that are older than *max_age_days*.
 
     Args:
         pdf_dir:      Directory to scan.
@@ -1516,13 +1496,6 @@ def purge_old_pdfs(pdf_dir: str, max_age_days: int = 365) -> int:
             if os.path.getmtime(fpath) < cutoff:
                 os.remove(fpath)
                 _LOGGER.info("Purged old PDF: %s", fpath)
-                # Also remove companion URL file if present.
-                url_fpath = fpath + ".url"
-                if os.path.exists(url_fpath):
-                    try:
-                        os.remove(url_fpath)
-                    except OSError:
-                        pass
                 deleted += 1
         except OSError as err:
             _LOGGER.debug("Could not check/remove %s: %s", fpath, err)
