@@ -60,7 +60,6 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
 
-from bs4 import BeautifulSoup
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -289,28 +288,18 @@ _FIDELIZADOR_BILLING_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Matches "Ver boleta" (case-insensitive, allowing any whitespace between the
-# two words) in the ``alt`` attribute of the bill-download button image.
-# Used by :func:`_find_fidelizador_href_via_bs4` to identify the correct
-# ``<a>`` anchor in the BeautifulSoup-parsed HTML.
-_VER_BOLETA_RE = re.compile(r"ver\s+boleta", re.IGNORECASE)
-
-# Matches ``[image: Ver boleta]`` in a QP-decoded plain-text email body.
+# Matches ``[image: Ver boleta]`` in a plain-text email body line.
 #
-# Gmail and other email clients render image-only HTML anchors such as:
+# In the raw Quoted-Printable plain-text body the bill-download button renders
+# as two consecutive lines:
 #
-#   <a href="https://trackercl1.fidelizador.com/…">
-#       <img alt="Ver boleta" src="…/boleta.png">
-#   </a>
+#   [image: Ver boleta]
+#   <https://trackercl1.fidelizador.com/…PART1=
+#   …PART2>
 #
-# as the following plain-text representation:
-#
-#   [image: Ver boleta] <https://trackercl1.fidelizador.com/…>
-#
-# Matching this marker in the decoded plain-text body and then locating the
-# URL that follows it is the primary strategy used by
-# :func:`_find_fidelizador_href_in_plain_text` to identify the bill-download
-# URL without relying on HTML parsing.
+# :func:`_find_fidelizador_href_in_plain_text` locates this marker on a raw
+# line, then strips ``<``, ``>``, and ``=`` from the two following lines and
+# concatenates them to reconstruct the full URL.
 _IMAGE_VER_BOLETA_PLAIN_RE = re.compile(
     r"\[image:\s*ver\s+boleta\s*\]",
     re.IGNORECASE,
@@ -666,79 +655,33 @@ def _find_fidelizador_links_in_raw_qp_parts(
     return results
 
 
-def _find_fidelizador_href_via_bs4(
-    msg: _email_lib.message.Message,
-) -> str | None:
-    """Find the gas bill download URL by locating ``<img alt="Ver boleta">`` with BeautifulSoup.
-
-    Metrogas billing emails (delivered via *fidelizador.com*) contain the
-    bill-download button as an image-only anchor::
-
-        <a href="https://trackercl1.fidelizador.com/…">
-            <img alt="Ver boleta" src="…/boleta.png">
-        </a>
-
-    The HTML body is already QP-decoded by :func:`_get_html_body` (which calls
-    :func:`_decode_qp_if_needed`), so by the time BeautifulSoup sees it the
-    ``href`` attribute contains the fully reconstructed URL — any
-    ``=\\r?\\n`` soft line-breaks have been removed by
-    :func:`quopri.decodestring`, and ``=3D`` has been turned back into ``=``.
-
-    Strategy:
-    1. Parse the decoded HTML with BeautifulSoup (using the stdlib
-       ``html.parser`` backend — no extra C dependency).
-    2. Walk every ``<a href>`` element.
-    3. Return the ``href`` of the **first** anchor that contains an ``<img>``
-       whose ``alt`` attribute matches ``"Ver boleta"`` (case-insensitive),
-       provided the href starts with
-       ``https://trackercl1.fidelizador.com/``.
-
-    Args:
-        msg: Parsed email message.
-
-    Returns:
-        Reconstructed ``https://trackercl1.fidelizador.com/…`` URL, or
-        ``None`` when no matching anchor is found.
-    """
-    html_body = _get_html_body(msg)
-    if not html_body:
-        return None
-
-    soup = BeautifulSoup(html_body, "html.parser")
-
-    for a_tag in soup.find_all("a", href=True):
-        img = a_tag.find("img", alt=_VER_BOLETA_RE)
-        if img:
-            href = str(a_tag.get("href") or "").strip()
-            if href.startswith("https://trackercl1.fidelizador.com/"):
-                _LOGGER.debug(
-                    "BeautifulSoup: found 'Ver boleta' fidelizador.com href: %s",
-                    href,
-                )
-                return href
-
-    _LOGGER.debug("BeautifulSoup: no 'Ver boleta' fidelizador.com anchor found")
-    return None
-
-
 def _find_fidelizador_href_in_plain_text(
     msg: _email_lib.message.Message,
 ) -> str | None:
-    """Find the gas bill download URL by locating ``[image: Ver boleta]`` in the plain-text body.
+    """Find the gas bill download URL from ``[image: Ver boleta]`` in the raw plain-text body.
 
     Metrogas billing emails (delivered via *fidelizador.com*) contain a
-    plain-text alternative body generated from the HTML.  Email clients such
-    as Gmail render image-only anchors as ``[image: alt_text]`` followed by
-    the URL in angle brackets::
+    plain-text alternative body where the bill-download button appears as::
 
-        [image: Ver boleta] <https://trackercl1.fidelizador.com/…>
+        [image: Ver boleta]
+        <https://trackercl1.fidelizador.com/…PART1=
+        …PART2>
 
-    This function decodes the plain-text part (applying QP decoding when the
-    ``Content-Transfer-Encoding`` header is absent, as is common for
-    fidelizador.com emails), searches for the ``[image: Ver boleta]`` marker
-    via :data:`_IMAGE_VER_BOLETA_PLAIN_RE`, and extracts the
-    ``https://trackercl1.fidelizador.com/`` URL that follows it within a
-    500-character search window.
+    The URL is split across two lines by a Quoted-Printable soft line-break
+    (``=\\n``).  This function works directly on the **raw** (undecoded) payload
+    so the soft line-break is visible as a literal ``=`` at the end of the first
+    URL line.
+
+    Algorithm:
+    1. For each ``text/plain`` MIME part, read the raw undecoded payload via
+       ``get_payload(decode=False)`` — this preserves the ``=\\n`` soft breaks.
+    2. Split into lines and search for a line matching
+       :data:`_IMAGE_VER_BOLETA_PLAIN_RE`.
+    3. Take the **two lines immediately following** the marker.
+    4. Remove ``<``, ``>``, and ``=`` from each line and strip whitespace.
+    5. Concatenate the two cleaned fragments.
+    6. Return the result if it starts with
+       ``https://trackercl1.fidelizador.com/``.
 
     Args:
         msg: Parsed email message.
@@ -747,33 +690,56 @@ def _find_fidelizador_href_in_plain_text(
         Reconstructed ``https://trackercl1.fidelizador.com/…`` URL, or
         ``None`` when no matching pattern is found.
     """
-    plain_body = _get_plain_text_body(msg)
-    if not plain_body:
-        return None
-
-    marker_m = _IMAGE_VER_BOLETA_PLAIN_RE.search(plain_body)
-    if not marker_m:
-        _LOGGER.debug("Plain-text: '[image: Ver boleta]' marker not found")
-        return None
-
-    # Search for a fidelizador.com URL in the 500 characters after the marker.
-    search_window = plain_body[marker_m.end():marker_m.end() + 500]
-    url_m = re.search(
-        r"https://trackercl1\.fidelizador\.com/[^\s<>\"'\]]+",
-        search_window,
-        re.IGNORECASE,
+    parts: list[_email_lib.message.Message] = (
+        list(msg.walk()) if msg.is_multipart() else [msg]
     )
-    if url_m:
-        url = url_m.group().strip().rstrip(".,;:!?)")
-        _LOGGER.debug(
-            "Plain-text '[image: Ver boleta]': found fidelizador.com href: %s",
-            url,
-        )
-        return url
+    for part in parts:
+        if part.get_content_type() != "text/plain":
+            continue
+        if "attachment" in str(part.get("Content-Disposition", "")):
+            continue
+        # Use the raw undecoded payload so that QP soft line-breaks (=\n) are
+        # still present as literal characters.
+        raw_payload = part.get_payload(decode=False)
+        if not isinstance(raw_payload, str):
+            continue
+        lines = raw_payload.splitlines()
+        for i, line in enumerate(lines):
+            if not _IMAGE_VER_BOLETA_PLAIN_RE.search(line):
+                continue
+            # Found the "[image: Ver boleta]" line.
+            # The URL is on the next two lines, split by a QP soft line-break.
+            if i + 1 >= len(lines):
+                _LOGGER.debug(
+                    "Plain-text: '[image: Ver boleta]' found at last line; no URL lines follow"
+                )
+                continue
 
-    _LOGGER.debug(
-        "Plain-text: '[image: Ver boleta]' found but no fidelizador.com URL followed it"
-    )
+            def _strip_qp(s: str) -> str:
+                return s.replace("<", "").replace(">", "").replace("=", "").strip()
+
+            line1 = lines[i + 1]
+            part1 = _strip_qp(line1)
+
+            if i + 2 < len(lines):
+                part2 = _strip_qp(lines[i + 2])
+                url = part1 + part2
+                if url.startswith("https://trackercl1.fidelizador.com/"):
+                    _LOGGER.debug(
+                        "Plain-text '[image: Ver boleta]': found fidelizador.com href: %s",
+                        url,
+                    )
+                    return url
+
+            # Fallback: URL was not split — the first line alone is complete.
+            if part1.startswith("https://trackercl1.fidelizador.com/"):
+                _LOGGER.debug(
+                    "Plain-text '[image: Ver boleta]': found fidelizador.com href (single line): %s",
+                    part1,
+                )
+                return part1
+
+    _LOGGER.debug("Plain-text: '[image: Ver boleta]' marker not found")
     return None
 
 
@@ -1262,18 +1228,15 @@ def download_pdf_from_email(
        If found, write bytes to *pdf_dir* and return the path.
     2. Parse ``text/html`` parts.  Two sub-steps are tried in order:
 
-       a. **Raw QP fidelizador.com href URL** (Metrogas / fidelizador.com) —
-          the **sole** authoritative method for Metrogas emails.  The raw HTML
-          bytes are scanned for ``href=3D"https://trackercl1.fidelizador.com/…"``
-          attributes (using :func:`_find_fidelizador_href_in_html_qp`).  The
-          bill-download button URL is identified by searching for billing
-          keywords (e.g. *"Ver boleta"*) within a bounded context window
-          (200 bytes before the URL + link text up to ``</a>``) around each
-          candidate; the first URL with a matching context is preferred.  A
-          last-URL fallback is used when no billing-context match is found.
-          The URL is reconstructed by QP-decoding the raw bytes (soft
-          line-breaks removed, ``=3D`` → ``=``).  When a URL is found it is
-          stored in ``attributes["pdf_url"]`` before the download is attempted.
+       a. **Plain-text ``[image: Ver boleta]`` line extraction** (Metrogas /
+          fidelizador.com) — the raw plain-text payload is scanned line by line
+          for the ``[image: Ver boleta]`` marker
+          (using :func:`_find_fidelizador_href_in_plain_text`).  The two lines
+          that follow the marker contain the QP-split URL; ``<``, ``>``, and
+          ``=`` are stripped from each line and the results are concatenated to
+          reconstruct the full ``https://trackercl1.fidelizador.com/…`` URL.
+          When a URL is found it is stored in ``attributes["pdf_url"]`` before
+          the download is attempted.
 
        b. **HTML link extraction** — the decoded HTML is parsed for
           ``<a href>`` elements and ``<script>`` blocks.  Three tiers of
@@ -1329,11 +1292,9 @@ def download_pdf_from_email(
     # so it is available even when the PDF is already on disk and the
     # download is skipped.
     #
-    # Attempt 2a (primary): fidelizador.com bill download URL identified by
-    # locating ``[image: Ver boleta]`` in the QP-decoded plain-text body.
-    # Gmail and similar clients render image-only anchors as
-    # ``[image: alt_text] <URL>``, making this a reliable anchor-free marker
-    # for the bill-download button.
+    # Attempt 2a: fidelizador.com bill download URL identified by locating
+    # ``[image: Ver boleta]`` in the raw plain-text body and reconstructing
+    # the QP-split URL from the two lines that follow.
     fidelizador_href_url: str | None = _find_fidelizador_href_in_plain_text(msg)
     if fidelizador_href_url:
         _LOGGER.info(
@@ -1344,25 +1305,13 @@ def download_pdf_from_email(
         if attributes is not None:
             attributes["pdf_url"] = fidelizador_href_url
 
-    # Attempt 2a-fallback: if the plain-text search failed, try BeautifulSoup
-    # on the HTML body to locate the <a href> wrapping <img alt="Ver boleta">.
     html_body = _get_html_body(msg)
     html_candidate_urls: list[str] = []
     if not fidelizador_href_url:
         if html_body:
-            fidelizador_href_url = _find_fidelizador_href_via_bs4(msg)
-            if fidelizador_href_url:
-                _LOGGER.info(
-                    "Found fidelizador.com 'Ver boleta' href (BeautifulSoup) for service '%s': %s",
-                    service_id,
-                    fidelizador_href_url,
-                )
-                if attributes is not None:
-                    attributes["pdf_url"] = fidelizador_href_url
-            else:
-                # Attempt 2b: regular HTML link extraction (keyword / .pdf /
-                # billing-term priority tiers).
-                html_candidate_urls = _find_pdf_links_in_html(html_body)
+            # Attempt 2b: regular HTML link extraction (keyword / .pdf /
+            # billing-term priority tiers).
+            html_candidate_urls = _find_pdf_links_in_html(html_body)
         else:
             _LOGGER.debug("No HTML body in email for service '%s'", service_id)
 
