@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.11] - 2026-03-19
+
+### Changed
+- **Metrogas/fidelizador.com bill URL — raw QP-byte regex replaced with BeautifulSoup**
+  (`pdf_downloader.py`):
+
+  The Metrogas billing email contains multiple `trackercl1.fidelizador.com`
+  click-tracking URLs (social-media icons, account-management buttons, the
+  bill-download button, and footer/unsubscribe links).  The previous approach
+  (`_find_fidelizador_href_in_html_qp`) selected the bill URL by searching a
+  200-byte context window in **raw QP bytes** for billing keywords, relying on
+  `_FIDELIZADOR_BILLING_CONTEXT_RE` to account for soft line-breaks (`=\r\n`)
+  and QP-encoded characters such as `=3D`.
+
+  The bill-download button is structurally unambiguous: it is always the
+  anchor that wraps `<img alt="Ver boleta">`.  The new
+  `_find_fidelizador_href_via_bs4` function uses **BeautifulSoup** on the
+  already QP-decoded HTML (produced by `_get_html_body` /
+  `_decode_qp_if_needed`) to locate this exact element — walking every
+  `<a href>` tag and returning the first whose child `<img>` has `alt`
+  matching `"Ver boleta"` (case-insensitive via `_VER_BOLETA_RE`) and whose
+  `href` starts with `https://trackercl1.fidelizador.com/`.
+
+  Because QP decoding runs before BeautifulSoup, the soft line-break
+  (`=\r\n`) that splits long URLs in raw bytes is already removed, and
+  `=3D` has been turned back into `=` — BeautifulSoup sees the complete,
+  clean `href` with no regex required.
+
+  Summary of changes:
+  - `_find_fidelizador_href_in_html_qp` removed.
+  - `_find_fidelizador_href_via_bs4` added.
+  - `_VER_BOLETA_RE` module-level compiled regex added.
+
+- **`manifest.json`**: `beautifulsoup4>=4.12.3` added to `requirements`;
+  version bumped to `0.7.11`.
+
+## [0.7.10] - 2026-03-19
+
+### Changed
+- **PDF URL storage redesign — `pdf_url` attribute populated before
+  cached-file early return** (`pdf_downloader.py`):
+
+  Previously, when the target PDF was already present on disk,
+  `download_pdf_from_email` returned early after reading the download URL
+  from a companion `.url` file that had been written alongside the PDF on
+  the first download.  This meant `attributes["pdf_url"]` was unavailable
+  whenever the companion file was missing or had been deleted.
+
+  URL extraction (fidelizador/BeautifulSoup path and regular HTML link scan)
+  is now performed **before** the cached-file check, so
+  `attributes["pdf_url"]` is always populated directly from the current
+  email body regardless of whether the PDF is already on disk.  The
+  companion `.url` file mechanism (`_save_url_companion`) has been removed
+  entirely.
+
+  Affected call sites:
+  - `download_pdf_from_email`: URL extraction and `attributes["pdf_url"]`
+    assignment moved before `if os.path.exists(dest_path)`.
+  - `_download_first_valid_pdf`: `_save_url_companion` call removed.
+  - `purge_old_pdfs`: no longer removes `*.url` companion files.
+
+- **`manifest.json`**: Version bumped to `0.7.10`.
+
 ## [0.7.9] - 2026-03-19
 
 ### Fixed
