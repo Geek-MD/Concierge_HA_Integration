@@ -4,3 +4,4 @@ ruff==0.15.2
 types-python-dateutil==2.9.0.20260305
 voluptuous==0.15.2
 homeassistant==2025.1.4
+beautifulsoup4>=4.12.3

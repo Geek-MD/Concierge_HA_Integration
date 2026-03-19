@@ -252,7 +252,8 @@ with five entities:
 - ✅ Automatic purge of PDFs older than 1 year
 - ✅ Billing attribute extraction from email body and PDF (folio, billing period, amounts, consumption, customer number, address, due date, etc.)
 - ✅ PDF content analysis: extracts structured billing data from downloaded PDFs (Enel, Metrogas)
-- ✅ `pdf_url` attribute on electricity and gas status binary sensors — exposes the bill download URL; correctly restored from companion `.url` file on cached PDFs (v0.7.1)
+- ✅ `pdf_url` attribute on electricity and gas status binary sensors — exposes the bill download URL; correctly populated even when the PDF is already cached (v0.7.10)
+- ✅ Metrogas/fidelizador.com bill URL reliably extracted via BeautifulSoup: locates the `<a href>` wrapping `<img alt="Ver boleta">` in the QP-decoded HTML (v0.7.11)
 - ✅ Per-service entity architecture (v0.7.0): each service device exposes `binary_sensor.concierge_{id}_status` (Diagnostic) + `sensor.concierge_{id}_last_update` (Diagnostic) + `sensor.concierge_{id}_consumption` + `sensor.concierge_{id}_cost_per_unit` + `sensor.concierge_{id}_total_amount`
 - ✅ `sensor.concierge_{id}_last_update` holds the full ISO 8601 bill datetime (v0.7.1)
 - ✅ Passes ruff, mypy and hassfest checks
