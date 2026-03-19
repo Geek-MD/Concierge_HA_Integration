@@ -49,7 +49,7 @@ BILLING_INDICATORS = [
 # service_type must be one of the SERVICE_TYPE_* constants from const.py.
 SERVICE_PATTERNS: list[tuple[str, str, str]] = [
     # Water utilities
-    (r"aguas?\s+andinas?", "Aguas Andinas", SERVICE_TYPE_WATER),
+    (r"aguas?\s+andinas?", "Agua", SERVICE_TYPE_WATER),
     (r"essbio|esval|nuevo\s+sur", "Agua", SERVICE_TYPE_WATER),
     # Electricity utilities
     (r"enel|chilectra|cge\s+distribuci[oó]n", "Electricidad", SERVICE_TYPE_ELECTRICITY),
