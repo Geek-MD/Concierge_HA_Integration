@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.16] - 2026-03-19
+
+### Fixed
+- **Default device name for Aguas Andinas water accounts** (`service_detector.py`):
+
+  The `aguas?\s+andinas?` service pattern used `"Aguas Andinas"` as its
+  display name instead of the generic service-type label `"Agua"` that all
+  other water-utility patterns already use.  On first configuration this
+  produced a device named "Aguas Andinas" rather than the expected "Agua".
+
+  **Fix**: changed the display name in `SERVICE_PATTERNS` from
+  `"Aguas Andinas"` to `"Agua"` so all water accounts — regardless of
+  provider — receive the same consistent default device name.
+
+- **`manifest.json`**: version bumped to `0.7.16`.
+
 ## [0.7.15] - 2026-03-19
 
 ### Fixed
