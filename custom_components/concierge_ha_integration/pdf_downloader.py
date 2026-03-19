@@ -60,6 +60,8 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
 
+from bs4 import BeautifulSoup
+
 _LOGGER = logging.getLogger(__name__)
 
 # Visible link-text / img-alt patterns that suggest a billing PDF link
@@ -286,6 +288,12 @@ _FIDELIZADOR_BILLING_CONTEXT_RE = re.compile(
     rb"|boleta(?:=\r?\n)?\.png",
     re.IGNORECASE,
 )
+
+# Matches "Ver boleta" (case-insensitive, allowing any whitespace between the
+# two words) in the ``alt`` attribute of the bill-download button image.
+# Used by :func:`_find_fidelizador_href_via_bs4` to identify the correct
+# ``<a>`` anchor in the BeautifulSoup-parsed HTML.
+_VER_BOLETA_RE = re.compile(r"ver\s+boleta", re.IGNORECASE)
 
 
 class _LinkExtractor(HTMLParser):
@@ -637,134 +645,59 @@ def _find_fidelizador_links_in_raw_qp_parts(
     return results
 
 
-def _find_fidelizador_href_in_html_qp(
+def _find_fidelizador_href_via_bs4(
     msg: _email_lib.message.Message,
 ) -> str | None:
-    """Find the gas bill download URL from the ``<a href>`` attribute in raw QP HTML.
+    """Find the gas bill download URL by locating ``<img alt="Ver boleta">`` with BeautifulSoup.
 
-    Metrogas billing emails (delivered via *fidelizador.com*) contain **multiple**
-    ``trackercl1.fidelizador.com`` click-tracking URLs embedded in the HTML body:
-    social-media icon links, account-management buttons, the bill-download button
-    ("Ver boleta"), and footer/unsubscribe links.  Because these URLs share the
-    same domain they are indistinguishable by domain alone.
+    Metrogas billing emails (delivered via *fidelizador.com*) contain the
+    bill-download button as an image-only anchor::
 
-    **Selection strategy — billing context window:**
+        <a href="https://trackercl1.fidelizador.com/…">
+            <img alt="Ver boleta" src="…/boleta.png">
+        </a>
 
-    The bill-download button is identified by searching for a billing keyword
-    (e.g. ``"Ver boleta"``, ``"Descargar boleta"``) within a bounded context
-    window in the raw HTML bytes around each candidate URL:
+    The HTML body is already QP-decoded by :func:`_get_html_body` (which calls
+    :func:`_decode_qp_if_needed`), so by the time BeautifulSoup sees it the
+    ``href`` attribute contains the fully reconstructed URL — any
+    ``=\\r?\\n`` soft line-breaks have been removed by
+    :func:`quopri.decodestring`, and ``=3D`` has been turned back into ``=``.
 
-    * **Before the URL** — up to 200 bytes before the ``href=3D"`` start, to
-      catch patterns where the visible label sits in a sibling element (e.g.
-      ``<td>Ver boleta</td><td><a href="…"><img></a></td>``).
-    * **After the URL** — from the URL end to the first ``</a>`` closing tag
-      that follows it (capped at 200 bytes), which is the link text of *this*
-      anchor only.  Stopping at ``</a>`` prevents the context window from
-      bleeding into the text of the *next* anchor element.
-
-    The **first** URL whose bounded context matches
-    :data:`_FIDELIZADOR_BILLING_CONTEXT_RE` is returned as the preferred
-    bill-download URL.
-
-    This replaces the former "take the last URL" heuristic, which was incorrect:
-    footer/unsubscribe links appear **after** the "Ver boleta" button in the
-    HTML, making the last URL a footer link rather than the billing button.
-
-    **Fallback:**  If no URL with billing context is found (e.g. different email
-    layout), the last fidelizador.com URL in the HTML is returned so that the
-    function still has a chance to find any document link.
-
-    The email HTML is Quoted-Printable encoded without a
-    ``Content-Transfer-Encoding`` header.  Inside the raw bytes, the
-    ``href`` attribute assignment appears as ``href=3D"URL"`` (the ``=`` in
-    ``="`` is itself QP-encoded as ``=3D``).  The URL token may additionally
-    span a ``=\\r?\\n`` soft line-break.
+    Strategy:
+    1. Parse the decoded HTML with BeautifulSoup (using the stdlib
+       ``html.parser`` backend — no extra C dependency).
+    2. Walk every ``<a href>`` element.
+    3. Return the ``href`` of the **first** anchor that contains an ``<img>``
+       whose ``alt`` attribute matches ``"Ver boleta"`` (case-insensitive),
+       provided the href starts with
+       ``https://trackercl1.fidelizador.com/``.
 
     Args:
         msg: Parsed email message.
 
     Returns:
-        Reconstructed ``https://trackercl1.fidelizador.com/…`` URL, or ``None``
-        when no matching ``href=3D"…"`` attribute is found.
+        Reconstructed ``https://trackercl1.fidelizador.com/…`` URL, or
+        ``None`` when no matching anchor is found.
     """
-    parts: list[_email_lib.message.Message] = (
-        list(msg.walk()) if msg.is_multipart() else [msg]
-    )
-    billing_url: str | None = None  # First URL with billing keyword in context
-    last_url: str | None = None     # Fallback: last URL seen in the HTML
+    html_body = _get_html_body(msg)
+    if not html_body:
+        return None
 
-    for part in parts:
-        if part.get_content_type() != "text/html":
-            continue
-        if "attachment" in str(part.get("Content-Disposition", "")):
-            continue
-        cte = (part.get("Content-Transfer-Encoding") or "").lower().strip()
-        if cte == "quoted-printable":
-            # Python already decoded this part — raw QP patterns are gone.
-            continue
-        payload = part.get_payload(decode=True)
-        if not payload:
-            continue
-        if not isinstance(payload, bytes):
-            continue
-        # Only process payloads that show QP soft line-breaks, the
-        # unambiguous sign that the body is QP-encoded without a CTE header.
-        if b"=\r\n" not in payload and b"=\n" not in payload:
-            continue
-        for m in _FIDELIZADOR_HTML_HREF_QP_RE.finditer(payload):
-            raw_url: bytes = m.group(1)
-            # QP-decode: removes =\n soft line-breaks and =XX hex codes.
-            try:
-                url = quopri.decodestring(raw_url).decode("utf-8", errors="ignore")
-            except Exception:
-                url = raw_url.decode("ascii", errors="ignore")
-            url = url.strip()
-            if not url.startswith("https://trackercl1.fidelizador.com/"):
-                continue
+    soup = BeautifulSoup(html_body, "html.parser")
 
-            last_url = url
-            _LOGGER.debug("Fidelizador.com href found in raw QP HTML: %s", url)
+    for a_tag in soup.find_all("a", href=True):
+        img = a_tag.find("img", alt=_VER_BOLETA_RE)
+        if img:
+            href = (a_tag.get("href") or "").strip()
+            if href.startswith("https://trackercl1.fidelizador.com/"):
+                _LOGGER.debug(
+                    "BeautifulSoup: found 'Ver boleta' fidelizador.com href: %s",
+                    href,
+                )
+                return href
 
-            # Check a bounded context window for billing keywords to identify
-            # the bill-download button rather than a social-media or footer
-            # tracking link that shares the same fidelizador.com domain.
-            #
-            # The window is:
-            #   [m.start() - 200, first </a> after m.end()]
-            #
-            # Stopping at the closing </a> of the current anchor is critical:
-            # a naively large window would bleed into the link text of the
-            # *next* anchor and falsely associate its billing keyword with the
-            # current (wrong) URL.
-            if billing_url is None:
-                ctx_start = max(0, m.start() - 200)
-                # Find the </a> that closes this anchor to bound the window.
-                a_close_idx = payload.lower().find(b"</a>", m.end())
-                if a_close_idx == -1:
-                    ctx_end = min(len(payload), m.end() + 200)
-                else:
-                    ctx_end = a_close_idx + 4  # include the </a> itself
-                context_window = payload[ctx_start:ctx_end]
-                if _FIDELIZADOR_BILLING_CONTEXT_RE.search(context_window):
-                    billing_url = url
-                    _LOGGER.debug(
-                        "Fidelizador.com href with billing context (preferred): %s",
-                        url,
-                    )
-
-    result = billing_url or last_url
-    if result:
-        if billing_url:
-            _LOGGER.debug(
-                "Fidelizador.com bill download URL (billing-context match): %s",
-                result,
-            )
-        else:
-            _LOGGER.debug(
-                "Fidelizador.com bill download URL (last-href fallback): %s",
-                result,
-            )
-    return result
+    _LOGGER.debug("BeautifulSoup: no 'Ver boleta' fidelizador.com anchor found")
+    return None
 
 
 def _get_html_body(msg: _email_lib.message.Message) -> str:
@@ -1313,28 +1246,23 @@ def download_pdf_from_email(
     filename = _build_filename(service_id, email_date, attributes)
     dest_path = os.path.join(pdf_dir, filename)
 
-    # Extract candidate URLs from the email body before the cached-file early
-    # return so that ``pdf_url`` is populated in the sensor attributes even
-    # when the PDF already exists on disk and the download is skipped.
+    # Extract the fidelizador "Ver boleta" URL (and HTML candidate URLs for
+    # other services) from the email body before the cached-file early return.
+    # For fidelizador/Metrogas emails, ``attributes["pdf_url"]`` is set here,
+    # so it is available even when the PDF is already on disk and the
+    # download is skipped.
     html_body = _get_html_body(msg)
     fidelizador_href_url: str | None = None
     html_candidate_urls: list[str] = []
     if html_body:
-        # Attempt 2a: fidelizador.com bill download URL extracted from the
-        # ``href=3D"…"`` attribute in the raw QP HTML bytes.
-        # This is the sole authoritative method for Metrogas / fidelizador.com
-        # emails.  The function identifies the bill-download button URL by
-        # searching for billing keywords (e.g. "Ver boleta") within a bounded
-        # context window (200 bytes before + link text up to </a>) around each
-        # candidate URL, then falls back to the last fidelizador.com URL if no
-        # billing-context match is found.  The URL is reconstructed by
-        # QP-decoding the raw bytes (removing ``=\n`` soft line-breaks and
-        # ``=3D`` → ``=``).
-        fidelizador_href_url = _find_fidelizador_href_in_html_qp(msg)
+        # Attempt 2a: fidelizador.com bill download URL identified by
+        # locating the <a href> that wraps <img alt="Ver boleta"> using
+        # BeautifulSoup on the already QP-decoded HTML.  This is the
+        # authoritative method for Metrogas / fidelizador.com emails.
+        fidelizador_href_url = _find_fidelizador_href_via_bs4(msg)
         if fidelizador_href_url:
             _LOGGER.info(
-                "Found fidelizador.com bill download URL in raw QP HTML href for "
-                "service '%s': %s",
+                "Found fidelizador.com 'Ver boleta' href for service '%s': %s",
                 service_id,
                 fidelizador_href_url,
             )
