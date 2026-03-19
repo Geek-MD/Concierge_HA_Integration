@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.12] - 2026-03-19
+
+### Changed
+- **Metrogas/fidelizador.com bill URL — primary strategy switched to plain-text
+  `[image: Ver boleta]` marker** (`pdf_downloader.py`):
+
+  The previous primary strategy (`_find_fidelizador_href_via_bs4`) searched
+  the QP-decoded HTML body for `<img alt="Ver boleta">` using BeautifulSoup.
+  While structurally sound, this approach was unreliable in practice because
+  the URL reconstruction from the HTML body was incorrect.
+
+  The new primary strategy (`_find_fidelizador_href_in_plain_text`) searches
+  the QP-decoded **plain-text** body for the `[image: Ver boleta]` marker.
+  Email clients such as Gmail render image-only HTML anchors as plain-text
+  `[image: alt_text] <URL>` sequences, making this marker a reliable
+  anchor-free indicator for the bill-download button.  The function locates
+  this marker via `_IMAGE_VER_BOLETA_PLAIN_RE` and extracts the
+  `https://trackercl1.fidelizador.com/` URL that follows it within a
+  500-character window.
+
+  The BeautifulSoup HTML approach (`_find_fidelizador_href_via_bs4`) is
+  retained as a fallback when the plain-text body does not contain the
+  expected marker.
+
+  The `download_pdf_from_email` Strategy 2 download block was also
+  refactored so that a `fidelizador_href_url` found via the plain-text path
+  is downloaded even when the email has no HTML body.
+
+  Summary of changes:
+  - `_IMAGE_VER_BOLETA_PLAIN_RE` module-level compiled regex added.
+  - `_find_fidelizador_href_in_plain_text` added.
+  - `download_pdf_from_email`: plain-text search runs first; BeautifulSoup
+    is demoted to fallback.
+  - Strategy 2 download block decoupled from `if html_body:` guard.
+
+- **`manifest.json`**: Version bumped to `0.7.12`.
+
 ## [0.7.11] - 2026-03-19
 
 ### Changed
