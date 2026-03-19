@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.13] - 2026-03-19
+
+### Fixed
+- **Metrogas/fidelizador.com bill URL — raw-line reconstruction replaces
+  decoded-text search** (`pdf_downloader.py`):
+
+  The previous strategy (`_find_fidelizador_href_in_plain_text` v0.7.12)
+  decoded the plain-text MIME part first (via `get_payload(decode=True)` +
+  `_decode_qp_if_needed`) and then searched the decoded string for the URL
+  after the `[image: Ver boleta]` marker.  In practice the URL reconstruction
+  was unreliable for some email configurations, causing the wrong
+  `trackercl1.fidelizador.com` tracking URL (e.g. an unsubscribe link) to be
+  returned instead of the bill-download URL.
+
+  The fix replaces the decoded-text search with a **raw-line algorithm** that
+  operates directly on the undecoded payload (`get_payload(decode=False)`),
+  preserving the Quoted-Printable soft line-break (`=\n`) that splits the URL
+  across two consecutive lines:
+
+  ```
+  [image: Ver boleta]
+  <https://trackercl1.fidelizador.com/…PART1=
+  …PART2>
+  ```
+
+  Reconstruction:
+  1. Locate the line containing `[image: Ver boleta]`.
+  2. Take the **two lines immediately following** it.
+  3. Remove `<`, `>`, and `=` from each line and strip whitespace.
+  4. Concatenate the two fragments — the result is the full URL.
+
+  This produces the correct URL regardless of whether the email has a
+  `Content-Transfer-Encoding: quoted-printable` header or not, and without
+  any dependency on `quopri.decodestring` or BeautifulSoup.
+
+  Additionally, the BeautifulSoup fallback (`_find_fidelizador_href_via_bs4`)
+  is removed entirely, along with the `beautifulsoup4` dependency from
+  `manifest.json`.  The `_VER_BOLETA_RE` regex constant (used only by the
+  removed function) is also removed.
+
+  Summary of changes:
+  - `_find_fidelizador_href_in_plain_text`: rewritten to use raw-line
+    algorithm on `get_payload(decode=False)`.
+  - `_find_fidelizador_href_via_bs4`: removed.
+  - `_VER_BOLETA_RE`: removed.
+  - `BeautifulSoup` import removed.
+  - `download_pdf_from_email`: BeautifulSoup fallback block removed; if
+    plain-text extraction fails the code falls through directly to the
+    existing HTML keyword-extraction path (Attempt 2b).
+
+- **`manifest.json`**: `beautifulsoup4` removed from `requirements`; version
+  bumped to `0.7.13`.
+
 ## [0.7.12] - 2026-03-19
 
 ### Changed
