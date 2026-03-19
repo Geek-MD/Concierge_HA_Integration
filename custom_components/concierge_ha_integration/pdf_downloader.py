@@ -295,6 +295,27 @@ _FIDELIZADOR_BILLING_CONTEXT_RE = re.compile(
 # ``<a>`` anchor in the BeautifulSoup-parsed HTML.
 _VER_BOLETA_RE = re.compile(r"ver\s+boleta", re.IGNORECASE)
 
+# Matches ``[image: Ver boleta]`` in a QP-decoded plain-text email body.
+#
+# Gmail and other email clients render image-only HTML anchors such as:
+#
+#   <a href="https://trackercl1.fidelizador.com/…">
+#       <img alt="Ver boleta" src="…/boleta.png">
+#   </a>
+#
+# as the following plain-text representation:
+#
+#   [image: Ver boleta] <https://trackercl1.fidelizador.com/…>
+#
+# Matching this marker in the decoded plain-text body and then locating the
+# URL that follows it is the primary strategy used by
+# :func:`_find_fidelizador_href_in_plain_text` to identify the bill-download
+# URL without relying on HTML parsing.
+_IMAGE_VER_BOLETA_PLAIN_RE = re.compile(
+    r"\[image:\s*ver\s+boleta\s*\]",
+    re.IGNORECASE,
+)
+
 
 class _LinkExtractor(HTMLParser):
     """Extract (href, link_text) pairs from an HTML document.
@@ -697,6 +718,62 @@ def _find_fidelizador_href_via_bs4(
                 return href
 
     _LOGGER.debug("BeautifulSoup: no 'Ver boleta' fidelizador.com anchor found")
+    return None
+
+
+def _find_fidelizador_href_in_plain_text(
+    msg: _email_lib.message.Message,
+) -> str | None:
+    """Find the gas bill download URL by locating ``[image: Ver boleta]`` in the plain-text body.
+
+    Metrogas billing emails (delivered via *fidelizador.com*) contain a
+    plain-text alternative body generated from the HTML.  Email clients such
+    as Gmail render image-only anchors as ``[image: alt_text]`` followed by
+    the URL in angle brackets::
+
+        [image: Ver boleta] <https://trackercl1.fidelizador.com/…>
+
+    This function decodes the plain-text part (applying QP decoding when the
+    ``Content-Transfer-Encoding`` header is absent, as is common for
+    fidelizador.com emails), searches for the ``[image: Ver boleta]`` marker
+    via :data:`_IMAGE_VER_BOLETA_PLAIN_RE`, and extracts the
+    ``https://trackercl1.fidelizador.com/`` URL that follows it within a
+    500-character search window.
+
+    Args:
+        msg: Parsed email message.
+
+    Returns:
+        Reconstructed ``https://trackercl1.fidelizador.com/…`` URL, or
+        ``None`` when no matching pattern is found.
+    """
+    plain_body = _get_plain_text_body(msg)
+    if not plain_body:
+        return None
+
+    marker_m = _IMAGE_VER_BOLETA_PLAIN_RE.search(plain_body)
+    if not marker_m:
+        _LOGGER.debug("Plain-text: '[image: Ver boleta]' marker not found")
+        return None
+
+    # Search for a fidelizador.com URL in the 500 characters after the marker.
+    search_window = plain_body[marker_m.end():marker_m.end() + 500]
+    url_m = re.search(
+        r"https://trackercl1\.fidelizador\.com/[^\s<>\"'\]]+",
+        search_window,
+        re.IGNORECASE,
+    )
+    if url_m:
+        url = url_m.group().strip().rstrip(".,;:!?)")
+        _LOGGER.debug(
+            "Plain-text '[image: Ver boleta]': found fidelizador.com href: %s",
+            url,
+        )
+        return url
+
+    _LOGGER.debug(
+        "Plain-text: '[image: Ver boleta]' found but no fidelizador.com URL followed it"
+    )
     return None
 
 
@@ -1251,29 +1328,43 @@ def download_pdf_from_email(
     # For fidelizador/Metrogas emails, ``attributes["pdf_url"]`` is set here,
     # so it is available even when the PDF is already on disk and the
     # download is skipped.
+    #
+    # Attempt 2a (primary): fidelizador.com bill download URL identified by
+    # locating ``[image: Ver boleta]`` in the QP-decoded plain-text body.
+    # Gmail and similar clients render image-only anchors as
+    # ``[image: alt_text] <URL>``, making this a reliable anchor-free marker
+    # for the bill-download button.
+    fidelizador_href_url: str | None = _find_fidelizador_href_in_plain_text(msg)
+    if fidelizador_href_url:
+        _LOGGER.info(
+            "Found fidelizador.com 'Ver boleta' href (plain-text) for service '%s': %s",
+            service_id,
+            fidelizador_href_url,
+        )
+        if attributes is not None:
+            attributes["pdf_url"] = fidelizador_href_url
+
+    # Attempt 2a-fallback: if the plain-text search failed, try BeautifulSoup
+    # on the HTML body to locate the <a href> wrapping <img alt="Ver boleta">.
     html_body = _get_html_body(msg)
-    fidelizador_href_url: str | None = None
     html_candidate_urls: list[str] = []
-    if html_body:
-        # Attempt 2a: fidelizador.com bill download URL identified by
-        # locating the <a href> that wraps <img alt="Ver boleta"> using
-        # BeautifulSoup on the already QP-decoded HTML.  This is the
-        # authoritative method for Metrogas / fidelizador.com emails.
-        fidelizador_href_url = _find_fidelizador_href_via_bs4(msg)
-        if fidelizador_href_url:
-            _LOGGER.info(
-                "Found fidelizador.com 'Ver boleta' href for service '%s': %s",
-                service_id,
-                fidelizador_href_url,
-            )
-            if attributes is not None:
-                attributes["pdf_url"] = fidelizador_href_url
+    if not fidelizador_href_url:
+        if html_body:
+            fidelizador_href_url = _find_fidelizador_href_via_bs4(msg)
+            if fidelizador_href_url:
+                _LOGGER.info(
+                    "Found fidelizador.com 'Ver boleta' href (BeautifulSoup) for service '%s': %s",
+                    service_id,
+                    fidelizador_href_url,
+                )
+                if attributes is not None:
+                    attributes["pdf_url"] = fidelizador_href_url
+            else:
+                # Attempt 2b: regular HTML link extraction (keyword / .pdf /
+                # billing-term priority tiers).
+                html_candidate_urls = _find_pdf_links_in_html(html_body)
         else:
-            # Attempt 2b: regular HTML link extraction (keyword / .pdf /
-            # billing-term priority tiers).
-            html_candidate_urls = _find_pdf_links_in_html(html_body)
-    else:
-        _LOGGER.debug("No HTML body in email for service '%s'", service_id)
+            _LOGGER.debug("No HTML body in email for service '%s'", service_id)
 
     if os.path.exists(dest_path):
         _LOGGER.info("PDF already present, skipping download: %s", dest_path)
@@ -1292,13 +1383,13 @@ def download_pdf_from_email(
         except OSError as err:
             _LOGGER.warning("Could not write PDF attachment to %s: %s", dest_path, err)
 
-    # --- Strategy 2: Link in HTML body ---
-    if html_body:
-        if fidelizador_href_url:
-            result = _download_first_valid_pdf([fidelizador_href_url], dest_path, service_id, attributes)
-            if result:
-                return result
-        elif html_candidate_urls:
+    # --- Strategy 2: Link in HTML body (or fidelizador plain-text URL) ---
+    if fidelizador_href_url:
+        result = _download_first_valid_pdf([fidelizador_href_url], dest_path, service_id, attributes)
+        if result:
+            return result
+    elif html_body:
+        if html_candidate_urls:
             _LOGGER.info(
                 "Found %d PDF candidate URL(s) in HTML body for service '%s'",
                 len(html_candidate_urls),
