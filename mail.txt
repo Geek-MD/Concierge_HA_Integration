@@ -1,0 +1,945 @@
+Return-Path: edison.montes@gmail.com
+Delivered-To: casa@montesdelpino.cl
+X-FDA: 84473437482.12.91A233B
+Received: from mail-pj1-f46.google.com (mail-pj1-f46.google.com [209.85.216.46])
+	by imf24.b.hostedemail.com (Postfix) with ESMTP id 29C4480002
+	for <casa@montesdelpino.cl>; Sun, 22 Feb 2026 21:50:40 +0000 (UTC)
+Authentication-Results: imf24.b.hostedemail.com;
+	dkim=pass header.d=gmail.com header.s=20230601 header.b=AqN86XlF;
+	spf=pass (imf24.b.hostedemail.com: domain of edison.montes@gmail.com designates 209.85.216.46 as permitted sender) smtp.mailfrom=edison.montes@gmail.com;
+	dmarc=pass (policy=none) header.from=gmail.com;
+	arc=pass ("google.com:s=arc-20240605:i=1")
+ARC-Message-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=hostedemail.com;
+	s=arc-20220608; t=1771797040;
+	h=from:from:sender:reply-to:subject:subject:date:date:
+	 message-id:message-id:to:to:cc:mime-version:mime-version:
+	 content-type:content-type:content-transfer-encoding:
+	 in-reply-to:in-reply-to:references:references:dkim-signature;
+	bh=ikkFkS2tvjiFE/YFSSH55EIWowotNQLDDZaRIPeAGrY=;
+	b=8n+5D59jMdaW2mS0VDnK778GegUbl13MJGPrZdT1D7Nk23i/+ePvVEWz+CPu6Dyo8Pri5H
+	KROa5e65YY2TyKxGflhZWjgT1IxFtMH77bI4h0MSkUhVtgWaohTk3ecpAotS8kjaRxooEs
+	02xA1EwP+jg3xnEbN6m67c7InXA+OQg=
+ARC-Authentication-Results: i=2;
+	imf24.b.hostedemail.com;
+	dkim=pass header.d=gmail.com header.s=20230601 header.b=AqN86XlF;
+	spf=pass (imf24.b.hostedemail.com: domain of edison.montes@gmail.com designates 209.85.216.46 as permitted sender) smtp.mailfrom=edison.montes@gmail.com;
+	dmarc=pass (policy=none) header.from=gmail.com;
+	arc=pass ("google.com:s=arc-20240605:i=1")
+ARC-Seal: i=2; s=arc-20220608; d=hostedemail.com; t=1771797040; a=rsa-sha256;
+	cv=pass;
+	b=M0Kokf0qUdAjmP7F1Ou1IjC/32TjXZuKpjehyVIfCZggWb4/p1WRibT+fnog2VRQ+y25e6
+	vUlldc6XOaSe83HKNOi5SuH0G2e0Tif88N0dKvw0MyVH4gb46y6pLjVD14W8Qe/D7Bv1B5
+	FSehuEN+oo/x0PV0smtNyvmLeVMbjF8=
+Received: by mail-pj1-f46.google.com with SMTP id 98e67ed59e1d1-354c67da885so2967689a91.3
+        for <casa@montesdelpino.cl>; Sun, 22 Feb 2026 13:50:39 -0800 (PST)
+ARC-Seal: i=1; a=rsa-sha256; t=1771797039; cv=none;
+        d=google.com; s=arc-20240605;
+        b=NBYLuDcu1AOFq/y9ACVVo+j3eZ6z8c5tXn4Vu1uuz1lpey/65dLYKHgRyigh0PINAP
+         u3My2vdc2BE5uy00BiSB5YGnrfRuW6wJMH/QsZebMyvXdD74+BaLyjSQD3Ed3y0z+K5T
+         r7fJQzHokoxp5X16O48aZbtu5hookCwz5ra+0ncbaNyhXlfSZ9VzaKD5oEyxw1f8Hhxk
+         uTYmqhHhOjbbw2p4AaamgqLw0wi+npbXxniesydK5SPCHgny6xtxq6SnfQ0L5GWToKWN
+         xRrhLau6I502qvVeHTVuGyFdTzHFAtE1fkdCp9+CVWvqwAhdHArovyP5kd9otN3Bvh3Z
+         IzwQ==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;
+        h=to:subject:message-id:date:from:in-reply-to:references:mime-version
+         :dkim-signature;
+        bh=ikkFkS2tvjiFE/YFSSH55EIWowotNQLDDZaRIPeAGrY=;
+        fh=UVLRnymdPbj2ryfYfiK1VuBPMeXEBZP1CujQveBMrkY=;
+        b=avS9Kc77dHHBTewkCeGXYF9StFJrL7PKUa7AZMqtvbw7u+Nh+ujOxcEc/9GGZVlcmb
+         Hq7twpF+SOydyc5O+vBEzfM5RK7RJe+734+vSNK83DemoyvbH3NpzWtl9OQtZeOiN42s
+         mCA6ZyIIn9LJqy7AYcJqXxNUWfTp7se9TJbvTXm3qOq/z1qJwSJuXKEquHPLqODPhNiZ
+         oPRGMsw+TvlXRY81ygIMMWKskjdHzlcG8lDitytbucFcdqlYfGGs0mTgmV7EkNuurkgq
+         RIZ3sfVyhIbNMQ0XOzcZoZ1zW7gueqoC9mTa/Mgb4ArS8AmHnuoNzkO7ThUCKOBojSUq
+         t16w==;
+        darn=montesdelpino.cl
+ARC-Authentication-Results: i=1; mx.google.com; arc=none
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=gmail.com; s=20230601; t=1771797039; x=1772401839; darn=montesdelpino.cl;
+        h=to:subject:message-id:date:from:in-reply-to:references:mime-version
+         :from:to:cc:subject:date:message-id:reply-to;
+        bh=ikkFkS2tvjiFE/YFSSH55EIWowotNQLDDZaRIPeAGrY=;
+        b=AqN86XlFhiZCA6dhbAuXhUC9FpWWyn4pLeZ9KM1r91yvOb4vrmoI4F4EWMOCMuTzdS
+         f5u0ETvQk9+rfVNWvH/I8wEhJtAD958xnhBaFvp/3u+YqztuT/+fyW1qYNfBcv2GxCXl
+         zMIrfIe0Kv/WuDN5basDehlTSDur5/7l83B82aYA/qYfWUd3va1vre2bQJvWtqlY+rN5
+         bjr8cQ2aeGb5T61xqJpF0feKt3yy2KCXLX7q9tlHCyIHuIpFQNf1ur6DIUmazjUx7xw/
+         oelrtWQLcChQraBygahgDsw+QPOwG+hQjSGf5ZNrAam6/1hCr/Oaed7xEBGnjdfxksEI
+         qHBA==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20230601; t=1771797039; x=1772401839;
+        h=to:subject:message-id:date:from:in-reply-to:references:mime-version
+         :x-gm-gg:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to;
+        bh=ikkFkS2tvjiFE/YFSSH55EIWowotNQLDDZaRIPeAGrY=;
+        b=UAJKMEVykYRNMG/pNvnoVINGT/KgFgGh2ZWrGvx9eAlj1D+d/YwdSoxFgOMUwb1RLu
+         sWXmknZbCYQKNyhrHAEbBC6PbMlIWGPlZf5YtF6X+m2ebt0uUDHamBSJMB8ZIT9mVNfB
+         S0cUUnSLc9L78yuzFaJJq55ZOrZrybw8MaBZwGMQLq8AfCPBb1aLRNvV2CzekvC9XRVr
+         P/vF+UEv564WYNJ71HE5kxWSeV8LFNbIPg3s5XEZVnvmbqQCKOKyTZNNSYflqNJ/jHmR
+         p5A4OLxGYK2loEAjIpCqGnaTGnL5HIlBIu4sqffdTLT0REo+fVWN0DoW0DLMx7hy0plU
+         c8Iw==
+X-Gm-Message-State: AOJu0YwCcSnvLj0oRYHaMti0SxzJueeTTjziqbrakcchsgh0PhUAp3bz
+	QWeGRxUGTyp/6kaq5NxJvs5Lmii9JmqKu4tFln6uPDKL33GGV8JtTHtbYptYokwZWnqAi7kdyxS
+	Ejejypeeh3T/IcxCsIcMhz5O0Lo/Jwe9z6Fi0
+X-Gm-Gg: AZuq6aIhVttzMF5wX2OMR2RrsiQmz1C5JP9qJ7XdvlbCPp9GhapdP1E83IUWn+6yugp
+	waijgwF111e1GcMXZT5AAioB/kx24aY0f8rWXxsDq8IivakV+jDwaJhzGBDNgOFDVc8j9WstO9G
+	M0kONcxpRCVfffBqP40aA4QtUXHKzZpgexY+lsEoB0YhToZSD0kNwfBgBhlmMcdPiIV7+f3mbWK
+	lRTqtSGxQbBs0M9LPOqbwayeDTSrpCKjfWy8ugLGhHTAWac7yM81XTCJ+zZlC5G85Vb5cwgeQEP
+	1V2YoMS4
+X-Received: by 2002:a17:90b:2e8b:b0:356:3ba2:122c with SMTP id
+ 98e67ed59e1d1-358ae800711mr6000184a91.9.1771797038885; Sun, 22 Feb 2026
+ 13:50:38 -0800 (PST)
+MIME-Version: 1.0
+References: <smtp.bounce.boletame.28229496@emailmetrogas.cl>
+In-Reply-To: <smtp.bounce.boletame.28229496@emailmetrogas.cl>
+From: "Edison A. Montes M." <edison.montes@gmail.com>
+Date: Sun, 22 Feb 2026 18:50:27 -0300
+X-Gm-Features: AaiRm53lXUWE1n25nypoRcRdyGNTrBlnxCIevsZYXSm6kB7jz-wWUb0EAMqNKvE
+Message-ID: <CAH3wRt1_xE4nfb4tpf=_vrX48Byi8woBDy-uTC7Mvs87wx3JZA@mail.gmail.com>
+Subject: Fwd: Boleta Metrogas Nro. 0000000061778648
+To: casa@montesdelpino.cl
+Content-Type: multipart/alternative; boundary="0000000000001df078064b70a5ee"
+X-Rspamd-Server: rspam01
+X-Rspamd-Queue-Id: 29C4480002
+X-Stat-Signature: ou5b71dka13em3yp3pc5w4e8zm3a4fsz
+X-Spam-Status: No, score=1.22
+X-Rspam-User: 
+X-HE-Tag: 1771797040-508070
+X-HE-Meta: U2FsdGVkX19hLE2BbQ3PzjyqPTgEsCtuqREogVBHKLvRKxNsNeSwRWMQQUe1cena8lo7M31v001jpnajwlGbxYCZnLepA8xzYvOj90PkkpAw726MnEeRXkpaMCiNXiE0fmDc0YHeYpzO1YJ8xAATVSe7ughcEAw5oMUPghRARdYeuba7med/MDcuLy8MTWC1bFk0oy4+B1+272kYyUKxZIHxXIDRVfxsmiOjrES8PQfw8Gl9Bpb4kXrCMw1jQzKMlGzMHCXJHMjwKdNcFwYEC8qzDKcDZAZHfSbABF6QIFUpfSi2aTvy0LcnD9ug9ALhaj/nJj7QbScqonMcK2N39MOf8mUjDC4xfAurVVhfAigCodNuJK6ISzm1VrfowlDaU6uDz+igp3RTqfwQ9ePJ0Xsj9jkhneQek2ZooQttWgX6PSWUhZ6d0RNqlg3hloBfrEvUYer80D61nze6dIiRf/i0mMRsjALLHOFs8ksFyik74XqoKmRNLnLq+QJI0cPhikTahPCArxT/gidB7aDQNQe9qhaEnVX2tgqboV48aRQ0sj9t2z/XQmGqH7jQOw+JlvOs9E4k4KUbJjI/lbX7LB7n+nrumfAB3LXW49gVmhwHzBasC2lShU8c7He5vLwBc/voKs8Vaa4xzmrA47XdnLNoA1wuNMb7lSidjBGlyfnzi4P0z06yKKFIHjH2U7g1U2wojr9Dpp+xKVEgGYRZ5Bje9dMGwdMVeinOBT1nhd0nH6yIlaQBH9Io591RN2fA6G0FwQtG6BQt5yJKyCpidLQ9Vrwr5DH2BggW3OnG5+4+TUiVFZJiG8ZoMWOdSdSDg3gc06cX/OeU781yCsWV6QQPRBZpYXqIeePnpKO5rF8iADKJEQZbOKpHTidblDSPbZdKVcirGOnkk7MKUaFNYtamwHPrIqS1uUaXJx8jLrcTCLlzNJGg1XJFY4mNFQAzW7+LsvxOTaWodSAnDhlpqVZUtD0
+ mYspKnTh2W0EtCpoH2u8FYpmTPmoTAdKOCEH55IM2ms8lEZCZT6ZmmG6njgLlRBPzWNIuIYJ09awajdZpLG0CQb5t1Ynim5pHf3hEVMUMuqccZ/K5C7nznmqS4EySGEnx871EYddnLBSbJbby8EI1PZWBqH4A7uzAH1dT93jAwmjTA0P4jS3I1JwQKGjF4OQt8E7dS7Lc0iqvdqMRO/k8Gm2flc+cztC96Lf6Y9thEUzTgfplX99Gi0oJrkqsTsSu+wnPu0xSk1q1Yl/y2yjlU7QUo2cQ9V5S7TfL5CuxRzDzAtKf9WpT8sDhq5C/gW2XPNqt1+HhJvTpc6/g69a5lIY6B0t209Z6EIjIEFr7cnfSUc5aP7SA/obofjbyDDFOjS3+X8kocKp4D90hUWD3nfNKqi7JyJ6br66RnP1xjFxRhurODu+u1zyYIYsHm+KkA2zxewJuf+ejbPLnimHzg0rCx9nW6nYXHAJwl9FIVCpwPn3Fp/ahlBRUmwZKYts0SktIqCvRpcTAGmycUxlPLAoMstzYr2KpkOIJsG+OlXig54usEy7+W8VgCnCeEZRyuIZf5lEyUKwZ3J+Ui3LN4ywh6kpNfUSNOC+Bl+e5xkFQNXeG77ks2fs3jLi8EDfnpK0dyB0WW49XLcCIT+N2MrI70QwhCA/OejzBycTHMksplFQ=
+
+--0000000000001df078064b70a5ee
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+---------- Forwarded message ---------
+De: Boleta Electronica Metrogas <pagoenlinea@emailmetrogas.cl>
+Date: jue, 29 ene 2026 a la(s) 10:01=E2=80=AFp.m.
+Subject: Boleta Metrogas Nro. 0000000061778648
+To: <edison.montes@gmail.com>
+
+
+Ver en el navegador
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58A829KF1C34750AD1337D0DF097F8513787E299F30>
+[image: Logo Metrogas]
+[image: =C2=A1Tu boleta est=C3=A1 disponible!]
+Estimado(a) PATRICIA DEL PINO, te informamos que ya puedes revisar tu
+boleta Metrogas correspondiente al =C3=BAltimo per=C3=ADodo de facturaci=C3=
+=B3n.
+Boleta electr=C3=B3nica N=C2=B0 0000000061778648
+N=C3=BAmero Cliente: 000900198931
+Direcci=C3=B3n: GENERAL JOFRE 385 DEP-515 SANTIAGO SANTIAGO
+Per=C3=ADodo de consumo: 26/11/2025 al 23/01/2026
+Total a pagar: 12.013
+Fecha de vencimiento: 17/02/2026
+Metropuntos: 680
+[image: Ver boleta]
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58A890KF1C34750AD1337D0DF097F8513787E299F30>
+[image: Pagar]
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58A8D8KF1C34750AD1337D0DF097F8513787E299F30>
+Para modificar tus datos te invitamos a visitar nuestro Centro de Ayuda
+Online.
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58A841KF1C34750AD1337D0DF097F8513787E299F30>
+Si eres usuario de iPhone, para abrir tu boleta correctamente, presiona por
+2 segundos en el enlace de descarga de archivo pdf, y selecciona =E2=80=9Ca=
+brir en
+una pesta=C3=B1a nueva=E2=80=9D o =E2=80=9Cver previsualizaci=C3=B3n=E2=80=
+=9D.
+[image: =C2=A1Sigamos conectados!]
+<#m_8042499450633706732_>
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58A8EEKF1C34750AD1337D0DF097F8513787E299F30>
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58A85BKF1C34750AD1337D0DF097F8513787E299F30>
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58A8C8KF1C34750AD1337D0DF097F8513787E299F30>
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58A8CDKF1C34750AD1337D0DF097F8513787E299F30>
+Este correo electr=C3=B3nico se env=C3=ADa a la direcci=C3=B3n de contacto =
+correspondiente
+al cliente de Metrogas, en caso de no serlo, por favor omitir la
+informaci=C3=B3n.
+Si no quieres *recibir*
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58BBD4KF1C34750AD1337D0DF097F8513787E299F30>
+esta informaci=C3=B3n, *haz clic aqu=C3=AD*
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58BB2AKF1C34750AD1337D0DF097F8513787E299F30>
+| Si quieres *reportar*
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58BB93KF1C34750AD1337D0DF097F8513787E299F30>
+alg=C3=BAn abuso, *haz clic aqu=C3=AD.*
+<https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9F=
+FC4CD0B3A58BBDBKF1C34750AD1337D0DF097F8513787E299F30>
+
+
+--=20
+"Una vez eliminado lo imposible, lo que quede, por improbable que parezca,
+sera tan solo la verdad" - Sherlock Holmes
+
+Edison Montes M.
+Especialista en Medicina de Urgencias
+
+--0000000000001df078064b70a5ee
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<div dir=3D"ltr"><br><br><div class=3D"gmail_quote gmail_quote_container"><=
+div dir=3D"ltr" class=3D"gmail_attr">---------- Forwarded message ---------=
+<br>De: <strong class=3D"gmail_sendername" dir=3D"auto">Boleta Electronica =
+Metrogas</strong> <span dir=3D"auto">&lt;<a href=3D"mailto:pagoenlinea@emai=
+lmetrogas.cl">pagoenlinea@emailmetrogas.cl</a>&gt;</span><br>Date: jue, 29 =
+ene 2026 a la(s) 10:01=E2=80=AFp.m.<br>Subject: Boleta Metrogas Nro. 000000=
+0061778648<br>To:  &lt;<a href=3D"mailto:edison.montes@gmail.com">edison.mo=
+ntes@gmail.com</a>&gt;<br></div><br><br><div class=3D"msg804249945063370673=
+2"><u></u>
+
+
+
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+ =20
+
+
+<div style=3D"word-spacing:normal;background-color:#eeeeee">
+  <div style=3D"background-color:#eeeeee">
+   =20
+    <div style=3D"background:#ffffff;background-color:#ffffff;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#ffffff;background-color:#fff=
+fff;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:30px 0 0 0;tex=
+t-align:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-100" style=
+=3D"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertic=
+al-align:top;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:top" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td align=3D"center" style=3D"font-size:0px;padding:0=
+;word-break:break-word">
+                        <div style=3D"font-family:Ubuntu,Helvetica,Arial,sa=
+ns-serif;font-size:13px;line-height:1;text-align:center;color:#555555"><a h=
+ref=3D"https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBB=
+CEJA9FFC4CD0B3A58A829KF1C34750AD1337D0DF097F8513787E299F30" style=3D"margin=
+:0;color:#cdcdcd;font-family:Arial,sans-serif;font-weight:normal;padding:0;=
+text-align:center;text-decoration:underline" target=3D"_blank"> Ver en el n=
+avegador</a></div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#ffffff;background-color:#ffffff;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#ffffff;background-color:#fff=
+fff;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:20px 0;padding=
+-bottom:0;padding-top:0;text-align:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-100" style=
+=3D"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertic=
+al-align:top;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:top" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td align=3D"right" style=3D"font-size:0px;padding:30=
+px;word-break:break-word">
+                        <table class=3D"m_8042499450633706732MAUTO" border=
+=3D"0" cellpadding=3D"0" cellspacing=3D"0" role=3D"presentation" style=3D"b=
+order-collapse:collapse;border-spacing:0px">
+                          <tbody>
+                            <tr>
+                              <td style=3D"width:183px">
+                                <img alt=3D"Logo Metrogas" height=3D"auto" =
+src=3D"https://stgapicomprobantesprod.blob.core.windows.net/imgsuscripcionb=
+oletaemailer/logo.png" style=3D"border:0;display:block;outline:none;text-de=
+coration:none;height:auto;width:100%;font-size:13px" width=3D"183">
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align=3D"center" style=3D"font-size:0px;padding:0=
+;word-break:break-word">
+                        <table border=3D"0" cellpadding=3D"0" cellspacing=
+=3D"0" role=3D"presentation" style=3D"border-collapse:collapse;border-spaci=
+ng:0px">
+                          <tbody>
+                            <tr>
+                              <td style=3D"width:600px">
+                                <img alt=3D"=C2=A1Tu boleta est=C3=A1 dispo=
+nible!" height=3D"auto" src=3D"https://stgapicomprobantesprod.blob.core.win=
+dows.net/imgsuscripcionboletaemailer/top.jpg" style=3D"border:0;display:blo=
+ck;outline:none;text-decoration:none;height:auto;width:100%;font-size:13px"=
+ width=3D"600">
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#ffffff;background-color:#ffffff;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#ffffff;background-color:#fff=
+fff;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:20px 0;padding=
+-bottom:50px;padding-left:30px;padding-right:30px;padding-top:50px;text-ali=
+gn:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-100" style=
+=3D"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertic=
+al-align:top;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:top" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td align=3D"center" style=3D"font-size:0px;padding:1=
+0px 25px;padding-right:0;padding-bottom:0;padding-left:0;word-break:break-w=
+ord">
+                        <div style=3D"font-family:Arial,Tahoma,Serif;font-s=
+ize:16px;font-weight:600;line-height:22px;text-align:center;color:#004883">=
+Estimado(a) PATRICIA DEL PINO, te informamos que ya puedes revisar tu bolet=
+a Metrogas correspondiente al =C3=BAltimo per=C3=ADodo de facturaci=C3=B3n.=
+</div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#a9ac2b;background-color:#a9ac2b;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#a9ac2b;background-color:#a9a=
+c2b;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:20px 0;padding=
+-bottom:0;padding-top:0;text-align:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-px-350" style=3D=
+"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-=
+align:middle;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"background-color:#004883;vertical-align:middle"=
+ width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"left" style=3D"font-size:0px;padding:10px 25px;paddin=
+g-top:34px;padding-bottom:5px;padding-left:40px;word-break:break-word">
+                        <div class=3D"m_8042499450633706732TAC" style=3D"fo=
+nt-family:Tahoma,Arial;font-size:13px;line-height:1;text-align:left;color:#=
+ffffff">Boleta electr=C3=B3nica N=C2=B0 <span style=3D"font-weight:bold">00=
+00000061778648</span></div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"left" style=3D"font-size:0px;padding:10px 25px;paddin=
+g-bottom:5px;padding-left:40px;word-break:break-word">
+                        <div class=3D"m_8042499450633706732TAC" style=3D"fo=
+nt-family:Tahoma,Arial;font-size:13px;line-height:1;text-align:left;color:#=
+ffffff">N=C3=BAmero Cliente: <span style=3D"font-weight:bold">000900198931<=
+/span></div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"left" style=3D"font-size:0px;padding:10px 25px;paddin=
+g-bottom:5px;padding-left:40px;word-break:break-word">
+                        <div class=3D"m_8042499450633706732TAC" style=3D"fo=
+nt-family:Tahoma,Arial;font-size:13px;line-height:1;text-align:left;color:#=
+ffffff">Direcci=C3=B3n: <span style=3D"font-weight:bold">GENERAL JOFRE 385 =
+ DEP-515 SANTIAGO SANTIAGO</span></div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"left" style=3D"font-size:0px;padding:10px 25px;paddin=
+g-bottom:5px;padding-left:40px;word-break:break-word">
+                        <div class=3D"m_8042499450633706732TAC" style=3D"fo=
+nt-family:Tahoma,Arial;font-size:13px;line-height:1;text-align:left;color:#=
+ffffff">Per=C3=ADodo de consumo: <span style=3D"font-weight:bold">26/11/202=
+5 al 23/01/2026</span></div>
+                      </td>
+					 =20
+
+                    </tr>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"left" style=3D"font-size:0px;padding:10px 25px;paddin=
+g-bottom:5px;padding-left:40px;word-break:break-word">
+                        <div class=3D"m_8042499450633706732TAC" style=3D"fo=
+nt-family:Tahoma,Arial;font-size:13px;line-height:1;text-align:left;color:#=
+ffffff">Total a pagar: <span style=3D"font-weight:bold">12.013</span></div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"left" style=3D"font-size:0px;padding:10px 25px;paddin=
+g-bottom:5px;padding-left:40px;word-break:break-word">
+                        <div class=3D"m_8042499450633706732TAC" style=3D"fo=
+nt-family:Tahoma,Arial;font-size:13px;line-height:1;text-align:left;color:#=
+ffffff">Fecha de vencimiento: <span style=3D"font-weight:bold">17/02/2026</=
+span></div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"left" style=3D"font-size:0px;padding:10px 25px;paddin=
+g-bottom:35px;padding-left:40px;word-break:break-word">
+                        <div class=3D"m_8042499450633706732TAC" style=3D"fo=
+nt-family:Tahoma,Arial;font-size:13px;line-height:1;text-align:left;color:#=
+ffffff">Metropuntos: <span style=3D"font-weight:bold">680</span></div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+              <div class=3D"m_8042499450633706732mj-column-px-250" style=3D=
+"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-=
+align:middle;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"background-color:#a9ac2b;vertical-align:middle"=
+ width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td bgcolor=3D"#A9AC2B" align=3D"center" style=3D"fon=
+t-size:0px;padding:0;word-break:break-word">
+                        <table border=3D"0" cellpadding=3D"0" cellspacing=
+=3D"0" role=3D"presentation" style=3D"border-collapse:collapse;border-spaci=
+ng:0px">
+                          <tbody>
+                            <tr>
+                              <td style=3D"width:250px">
+                                <img height=3D"auto" src=3D"https://stgapic=
+omprobantesprod.blob.core.windows.net/imgsuscripcionboletaemailer/boleta-ri=
+ght.png" style=3D"border:0;display:block;outline:none;text-decoration:none;=
+height:auto;width:100%;font-size:13px" width=3D"250">
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#ffffff;background-color:#ffffff;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#ffffff;background-color:#fff=
+fff;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:20px 0;padding=
+-bottom:0;padding-top:30px;text-align:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-50" style=3D=
+"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-=
+align:middle;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:middle" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"right" style=3D"font-size:0px;padding:10px 25px;paddi=
+ng-top:0;padding-right:15px;padding-bottom:0;word-break:break-word">
+                        <table class=3D"m_8042499450633706732MAUTO" border=
+=3D"0" cellpadding=3D"0" cellspacing=3D"0" role=3D"presentation" style=3D"b=
+order-collapse:collapse;border-spacing:0px">
+                          <tbody>
+                            <tr>
+                              <td class=3D"m_8042499450633706732PB25" style=
+=3D"width:120px">
+                               =20
+							=09
+								<a href=3D"https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807=
+CB3HF4E1ADBBCEJA9FFC4CD0B3A58A890KF1C34750AD1337D0DF097F8513787E299F30" tar=
+get=3D"_blank">
+                                  <img alt=3D"Ver boleta" height=3D"auto" s=
+rc=3D"https://stgapicomprobantesprod.blob.core.windows.net/imgsuscripcionbo=
+letaemailer/boleta.png" style=3D"border:0;display:block;outline:none;text-d=
+ecoration:none;height:auto;width:100%;font-size:13px" width=3D"120">
+                                </a>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-50" style=3D=
+"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-=
+align:middle;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:middle" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"left" style=3D"font-size:0px;padding:10px 25px;paddin=
+g-top:0;padding-bottom:0;padding-left:15px;word-break:break-word">
+                        <table class=3D"m_8042499450633706732MAUTO" border=
+=3D"0" cellpadding=3D"0" cellspacing=3D"0" role=3D"presentation" style=3D"b=
+order-collapse:collapse;border-spacing:0px">
+                          <tbody>
+                            <tr>
+                              <td style=3D"width:120px">
+                               <a href=3D"https://trackercl1.fidelizador.co=
+m/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58A8D8KF1C34750AD1337D0DF=
+097F8513787E299F30" target=3D"_blank">
+                                  <img alt=3D"Pagar" height=3D"auto" src=3D=
+"https://stgapicomprobantesprod.blob.core.windows.net/imgsuscripcionboletae=
+mailer/pagar.png" style=3D"border:0;display:block;outline:none;text-decorat=
+ion:none;height:auto;width:100%;font-size:13px" width=3D"120">
+                                </a>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#ffffff;background-color:#ffffff;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#ffffff;background-color:#fff=
+fff;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:20px 0;padding=
+-bottom:50px;padding-top:50px;text-align:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-100" style=
+=3D"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertic=
+al-align:top;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:top" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td align=3D"center" style=3D"font-size:0px;padding:1=
+0px 25px;word-break:break-word">
+                        <div style=3D"font-family:Arial,Tahoma,Serif;font-s=
+ize:12px;font-weight:bold;line-height:1.3;text-align:center;color:#004883">=
+Para modificar tus datos te invitamos a visitar nuestro <a class=3D"m_80424=
+99450633706732DPB" href=3D"https://trackercl1.fidelizador.com/IF1C347GA9EF1=
+E79E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58A841KF1C34750AD1337D0DF097F8513787E299=
+F30" style=3D"color:#004883" target=3D"_blank">Centro de Ayuda Online.</a><=
+/div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#a9ac2b;background-color:#a9ac2b;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#a9ac2b;background-color:#a9a=
+c2b;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:0;text-align:c=
+enter">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-100" style=
+=3D"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertic=
+al-align:middle;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:middle" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"center" style=3D"font-size:0px;padding:12px 60px;word=
+-break:break-word">
+                        <div style=3D"font-family:Arial,Tahoma,Serif;font-s=
+ize:10px;line-height:1.2;text-align:center;color:#ffffff">Si eres usuario d=
+e iPhone, para abrir tu boleta correctamente, presiona por 2 segundos en el=
+ enlace de descarga de archivo pdf, y selecciona =E2=80=9Cabrir en una pest=
+a=C3=B1a nueva=E2=80=9D o =E2=80=9Cver previsualizaci=C3=B3n=E2=80=9D.</div=
+>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#004883;background-color:#004883;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#004883;background-color:#004=
+883;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:20px 0;padding=
+-bottom:40px;padding-top:40px;text-align:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-50" style=3D=
+"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-=
+align:middle;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:middle" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td align=3D"left" style=3D"font-size:0px;padding:10p=
+x 25px;padding-top:0;padding-bottom:0;word-break:break-word">
+                        <table class=3D"m_8042499450633706732MAUTO" border=
+=3D"0" cellpadding=3D"0" cellspacing=3D"0" role=3D"presentation" style=3D"b=
+order-collapse:collapse;border-spacing:0px">
+                          <tbody>
+                            <tr>
+                              <td class=3D"m_8042499450633706732PB12" style=
+=3D"width:240px">
+                                <img alt=3D"=C2=A1Sigamos conectados!" heig=
+ht=3D"auto" src=3D"https://stgapicomprobantesprod.blob.core.windows.net/img=
+suscripcionboletaemailer/sigamos.png" style=3D"border:0;display:block;outli=
+ne:none;text-decoration:none;height:auto;width:100%;font-size:13px" width=
+=3D"240">
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-50" style=3D=
+"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-=
+align:middle;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"vertical-align:middle" width=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td align=3D"right" style=3D"font-size:0px;padding:10=
+px 25px;padding-top:0;padding-right:30px;padding-bottom:0;word-break:break-=
+word">
+                        <table class=3D"m_8042499450633706732MAUTO" border=
+=3D"0" cellpadding=3D"0" cellspacing=3D"0" role=3D"presentation" style=3D"b=
+order-collapse:collapse;border-spacing:0px">
+                          <tbody>
+                            <tr>
+                              <td style=3D"width:125px">
+                                <a href=3D"#m_8042499450633706732_">
+                                  <img height=3D"auto" src=3D"https://stgap=
+icomprobantesprod.blob.core.windows.net/imgsuscripcionboletaemailer/link-me=
+tro.png" style=3D"border:0;display:block;outline:none;text-decoration:none;=
+height:auto;width:100%;font-size:13px" width=3D"125">
+                                </a>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class=3D"m_8042499450633706732TAC" align=3D"right=
+" style=3D"font-size:0px;padding:10px 25px;padding-top:5px;padding-bottom:0=
+;word-break:break-word">
+                       =20
+                        <table align=3D"right" border=3D"0" cellpadding=3D"=
+0" cellspacing=3D"0" role=3D"presentation" style=3D"float:none;display:inli=
+ne-table">
+                          <tbody><tr>
+                            <td style=3D"padding:4px;vertical-align:middle"=
+>
+                              <table border=3D"0" cellpadding=3D"0" cellspa=
+cing=3D"0" role=3D"presentation" style=3D"background:#ffffff;border-radius:=
+0;width:25px">
+                                <tbody><tr>
+                                  <td style=3D"font-size:0;height:25px;vert=
+ical-align:middle;width:25px">
+                                    <a href=3D"https://trackercl1.fidelizad=
+or.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58A8EEKF1C34750AD133=
+7D0DF097F8513787E299F30" target=3D"_blank">
+                                      <img height=3D"25" src=3D"https://stg=
+apicomprobantesprod.blob.core.windows.net/imgsuscripcionboletaemailer/linke=
+din.png" style=3D"border-radius:0;display:block" width=3D"25">
+                                    </a>
+                                  </td>
+                                </tr>
+                              </tbody></table>
+                            </td>
+                          </tr>
+                        </tbody></table>
+                       =20
+                        <table align=3D"right" border=3D"0" cellpadding=3D"=
+0" cellspacing=3D"0" role=3D"presentation" style=3D"float:none;display:inli=
+ne-table">
+                          <tbody><tr>
+                            <td style=3D"padding:4px;vertical-align:middle"=
+>
+                              <table border=3D"0" cellpadding=3D"0" cellspa=
+cing=3D"0" role=3D"presentation" style=3D"background:#ffffff;border-radius:=
+0;width:25px">
+                                <tbody><tr>
+                                  <td style=3D"font-size:0;height:25px;vert=
+ical-align:middle;width:25px">
+                                    <a href=3D"https://trackercl1.fidelizad=
+or.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58A85BKF1C34750AD133=
+7D0DF097F8513787E299F30" target=3D"_blank">
+                                      <img height=3D"25" src=3D"https://stg=
+apicomprobantesprod.blob.core.windows.net/imgsuscripcionboletaemailer/faceb=
+ook.png" style=3D"border-radius:0;display:block" width=3D"25">
+                                    </a>
+                                  </td>
+                                </tr>
+                              </tbody></table>
+                            </td>
+                          </tr>
+                        </tbody></table>
+                       =20
+                        <table align=3D"right" border=3D"0" cellpadding=3D"=
+0" cellspacing=3D"0" role=3D"presentation" style=3D"float:none;display:inli=
+ne-table">
+                          <tbody><tr>
+                            <td style=3D"padding:4px;vertical-align:middle"=
+>
+                              <table border=3D"0" cellpadding=3D"0" cellspa=
+cing=3D"0" role=3D"presentation" style=3D"background:#ffffff;border-radius:=
+0;width:25px">
+                                <tbody><tr>
+                                  <td style=3D"font-size:0;height:25px;vert=
+ical-align:middle;width:25px">
+                                    <a href=3D"https://trackercl1.fidelizad=
+or.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58A8C8KF1C34750AD133=
+7D0DF097F8513787E299F30" target=3D"_blank">
+                                      <img height=3D"25" src=3D"https://stg=
+apicomprobantesprod.blob.core.windows.net/imgsuscripcionboletaemailer/insta=
+gram.png" style=3D"border-radius:0;display:block" width=3D"25">
+                                    </a>
+                                  </td>
+                                </tr>
+                              </tbody></table>
+                            </td>
+                          </tr>
+                        </tbody></table>
+                       =20
+                        <table align=3D"right" border=3D"0" cellpadding=3D"=
+0" cellspacing=3D"0" role=3D"presentation" style=3D"float:none;display:inli=
+ne-table">
+                          <tbody><tr>
+                            <td style=3D"padding:4px;vertical-align:middle"=
+>
+                              <table border=3D"0" cellpadding=3D"0" cellspa=
+cing=3D"0" role=3D"presentation" style=3D"background:#ffffff;border-radius:=
+0;width:25px">
+                                <tbody><tr>
+                                  <td style=3D"font-size:0;height:25px;vert=
+ical-align:middle;width:25px">
+                                    <a href=3D"https://trackercl1.fidelizad=
+or.com/IF1C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58A8CDKF1C34750AD133=
+7D0DF097F8513787E299F30" target=3D"_blank">
+                                      <img height=3D"25" src=3D"https://stg=
+apicomprobantesprod.blob.core.windows.net/imgsuscripcionboletaemailer/twitt=
+er.png" style=3D"border-radius:0;display:block" width=3D"25">
+                                    </a>
+                                  </td>
+                                </tr>
+                              </tbody></table>
+                            </td>
+						=09
+                          </tr>
+                        </tbody></table>
+                       =20
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#ececec;background-color:#ececec;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#ececec;background-color:#ece=
+cec;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:20px 0;padding=
+-bottom:0;padding-top:30px;text-align:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-100" style=
+=3D"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertic=
+al-align:top;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"background-color:#ebebef;vertical-align:top" wi=
+dth=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td class=3D"m_8042499450633706732PL25 m_804249945063=
+3706732PR25" align=3D"center" style=3D"font-size:0px;padding:10px 75px;padd=
+ing-top:0;padding-bottom:0;word-break:break-word">
+                        <div style=3D"font-family:Arial,Tahoma,Serif;font-s=
+ize:10px;line-height:1.3;text-align:center;color:#555555">Este correo elect=
+r=C3=B3nico se env=C3=ADa a la direcci=C3=B3n de contacto correspondiente a=
+l cliente de Metrogas, en caso de no serlo, por favor omitir la informaci=
+=C3=B3n.</div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+    <div style=3D"background:#ececec;background-color:#ececec;margin:0px au=
+to;max-width:600px">
+      <table align=3D"center" border=3D"0" cellpadding=3D"0" cellspacing=3D=
+"0" role=3D"presentation" style=3D"background:#ececec;background-color:#ece=
+cec;width:100%">
+        <tbody>
+          <tr>
+            <td style=3D"direction:ltr;font-size:0px;padding:20px 0;padding=
+-bottom:30px;padding-top:30px;text-align:center">
+             =20
+              <div class=3D"m_8042499450633706732mj-column-per-100" style=
+=3D"font-size:0px;text-align:left;direction:ltr;display:inline-block;vertic=
+al-align:top;width:100%">
+                <table border=3D"0" cellpadding=3D"0" cellspacing=3D"0" rol=
+e=3D"presentation" style=3D"background-color:#ebebef;vertical-align:top" wi=
+dth=3D"100%">
+                  <tbody>
+                    <tr>
+                      <td align=3D"center" style=3D"font-size:0px;padding:1=
+0px 25px;padding-top:0;padding-bottom:0;word-break:break-word">
+                        <div class=3D"m_8042499450633706732LH16" style=3D"f=
+ont-family:Arial,Tahoma,Serif;font-size:10px;line-height:1.3;text-align:cen=
+ter;color:#004883">Si no quieres <a style=3D"text-decoration:none;color:#00=
+4883" href=3D"https://trackercl1.fidelizador.com/IF1C347GA9EF1E79E1807CB3HF=
+4E1ADBBCEJA9FFC4CD0B3A58BBD4KF1C34750AD1337D0DF097F8513787E299F30" target=
+=3D"_blank"><b>recibir</b></a> esta informaci=C3=B3n, <a style=3D"text-deco=
+ration:none;color:#004883" href=3D"https://trackercl1.fidelizador.com/IF1C3=
+47GA9EF1E79E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58BB2AKF1C34750AD1337D0DF097F851=
+3787E299F30" target=3D"_blank"><b>haz clic aqu=C3=AD</b></a> <span class=3D=
+"m_8042499450633706732DPB"><span class=3D"m_8042499450633706732NONE">|</spa=
+n> Si quieres <a href=3D"https://trackercl1.fidelizador.com/IF1C347GA9EF1E7=
+9E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58BB93KF1C34750AD1337D0DF097F8513787E299F3=
+0" style=3D"text-decoration:none;color:#004883" target=3D"_blank"><b>report=
+ar</b></a> alg=C3=BAn abuso,
+                          <a href=3D"https://trackercl1.fidelizador.com/IF1=
+C347GA9EF1E79E1807CB3HF4E1ADBBCEJA9FFC4CD0B3A58BBDBKF1C34750AD1337D0DF097F8=
+513787E299F30" style=3D"text-decoration:none;color:#004883" target=3D"_blan=
+k">=20
+                            <b>haz clic aqu=C3=AD.</b></a></span></div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+             =20
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+   =20
+  </div>
+<img alt=3D"" height=3D"1px" id=3D"m_8042499450633706732fidelizador-open-im=
+g" src=3D"https://trackercl1.fidelizador.com/EF1C347GA9EF1E79E1807CB3HF4E1A=
+DBBCEJF1C34750AD1337D0DF097F8513787E299F30" width=3D"1px"></div>
+
+</div></div><div><br clear=3D"all"></div><div><br></div><span class=3D"gmai=
+l_signature_prefix">-- </span><br><div dir=3D"ltr" class=3D"gmail_signature=
+" data-smartmail=3D"gmail_signature"><div dir=3D"ltr">&quot;Una vez elimina=
+do lo imposible, lo que quede, por improbable que parezca, sera tan solo la=
+ verdad&quot; - Sherlock Holmes<br><br>Edison Montes M.<br><div>Especialist=
+a en Medicina de Urgencias</div></div></div></div>
+
+--0000000000001df078064b70a5ee--
