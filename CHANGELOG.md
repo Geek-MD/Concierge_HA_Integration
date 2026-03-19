@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.14] - 2026-03-19
+
+### Fixed
+- **acepta.com Custodium viewer PDF download** (`pdf_downloader.py`):
+
+  When a fidelizador.com tracking link redirects to an acepta.com billing
+  viewer, the download chain passes through **two** pages that contain no
+  absolute HTTP URLs:
+
+  1. **Outer wrapper page** — contains an `<iframe>` with a *root-relative*
+     `src` attribute:
+     ```
+     <iframe src="/ca4webv3/index.jsp?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F<HASH>%3Fk%3D<TOKEN>">
+     ```
+     The underlying document URL is percent-encoded inside the `url=` query
+     parameter.
+
+  2. **Custodium JavaScript page** ("Custodium Plugin - Desplegar Documento")
+     — loaded by the iframe above; contains JavaScript variables that carry
+     the PDF render path as a relative string:
+     ```
+     var PDFView = "PdfView?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F<HASH>%3Fk%3D<TOKEN>";
+     ```
+
+  Because all previously existing URL-extraction strategies required
+  absolute `http://` URLs, both pages produced zero candidates and the
+  download silently failed.
+
+  The fix introduces the following additions to `pdf_downloader.py`:
+
+  1. **`_VIEWER_URL_PARAM_RE`** — a module-level compiled regex that matches
+     any quoted path string (relative, root-relative, or absolute) whose
+     query string contains `url=http%3A%2F%2F…` (a percent-encoded HTTP
+     URL).  This generalised pattern covers both the `PdfView?url=…`
+     JavaScript variable and the `/ca4webv3/index.jsp?url=…` iframe src.
+
+  2. **`_find_viewer_url_params_in_html(html, base_url)`** — a new helper
+     that scans the page for every `_VIEWER_URL_PARAM_RE` match and returns
+     two candidate URLs per unique match:
+     - **Resolved viewer URL** — the viewer path resolved against `base_url`
+       via `urllib.parse.urljoin`.  For `PdfView?url=…` this is the absolute
+       PDF render endpoint; for `/ca4webv3/index.jsp?url=…` it is the
+       Custodium viewer page (one recursion hop away from the PDF).
+     - **Decoded document URL** — `urllib.parse.unquote(encoded_url)`; the
+       raw DTE document URL tried as a direct fallback.
+
+  3. **`_try_html_redirect_download` — priority tier 4** — after the three
+     existing tiers, `_find_viewer_url_params_in_html` is called with
+     `original_url` as the base so that the resolved viewer URL and decoded
+     document URL are added to the candidate list.
+
+  Additionally, two improvements for other viewer-page scenarios are included:
+
+  - **`_LinkExtractor.get_embedded_urls()`** — new method that returns all
+    URLs from `<iframe>`, `<frame>`, `<embed>`, `<object>`, and `<form>`
+    tags without billing-keyword filtering.
+
+  - **`_find_embedded_urls_in_html(html)`** — new helper that uses
+    `get_embedded_urls()` to return every absolute embedded-resource URL
+    regardless of URL content.  Used as priority tier 3 in
+    `_try_html_redirect_download` to catch PDFs served from generic CDN
+    or opaque token URLs that contain no billing-related terms.
+
+  - **`urllib.parse` import** added.
+
+- **`manifest.json`**: version bumped to `0.7.14`.
+
 ## [0.7.13] - 2026-03-19
 
 ### Fixed
