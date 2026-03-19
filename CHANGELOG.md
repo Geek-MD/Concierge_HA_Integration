@@ -5,6 +5,129 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.15] - 2026-03-19
+
+### Fixed
+- **acepta.com Custodium PdfView "no plugin" download page** (`pdf_downloader.py`):
+
+  When the acepta.com Custodium viewer is accessed without a PDF browser
+  plugin, the `PdfView?url=ENCODED` endpoint returns an HTML page instead of
+  the PDF.  This page contains a fallback download `<a>` link:
+
+  ```html
+  <a href="PdfView?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F…&menuTitle=Boleta%20horizontal&xsl.full=false">
+      Haga click aquí para descargar el archivo PDF.
+  </a>
+  ```
+
+  Three bugs prevented the PDF URL from being extracted and the download from
+  succeeding:
+
+  1. **`_VIEWER_URL_PARAM_RE` truncated `viewer_path`** — the regex stopped
+     capturing `viewer_path` at the first `&` after the encoded document URL,
+     so extra rendering parameters like `&menuTitle=Boleta%20horizontal&
+     xsl.full=false` were silently dropped.  `urllib.parse.urljoin` then
+     produced the same plain `PdfView?url=ENCODED` URL that was already in
+     the `seen` set from the previous hop, and the candidate was skipped.
+     **Fix**: appended `[^"\'<>\s]*` to the regex after `encoded_url` so that
+     `viewer_path` captures the full quoted string including all extra
+     parameters.
+
+  2. **Bare percent-encoded `href`** — some servers set the `href` attribute
+     directly to the percent-encoded document URL (e.g.
+     `href="http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F…"`).  Because
+     `urllib.request.urlopen` cannot handle `http%3A` as a URL scheme, any
+     such URL silently failed to download.
+     **Fix**: added a `re.match(r'https?%3A', href)` check at the top of
+     `_LinkExtractor.handle_starttag`; when it matches,
+     `urllib.parse.unquote(href)` is applied immediately so all downstream
+     code sees a proper `http://…` URL.
+
+  3. **Download link text not recognised** — "Haga click aquí para descargar
+     el archivo PDF" did not match any pattern in `_PDF_LINK_KEYWORDS` because
+     the word `el` between `descargar` and `archivo` broke the adjacency
+     requirement of the existing pattern
+     `descarg…\s+(?:pdf|documento|archivo)`.
+     **Fix**: added two new patterns:
+     - `descarg(?:ar?|ue[ns]?)\s+(?:el\s+|este\s+|un\s+|su\s+|tu\s+)?(?:pdf|documento|archivo)` — covers "descargar el archivo", "descargue el documento", etc.
+     - `haga\s+clic(?:k)?\s+aqu[ií]\s+para\s+descargar` — matches the
+       exact acepta.com "Haga click aquí para descargar" button label.
+     - `click\s+here\s+to\s+download` — English equivalent.
+
+  Additionally, `_MAX_HTML_DEPTH` was raised from `2` to `3` to accommodate
+  the full acepta.com download chain (outer wrapper page → Custodium JS
+  page → PdfView HTML page → PDF bytes), ensuring that each HTML hop can
+  still recurse to the next level without exhausting the budget.
+
+- **`manifest.json`**: version bumped to `0.7.15`.
+
+## [0.7.14] - 2026-03-19
+
+### Fixed
+- **acepta.com Custodium viewer PDF download** (`pdf_downloader.py`):
+
+  When a fidelizador.com tracking link redirects to an acepta.com billing
+  viewer, the download chain passes through **two** pages that contain no
+  absolute HTTP URLs:
+
+  1. **Outer wrapper page** — contains an `<iframe>` with a *root-relative*
+     `src` attribute:
+     ```
+     <iframe src="/ca4webv3/index.jsp?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F<HASH>%3Fk%3D<TOKEN>">
+     ```
+     The underlying document URL is percent-encoded inside the `url=` query
+     parameter.
+
+  2. **Custodium JavaScript page** ("Custodium Plugin - Desplegar Documento")
+     — loaded by the iframe above; contains JavaScript variables that carry
+     the PDF render path as a relative string:
+     ```
+     var PDFView = "PdfView?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F<HASH>%3Fk%3D<TOKEN>";
+     ```
+
+  Because all previously existing URL-extraction strategies required
+  absolute `http://` URLs, both pages produced zero candidates and the
+  download silently failed.
+
+  The fix introduces the following additions to `pdf_downloader.py`:
+
+  1. **`_VIEWER_URL_PARAM_RE`** — a module-level compiled regex that matches
+     any quoted path string (relative, root-relative, or absolute) whose
+     query string contains `url=http%3A%2F%2F…` (a percent-encoded HTTP
+     URL).  This generalised pattern covers both the `PdfView?url=…`
+     JavaScript variable and the `/ca4webv3/index.jsp?url=…` iframe src.
+
+  2. **`_find_viewer_url_params_in_html(html, base_url)`** — a new helper
+     that scans the page for every `_VIEWER_URL_PARAM_RE` match and returns
+     two candidate URLs per unique match:
+     - **Resolved viewer URL** — the viewer path resolved against `base_url`
+       via `urllib.parse.urljoin`.  For `PdfView?url=…` this is the absolute
+       PDF render endpoint; for `/ca4webv3/index.jsp?url=…` it is the
+       Custodium viewer page (one recursion hop away from the PDF).
+     - **Decoded document URL** — `urllib.parse.unquote(encoded_url)`; the
+       raw DTE document URL tried as a direct fallback.
+
+  3. **`_try_html_redirect_download` — priority tier 4** — after the three
+     existing tiers, `_find_viewer_url_params_in_html` is called with
+     `original_url` as the base so that the resolved viewer URL and decoded
+     document URL are added to the candidate list.
+
+  Additionally, two improvements for other viewer-page scenarios are included:
+
+  - **`_LinkExtractor.get_embedded_urls()`** — new method that returns all
+    URLs from `<iframe>`, `<frame>`, `<embed>`, `<object>`, and `<form>`
+    tags without billing-keyword filtering.
+
+  - **`_find_embedded_urls_in_html(html)`** — new helper that uses
+    `get_embedded_urls()` to return every absolute embedded-resource URL
+    regardless of URL content.  Used as priority tier 3 in
+    `_try_html_redirect_download` to catch PDFs served from generic CDN
+    or opaque token URLs that contain no billing-related terms.
+
+  - **`urllib.parse` import** added.
+
+- **`manifest.json`**: version bumped to `0.7.14`.
+
 ## [0.7.13] - 2026-03-19
 
 ### Fixed

@@ -253,7 +253,8 @@ with five entities:
 - ✅ Billing attribute extraction from email body and PDF (folio, billing period, amounts, consumption, customer number, address, due date, etc.)
 - ✅ PDF content analysis: extracts structured billing data from downloaded PDFs (Enel, Metrogas)
 - ✅ `pdf_url` attribute on electricity and gas status binary sensors — exposes the bill download URL; correctly populated even when the PDF is already cached (v0.7.10)
-- ✅ Metrogas/fidelizador.com bill URL reliably extracted via BeautifulSoup: locates the `<a href>` wrapping `<img alt="Ver boleta">` in the QP-decoded HTML (v0.7.11)
+- ✅ Metrogas/fidelizador.com bill URL reliably extracted from the plain-text email body via the `[image: Ver boleta]` marker and raw QP-line reconstruction (v0.7.13)
+- ✅ acepta.com Custodium multi-hop PDF download: follows the full chain (fidelizador tracking URL → outer wrapper → Custodium JS page → PdfView "no plugin" page → PDF); handles percent-encoded hrefs, extra rendering parameters, and root-relative paths (v0.7.15)
 - ✅ Per-service entity architecture (v0.7.0): each service device exposes `binary_sensor.concierge_{id}_status` (Diagnostic) + `sensor.concierge_{id}_last_update` (Diagnostic) + `sensor.concierge_{id}_consumption` + `sensor.concierge_{id}_cost_per_unit` + `sensor.concierge_{id}_total_amount`
 - ✅ `sensor.concierge_{id}_last_update` holds the full ISO 8601 bill datetime (v0.7.1)
 - ✅ Passes ruff, mypy and hassfest checks

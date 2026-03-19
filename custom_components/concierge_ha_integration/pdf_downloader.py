@@ -55,6 +55,7 @@ import quopri
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -78,6 +79,9 @@ _PDF_LINK_KEYWORDS = re.compile(
     r"|descarg(?:ar?|ue[ns]?)\s+comprobante"
     r"|ver\s+documento"
     r"|descarg(?:ar?|ue[ns]?)\s+(?:pdf|documento|archivo)"
+    r"|descarg(?:ar?|ue[ns]?)\s+(?:el\s+|este\s+|un\s+|su\s+|tu\s+)?(?:pdf|documento|archivo)"
+    r"|haga\s+clic(?:k)?\s+aqu[ií]\s+para\s+descargar"
+    r"|click\s+here\s+to\s+download"
     r"|bajar\s+(?:pdf|boleta|factura)"
     r"|obtener\s+(?:pdf|boleta|factura)"
     r"|imprimir\s+boleta"
@@ -167,6 +171,69 @@ _META_REFRESH_RE = re.compile(
 _JS_LOCATION_RE = re.compile(
     r'(?:window\.)?location(?:\.href)?\s*=\s*["\']([^"\']+)["\']'
     r'|location\.(?:replace|assign)\s*\(\s*["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
+# Viewer-page URL parameter extractor
+# ---------------------------------------------------------------------------
+#
+# Several Chilean billing viewer pages embed the real document URL as a
+# percent-encoded ``url=`` query parameter inside a relative (or absolute)
+# path string.  Three concrete patterns are observed in the acepta.com
+# ecosystem:
+#
+# 1. **Custodium JavaScript page** ("Custodium Plugin - Desplegar Documento")
+#    — JavaScript variables inside ``<script>`` blocks carry paths like:
+#
+#       var PDFView = "PdfView?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F<HASH>%3Fk%3D<TOKEN>";
+#       var documentView_dest = "PdfView?url=http%3A%2F%2F…";
+#
+#    ``PdfView?url=…`` is a relative path; the Custodium server resolves it
+#    to the PDF render endpoint when fetched as an absolute URL.
+#
+# 2. **Outer wrapper page** — an ``<iframe>`` embeds the Custodium viewer via
+#    a root-relative path in its ``src`` attribute:
+#
+#       <iframe src="/ca4webv3/index.jsp?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F<HASH>%3Fk%3D<TOKEN>">
+#
+#    The path ``/ca4webv3/index.jsp?url=…`` must be resolved against the
+#    page's origin to form an absolute URL.
+#
+# 3. **PdfView "no plugin" download page** — when the browser has no PDF
+#    plugin installed the Custodium ``PdfView`` endpoint returns an HTML page
+#    with a fallback download ``<a>`` link.  The href carries the full render
+#    path including additional rendering parameters appended after the encoded
+#    document URL:
+#
+#       <a href="PdfView?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F…&menuTitle=Boleta%20horizontal&xsl.full=false">
+#           Haga click aquí para descargar el archivo PDF.
+#       </a>
+#
+#    Critically, the ``viewer_path`` must include these extra query parameters
+#    so that the server renders the correct PDF format.  Stopping at the first
+#    ``&`` (as a naïve regex would) produces a URL that the server treats as
+#    the interactive viewer page rather than a direct PDF download.
+#
+# All three patterns share the structure:
+#
+#     "<PATH>?[OPTIONAL_PARAMS&]url=http%3A%2F%2F…[&OPTIONAL_EXTRA_PARAMS]"
+#
+# where ``http%3A%2F%2F`` is the percent-encoded form of ``http://``.
+#
+# The regex captures two named groups:
+#   viewer_path – the FULL quoted value from ``<PATH>?`` through the end of
+#                 any extra query parameters that follow the encoded URL
+#                 (e.g. ``PdfView?url=…&menuTitle=Boleta%20horizontal``).
+#                 This is passed directly to :func:`urllib.parse.urljoin` so
+#                 that all parameters are preserved in the resolved URL.
+#   encoded_url – only the percent-encoded document URL value (stops at the
+#                 first ``&`` or end of the quoted string).
+#                 (e.g. ``http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F…``)
+_VIEWER_URL_PARAM_RE = re.compile(
+    r'["\'](?P<viewer_path>[^"\'<>\s]*\?(?:[^"\'<>\s]*&)?url='
+    r'(?P<encoded_url>https?%3A%2F%2F[^"\'&\s<>]*)'  # encoded URL stops at & or quote
+    r'[^"\'<>\s]*)',                                   # extra params (e.g. &menuTitle=…)
     re.IGNORECASE,
 )
 
@@ -363,6 +430,11 @@ class _LinkExtractor(HTMLParser):
         # been finalised — it waits for text that follows the </a> tag.
         self._pending_href: str | None = None
         self._pending_label: list[str] = []
+        # URLs from embedded resource tags (iframe/frame/embed/object) tracked
+        # independently so callers can retrieve them without billing-keyword
+        # filtering — useful when processing redirect/viewer pages where any
+        # embedded resource is likely the target document.
+        self._embedded_urls: list[str] = []
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -392,6 +464,17 @@ class _LinkExtractor(HTMLParser):
             # label window does not extend into the new link's preceding text.
             self._flush_pending()
             href = attr_dict.get("href") or ""
+            # Some viewer pages (e.g. acepta.com Custodium "no plugin" download
+            # page) set href to a percent-encoded URL directly — the ``://``
+            # separator and path slashes are stored as ``%3A%2F%2F`` and
+            # ``%2F``.  Detect this by checking for a ``%3A`` immediately after
+            # the scheme name and URL-decode the attribute value before further
+            # processing so that all downstream code sees a proper ``http://``
+            # URL.  Only the specific ``http%3A`` / ``https%3A`` prefix triggers
+            # decoding to avoid accidentally decoding intentionally-encoded
+            # non-URL strings.
+            if re.match(r'https?%3A', href, re.IGNORECASE):
+                href = urllib.parse.unquote(href)
             # When the href is a non-navigable placeholder (``#``,
             # ``javascript:…``, empty) look for the real URL in common
             # ``data-*`` attributes or the ``onclick`` handler.  Some email
@@ -427,19 +510,23 @@ class _LinkExtractor(HTMLParser):
             src = (attr_dict.get("src") or "").strip()
             if src.startswith("http"):
                 self._links.append((src, ""))
+                self._embedded_urls.append(src)
         elif tag == "embed":
             src = (attr_dict.get("src") or "").strip()
             if src.startswith("http"):
                 self._links.append((src, ""))
+                self._embedded_urls.append(src)
         elif tag == "object":
             data = (attr_dict.get("data") or "").strip()
             if data.startswith("http"):
                 self._links.append((data, ""))
+                self._embedded_urls.append(data)
         elif tag == "form":
             # Some acepta.com integrations expose the depot URL as a GET form action.
             action = (attr_dict.get("action") or "").strip()
             if action.startswith("http"):
                 self._links.append((action, ""))
+                self._embedded_urls.append(action)
         elif tag in _CONTAINER_TAGS:
             # Entering a new container: reset context so text from the
             # previous cell/section is not carried over.
@@ -489,6 +576,17 @@ class _LinkExtractor(HTMLParser):
     def get_links(self) -> list[tuple[str, str]]:
         self._flush_pending()
         return list(self._links)
+
+    def get_embedded_urls(self) -> list[str]:
+        """Return URLs from embedded resource tags (iframe, frame, embed, object, form).
+
+        Unlike :meth:`get_links`, this returns the raw URL list without any
+        billing-keyword filtering.  Use this in redirect/viewer page contexts
+        where any embedded resource is a candidate for the target document,
+        regardless of whether its URL contains billing-related terms.
+        """
+        self._flush_pending()
+        return list(self._embedded_urls)
 
 
 # ---------------------------------------------------------------------------
@@ -908,12 +1006,33 @@ def _try_html_redirect_download(
     b. All billing-related URLs found anywhere in the HTML by
        :func:`_find_pdf_links_in_html` — this covers ``<a href>``, script
        variables (e.g. ``var url = "https://acepta.com/…"``), ``<iframe
-       src>``, ``<embed src>``, ``<object data>``, and ``<form action>``.
+       src>``, ``<embed src>``, ``<object data>``, and ``<form action>``
+       whose URLs contain billing-related terms.
+    c. All remaining embedded resource URLs (``<iframe src>``, ``<embed
+       src>``, ``<object data>``, ``<form action>``) found by
+       :func:`_find_embedded_urls_in_html` that were not already captured
+       in (b).  This tier handles viewer pages that load the PDF from a
+       generic CDN or opaque token URL containing no billing-related terms.
+    d. **Viewer pages with a ``url=ENCODED`` parameter** — any quoted path
+       string (relative, root-relative, or absolute) that contains a
+       ``url=http%3A%2F%2F…`` query parameter, as found by
+       :func:`_find_viewer_url_params_in_html`.  Two acepta.com patterns
+       are handled:
+
+       - **Custodium JavaScript page**: variables like
+         ``"PdfView?url=http%3A%2F%2F…"`` resolved against ``original_url``
+         give the absolute PDF render endpoint.
+       - **Outer wrapper page**: ``<iframe src="/ca4webv3/index.jsp?url=…">``
+         resolved against ``original_url`` gives the Custodium viewer HTML
+         page (one extra recursion hop leads to the PDF).
+
+       The percent-decoded value of the ``url`` parameter is also tried
+       directly as a fallback.
 
     If a candidate itself returns HTML and the recursion depth is below
-    ``_MAX_HTML_DEPTH``, this function is called recursively so that a
-    two-hop chain (fidelizador → acepta viewer → PDF) is resolved
-    automatically.
+    ``_MAX_HTML_DEPTH``, this function is called recursively so that
+    multi-hop chains (e.g. fidelizador → outer wrapper → Custodium viewer
+    → PdfView "no plugin" page → PDF) are resolved automatically.
 
     Args:
         original_url: The URL that returned the HTML page (for logging).
@@ -925,7 +1044,7 @@ def _try_html_redirect_download(
     Returns:
         *dest_path* on success, ``None`` if no valid PDF could be obtained.
     """
-    _MAX_HTML_DEPTH = 2
+    _MAX_HTML_DEPTH = 3
 
     charset = _charset_from_content_type(content_type, default="iso-8859-1")
     try:
@@ -951,10 +1070,36 @@ def _try_html_redirect_download(
             seen.add(url)
             candidates.append(url)
 
+    # Priority 3 — ALL embedded resource URLs (iframe/embed/object/form) not
+    # already in the candidate list.  This covers the case where a viewer page
+    # (e.g. the acepta.com depot viewer reached via a fidelizador.com tracking
+    # link) loads the PDF from a generic CDN or opaque token URL that carries
+    # no billing-related terms and therefore escapes the keyword filter in
+    # _find_pdf_links_in_html.  On a redirect/viewer page any embedded resource
+    # is a reasonable candidate for the target document.
+    for url in _find_embedded_urls_in_html(html_text):
+        if url not in seen:
+            seen.add(url)
+            candidates.append(url)
+
+    # Priority 4 — viewer pages with a ``url=ENCODED_HTTP_URL`` parameter.
+    # This covers two acepta.com patterns:
+    #   a) Custodium JavaScript page: relative paths like
+    #      ``PdfView?url=http%3A%2F%2Fmetrogas2601.acepta.com%2F…`` stored in
+    #      JavaScript variables — resolved to the absolute PDF render endpoint.
+    #   b) Outer wrapper page: ``<iframe src="/ca4webv3/index.jsp?url=ENCODED">``
+    #      — the root-relative path is resolved to an absolute URL that leads to
+    #      the Custodium viewer HTML (one recursion hop away from the PDF).
+    # In both cases the decoded embedded document URL is also tried as a fallback.
+    for url in _find_viewer_url_params_in_html(html_text, original_url):
+        if url not in seen:
+            seen.add(url)
+            candidates.append(url)
+
     if not candidates:
         _LOGGER.debug(
-            "URL %s returned HTML but no redirect target or billing URL found "
-            "(depth=%d)",
+            "URL %s returned HTML but no redirect target, billing URL, or "
+            "embedded resource found (depth=%d)",
             original_url,
             _depth,
         )
@@ -976,6 +1121,9 @@ def _try_html_redirect_download(
             )
             with urllib.request.urlopen(rreq, timeout=_DOWNLOAD_TIMEOUT) as rresp:
                 rct: str = rresp.headers.get("Content-Type", "")
+                # Use the final URL after any HTTP-level redirects as the base
+                # for relative-path resolution in the next recursion level.
+                rfinal_url: str = rresp.geturl()
                 rdata: bytes = rresp.read()
         except urllib.error.URLError as err:
             _LOGGER.debug("URL error fetching %s: %s", url, err)
@@ -992,10 +1140,13 @@ def _try_html_redirect_download(
             )
             return dest_path
 
-        # Another HTML response — recurse if depth budget allows
+        # Another HTML response — recurse if depth budget allows.
+        # Pass ``rfinal_url`` (the URL after any HTTP-level redirects) instead
+        # of the requested ``url`` so that relative paths in the next-level
+        # HTML are resolved against the correct origin.
         if "text/html" in rct and _depth < _MAX_HTML_DEPTH:
             result = _try_html_redirect_download(
-                url, rdata, rct, dest_path, _depth + 1
+                rfinal_url, rdata, rct, dest_path, _depth + 1
             )
             if result:
                 return result
@@ -1072,6 +1223,111 @@ def _find_pdf_links_in_html(html_body: str) -> list[str]:
             billing_href_links.append(url)
 
     return keyword_links + pdf_href_links + billing_href_links
+
+
+def _find_embedded_urls_in_html(html_body: str) -> list[str]:
+    """Return all embedded resource URLs from an HTML page, unfiltered.
+
+    Unlike :func:`_find_pdf_links_in_html`, this function returns every URL
+    found in ``<iframe src>``, ``<frame src>``, ``<embed src>``,
+    ``<object data>``, and ``<form action>`` attributes **regardless** of
+    whether the URL matches any billing keyword or file-extension pattern.
+
+    This is used as a lower-priority fallback in
+    :func:`_try_html_redirect_download` to handle the case where a viewer
+    page (e.g. the acepta.com depot viewer served after following a
+    fidelizador.com tracking link) embeds the PDF via a generic CDN or
+    opaque token URL that carries no billing-related terms.
+
+    Args:
+        html_body: Raw HTML string of the page to scan.
+
+    Returns:
+        Deduplicated list of absolute HTTP/HTTPS URLs, in document order.
+    """
+    extractor = _LinkExtractor()
+    try:
+        extractor.feed(html_body)
+    except Exception:
+        return []
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for url in extractor.get_embedded_urls():
+        if url not in seen:
+            seen.add(url)
+            result.append(url)
+    return result
+
+
+def _find_viewer_url_params_in_html(html: str, base_url: str) -> list[str]:
+    """Extract PDF candidate URLs from viewer pages that embed a ``url=`` parameter.
+
+    Several acepta.com billing viewer pages store the real document URL as a
+    percent-encoded ``url=`` query parameter inside a relative (or
+    root-relative) path string.  Two concrete patterns are handled:
+
+    1. **Custodium JavaScript page** — JavaScript variables such as::
+
+           var PDFView = "PdfView?url=http%3A%2F%2Fmetrogas2601.acepta.com%2F…";
+           var documentView_dest = "PdfView?url=http%3A%2F%2F…";
+
+       ``PdfView?url=ENCODED`` is a relative path whose resolved absolute form
+       is the Custodium server's PDF render endpoint.
+
+    2. **Outer wrapper page** — an ``<iframe src>`` attribute carries a
+       root-relative path::
+
+           <iframe src="/ca4webv3/index.jsp?url=http%3A%2F%2Fmetrogas2601.acepta.com%2F…">
+
+       The iframe loads the Custodium viewer HTML, which in turn contains the
+       ``PdfView?url=…`` JavaScript (pattern 1).  Following this hop is handled
+       automatically by the ``_MAX_HTML_DEPTH`` recursion in
+       :func:`_try_html_redirect_download`.
+
+    For each :data:`_VIEWER_URL_PARAM_RE` match two candidate URLs are
+    generated:
+
+    a. **Resolved viewer URL** — the viewer path (relative or root-relative)
+       resolved against ``base_url`` via :func:`urllib.parse.urljoin`.  For
+       ``PdfView?url=…`` this yields the PDF render endpoint directly; for
+       ``/ca4webv3/index.jsp?url=…`` it yields the viewer HTML page (one extra
+       recursion hop).  This is the primary candidate.
+
+    b. **Decoded document URL** — :func:`urllib.parse.unquote` applied to the
+       raw ``encoded_url`` group.  On acepta.com this is the DTE document URL
+       (``http://metrogas2601.acepta.com/v01/<HASH>?k=<TOKEN>``).  Depending
+       on the server configuration it may return a PDF directly; it is included
+       as a fallback.
+
+    Args:
+        html:     Raw HTML text of the page to scan.
+        base_url: Absolute URL from which the page was fetched; used to resolve
+                  relative/root-relative viewer paths.
+
+    Returns:
+        Deduplicated list of candidate URLs, resolved viewer URLs first.
+    """
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    for m in _VIEWER_URL_PARAM_RE.finditer(html):
+        viewer_path: str = m.group("viewer_path")
+        encoded_url: str = m.group("encoded_url")
+
+        # Primary: resolve viewer path to absolute URL
+        abs_viewer = urllib.parse.urljoin(base_url, viewer_path)
+        if abs_viewer.startswith("http") and abs_viewer not in seen:
+            seen.add(abs_viewer)
+            candidates.append(abs_viewer)
+
+        # Fallback: URL-decode the embedded document URL directly
+        decoded_url = urllib.parse.unquote(encoded_url)
+        if decoded_url.startswith("http") and decoded_url not in seen:
+            seen.add(decoded_url)
+            candidates.append(decoded_url)
+
+    return candidates
 
 
 def _get_plain_text_body(msg: _email_lib.message.Message) -> str:
@@ -1400,6 +1656,10 @@ def _download_first_valid_pdf(
             )
             with urllib.request.urlopen(req, timeout=_DOWNLOAD_TIMEOUT) as resp:
                 content_type: str = resp.headers.get("Content-Type", "")
+                # Capture the URL after following any HTTP-level redirects
+                # (e.g. fidelizador.com → acepta.com).  This is the correct
+                # base URL for resolving relative paths inside the HTML.
+                final_url: str = resp.geturl()
                 pdf_data: bytes = resp.read()
 
             # Validate PDF magic bytes or content-type header.
@@ -1415,9 +1675,11 @@ def _download_first_valid_pdf(
             # redirect (meta-refresh or JS location assignment) that some
             # click-tracking services (e.g. fidelizador.com) use to record
             # clicks before sending the browser to the real document URL.
+            # Use ``final_url`` (post-redirect) as the base so that relative
+            # paths in the HTML resolve against the correct origin domain.
             if "text/html" in content_type:
                 result = _try_html_redirect_download(
-                    url, pdf_data, content_type, dest_path
+                    final_url, pdf_data, content_type, dest_path
                 )
                 if result:
                     if attributes is not None:
