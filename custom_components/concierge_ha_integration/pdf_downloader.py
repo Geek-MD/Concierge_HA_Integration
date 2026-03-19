@@ -253,8 +253,19 @@ _FIDELIZADOR_HTML_HREF_QP_RE = re.compile(
 # so a "take the last URL" strategy consistently returns the wrong link.
 #
 # By requiring that the selected URL's bounded context contains at least one
-# billing keyword (e.g. "Ver boleta"), we reliably identify the download
-# button regardless of its position in the document.
+# billing keyword (e.g. "Ver boleta") OR the image URL of the bill-download
+# button image ("boleta.png"), we reliably identify the download button
+# regardless of its position in the document.
+#
+# The "boleta.png" pattern handles the case where the "Ver boleta" button is
+# an image-only anchor with no visible text (e.g.
+# ``<a href="https://trackercl1.fidelizador.com/…"><img src="…/boleta.png">
+# </a>``).  The ``<img>`` tag is nested inside the anchor and falls within
+# the context window (from the href to the closing ``</a>``), so matching
+# the image filename reliably identifies the billing download button even
+# when there is no surrounding human-readable label.  A QP soft line-break
+# (``=\r?\n``) between "boleta" and ".png" is explicitly allowed to handle
+# line-wrapped raw QP content.
 _FIDELIZADOR_BILLING_CONTEXT_RE = re.compile(
     rb"ver\s+boleta"
     rb"|descarg(?:ar?|ue[ns]?)\s+(?:su\s+|tu\s+)?boleta"
@@ -271,7 +282,8 @@ _FIDELIZADOR_BILLING_CONTEXT_RE = re.compile(
     rb"|obtener\s+(?:pdf|boleta|factura)"
     rb"|imprimir\s+boleta"
     rb"|imprimir\s+factura"
-    rb"|visualizar\s+(?:boleta|factura|documento)",
+    rb"|visualizar\s+(?:boleta|factura|documento)"
+    rb"|boleta(?:=\r?\n)?\.png",
     re.IGNORECASE,
 )
 

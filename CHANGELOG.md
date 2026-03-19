@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.9] - 2026-03-19
+
+### Fixed
+- **Gas service PDF download URL — image-only "Ver boleta" button not matched**
+  (`pdf_downloader.py`):
+
+  Metrogas billing emails deliver the "Ver boleta" button as an **image-only
+  anchor** — the visible label is a PNG image (`boleta.png`) rather than
+  plain text.  The billing-context pattern (`_FIDELIZADOR_BILLING_CONTEXT_RE`)
+  previously contained only Spanish/English text keywords (e.g. "ver boleta",
+  "descargar boleta"), so the button was never matched and the code fell back
+  to the **last** fidelizador.com URL in the HTML, which is a
+  footer/unsubscribe link pointing to a different resource.
+
+  The fix adds `boleta(?:=\r?\n)?\.png` to the billing-context regex.  This
+  pattern matches the `<img src="…/boleta.png">` tag that is nested inside
+  the billing anchor — the image tag is within the context window (from the
+  href to the closing `</a>`), so the correct "Ver boleta" URL is now
+  selected instead of the footer fallback.  The optional `=\r?\n` allows for
+  a QP soft line-break between "boleta" and ".png" in the raw QP-encoded
+  email body.
+
+- **`manifest.json`**: Version bumped to `0.7.9`.
+
 ## [0.7.8] - 2026-03-18
 
 ### Changed
