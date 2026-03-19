@@ -79,6 +79,9 @@ _PDF_LINK_KEYWORDS = re.compile(
     r"|descarg(?:ar?|ue[ns]?)\s+comprobante"
     r"|ver\s+documento"
     r"|descarg(?:ar?|ue[ns]?)\s+(?:pdf|documento|archivo)"
+    r"|descarg(?:ar?|ue[ns]?)\s+(?:el\s+|este\s+|un\s+|su\s+|tu\s+)?(?:pdf|documento|archivo)"
+    r"|haga\s+clic(?:k)?\s+aqu[ií]\s+para\s+descargar"
+    r"|click\s+here\s+to\s+download"
     r"|bajar\s+(?:pdf|boleta|factura)"
     r"|obtener\s+(?:pdf|boleta|factura)"
     r"|imprimir\s+boleta"
@@ -177,7 +180,8 @@ _JS_LOCATION_RE = re.compile(
 #
 # Several Chilean billing viewer pages embed the real document URL as a
 # percent-encoded ``url=`` query parameter inside a relative (or absolute)
-# path string.  Two concrete patterns are observed in the acepta.com ecosystem:
+# path string.  Three concrete patterns are observed in the acepta.com
+# ecosystem:
 #
 # 1. **Custodium JavaScript page** ("Custodium Plugin - Desplegar Documento")
 #    — JavaScript variables inside ``<script>`` blocks carry paths like:
@@ -193,24 +197,43 @@ _JS_LOCATION_RE = re.compile(
 #
 #       <iframe src="/ca4webv3/index.jsp?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F<HASH>%3Fk%3D<TOKEN>">
 #
-#    The path ``/ca4webv3/index.jsp?url=…`` must be resolved against the page's
-#    origin to form an absolute URL.
+#    The path ``/ca4webv3/index.jsp?url=…`` must be resolved against the
+#    page's origin to form an absolute URL.
 #
-# Both patterns share the structure:
+# 3. **PdfView "no plugin" download page** — when the browser has no PDF
+#    plugin installed the Custodium ``PdfView`` endpoint returns an HTML page
+#    with a fallback download ``<a>`` link.  The href carries the full render
+#    path including additional rendering parameters appended after the encoded
+#    document URL:
 #
-#     "<PATH>?[OPTIONAL_PARAMS&]url=http%3A%2F%2F…"
+#       <a href="PdfView?url=http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F…&menuTitle=Boleta%20horizontal&xsl.full=false">
+#           Haga click aquí para descargar el archivo PDF.
+#       </a>
+#
+#    Critically, the ``viewer_path`` must include these extra query parameters
+#    so that the server renders the correct PDF format.  Stopping at the first
+#    ``&`` (as a naïve regex would) produces a URL that the server treats as
+#    the interactive viewer page rather than a direct PDF download.
+#
+# All three patterns share the structure:
+#
+#     "<PATH>?[OPTIONAL_PARAMS&]url=http%3A%2F%2F…[&OPTIONAL_EXTRA_PARAMS]"
 #
 # where ``http%3A%2F%2F`` is the percent-encoded form of ``http://``.
 #
 # The regex captures two named groups:
-#   viewer_path – the full quoted value from ``<PATH>?`` to the end of the
-#                 encoded URL (e.g. ``PdfView?url=http%3A%2F%2F…`` or
-#                 ``/ca4webv3/index.jsp?url=http%3A%2F%2F…``)
-#   encoded_url – only the percent-encoded document URL value
+#   viewer_path – the FULL quoted value from ``<PATH>?`` through the end of
+#                 any extra query parameters that follow the encoded URL
+#                 (e.g. ``PdfView?url=…&menuTitle=Boleta%20horizontal``).
+#                 This is passed directly to :func:`urllib.parse.urljoin` so
+#                 that all parameters are preserved in the resolved URL.
+#   encoded_url – only the percent-encoded document URL value (stops at the
+#                 first ``&`` or end of the quoted string).
 #                 (e.g. ``http%3A%2F%2Fmetrogas2601.acepta.com%2Fv01%2F…``)
 _VIEWER_URL_PARAM_RE = re.compile(
     r'["\'](?P<viewer_path>[^"\'<>\s]*\?(?:[^"\'<>\s]*&)?url='
-    r'(?P<encoded_url>https?%3A%2F%2F[^"\'&\s<>]*))',
+    r'(?P<encoded_url>https?%3A%2F%2F[^"\'&\s<>]*)'  # encoded URL stops at & or quote
+    r'[^"\'<>\s]*)',                                   # extra params (e.g. &menuTitle=…)
     re.IGNORECASE,
 )
 
@@ -441,6 +464,17 @@ class _LinkExtractor(HTMLParser):
             # label window does not extend into the new link's preceding text.
             self._flush_pending()
             href = attr_dict.get("href") or ""
+            # Some viewer pages (e.g. acepta.com Custodium "no plugin" download
+            # page) set href to a percent-encoded URL directly — the ``://``
+            # separator and path slashes are stored as ``%3A%2F%2F`` and
+            # ``%2F``.  Detect this by checking for a ``%3A`` immediately after
+            # the scheme name and URL-decode the attribute value before further
+            # processing so that all downstream code sees a proper ``http://``
+            # URL.  Only the specific ``http%3A`` / ``https%3A`` prefix triggers
+            # decoding to avoid accidentally decoding intentionally-encoded
+            # non-URL strings.
+            if re.match(r'https?%3A', href, re.IGNORECASE):
+                href = urllib.parse.unquote(href)
             # When the href is a non-navigable placeholder (``#``,
             # ``javascript:…``, empty) look for the real URL in common
             # ``data-*`` attributes or the ``onclick`` handler.  Some email
@@ -996,9 +1030,9 @@ def _try_html_redirect_download(
        directly as a fallback.
 
     If a candidate itself returns HTML and the recursion depth is below
-    ``_MAX_HTML_DEPTH``, this function is called recursively so that a
-    two-hop chain (fidelizador → acepta viewer → PDF) is resolved
-    automatically.
+    ``_MAX_HTML_DEPTH``, this function is called recursively so that
+    multi-hop chains (e.g. fidelizador → outer wrapper → Custodium viewer
+    → PdfView "no plugin" page → PDF) are resolved automatically.
 
     Args:
         original_url: The URL that returned the HTML page (for logging).
@@ -1010,7 +1044,7 @@ def _try_html_redirect_download(
     Returns:
         *dest_path* on success, ``None`` if no valid PDF could be obtained.
     """
-    _MAX_HTML_DEPTH = 2
+    _MAX_HTML_DEPTH = 3
 
     charset = _charset_from_content_type(content_type, default="iso-8859-1")
     try:
