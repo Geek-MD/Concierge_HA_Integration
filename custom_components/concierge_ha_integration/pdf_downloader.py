@@ -688,7 +688,7 @@ def _find_fidelizador_href_via_bs4(
     for a_tag in soup.find_all("a", href=True):
         img = a_tag.find("img", alt=_VER_BOLETA_RE)
         if img:
-            href = (a_tag.get("href") or "").strip()
+            href = str(a_tag.get("href") or "").strip()
             if href.startswith("https://trackercl1.fidelizador.com/"):
                 _LOGGER.debug(
                     "BeautifulSoup: found 'Ver boleta' fidelizador.com href: %s",
