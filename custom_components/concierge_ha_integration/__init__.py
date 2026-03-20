@@ -20,7 +20,7 @@ from .const import (
     DOMAIN,
 )
 from .sensor import ConciergeServicesCoordinator
-from .service_detector import detect_services_from_imap
+from .service_detector import detect_services_from_imap, normalize_service_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -233,9 +233,11 @@ async def _async_discover_services(hass: HomeAssistant, entry: ConfigEntry) -> N
         _LOGGER.debug("Concierge Services discovery scan failed: %s", err)
         return
 
-    # IDs already configured as subentries
+    # IDs already configured as subentries.
+    # Normalise legacy IDs (e.g. "aguas_andinas" → "agua") to avoid
+    # re-offering services that were configured under an older display name.
     existing_ids: set[str | None] = {
-        sub.data.get(CONF_SERVICE_ID)
+        normalize_service_id(sub.data.get(CONF_SERVICE_ID, ""))
         for sub in entry.subentries.values()  # type: ignore[attr-defined]
     }
 

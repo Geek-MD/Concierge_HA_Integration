@@ -13,6 +13,7 @@ from .const import (
     SERVICE_TYPE_COMMON_EXPENSES,
     SERVICE_TYPE_ELECTRICITY,
     SERVICE_TYPE_GAS,
+    SERVICE_TYPE_HOT_WATER,
     SERVICE_TYPE_TELECOM,
     SERVICE_TYPE_UNKNOWN,
     SERVICE_TYPE_WATER,
@@ -49,6 +50,12 @@ BILLING_INDICATORS = [
 # Common service providers patterns: (regex, display_name, service_type)
 # service_type must be one of the SERVICE_TYPE_* constants from const.py.
 SERVICE_PATTERNS: list[tuple[str, str, str]] = [
+    # Hot water (must come before generic water patterns to avoid misclassification)
+    (
+        r"agua\s+caliente|agua\s+caliente\s+sanitaria|calefacci[oó]n\s+central",
+        "Agua Caliente",
+        SERVICE_TYPE_HOT_WATER,
+    ),
     # Water utilities
     (r"aguas?\s+andinas?", "Agua", SERVICE_TYPE_WATER),
     (r"essbio|esval|nuevo\s+sur", "Agua", SERVICE_TYPE_WATER),
@@ -71,6 +78,24 @@ SERVICE_PATTERNS: list[tuple[str, str, str]] = [
     (r"compa[ñn][íi]a\s+de\s+electricidad", "Electricidad", SERVICE_TYPE_ELECTRICITY),
     (r"compa[ñn][íi]a\s+de\s+gas", "Gas", SERVICE_TYPE_GAS),
 ]
+
+# Map of historical/legacy service IDs to their current canonical IDs.
+# When a pattern's display name changes, the old service_id must be listed here
+# so that subentries configured under the old ID are still recognised as the
+# same service during "already-configured" filtering.
+_LEGACY_SERVICE_IDS: dict[str, str] = {
+    "aguas_andinas": "agua",  # renamed in v0.7.16
+}
+
+
+def normalize_service_id(service_id: str) -> str:
+    """Return the canonical service_id, resolving any legacy alias.
+
+    Use this when comparing a detected service_id against the set of
+    already-configured subentry IDs to avoid false positives caused by
+    display-name renames.
+    """
+    return _LEGACY_SERVICE_IDS.get(service_id, service_id)
 
 
 def _decode_mime_words(s: str) -> str:
@@ -158,21 +183,53 @@ def _is_billing_email(from_addr: str, subject: str, body: str) -> bool:
     return False
 
 
-def _extract_service_name(from_addr: str, subject: str, body: str) -> tuple[str, str, str] | None:
+def _get_attachment_filenames(msg: email.message.Message) -> str:
+    """Return a space-separated string of decoded attachment filenames.
+
+    Including attachment names (e.g. "Gastos Comunes Enero 2026.pdf") in the
+    detection context allows SERVICE_PATTERNS to match even when the email
+    subject or body carry no explicit service keywords.
     """
-    Extract service name and type from email content.
+    names: list[str] = []
+    try:
+        if msg.is_multipart():
+            for part in msg.walk():
+                filename = part.get_filename()
+                if filename:
+                    names.append(_decode_mime_words(filename))
+    except Exception as err:
+        _LOGGER.debug("Error extracting attachment filenames: %s", err)
+    return " ".join(names)
+
+
+def _extract_service_names(
+    from_addr: str, subject: str, body: str
+) -> list[tuple[str, str, str]]:
+    """Extract *all* matching service names and types from email content.
+
+    A single email may contain charges for multiple services (e.g. a combined
+    "Gastos Comunes + Agua Caliente" bill).  This function iterates every entry
+    in SERVICE_PATTERNS and collects all matches, returning one tuple per
+    unique service found.
 
     Returns:
-        Tuple of (service_name, service_id, service_type) or None if not identifiable
+        List of (service_name, service_id, service_type) tuples.
+        Falls back to domain/subject heuristics only when no pattern matches.
     """
     combined_text = f"{from_addr} {subject} {body}"
+    seen_ids: set[str] = set()
+    results: list[tuple[str, str, str]] = []
 
-    # Try to match against known service patterns
+    # Collect every pattern that matches the combined text.
     for pattern, service_name, service_type in SERVICE_PATTERNS:
         if re.search(pattern, combined_text, re.IGNORECASE):
-            # Create a normalized service_id
             service_id = re.sub(r'[^a-z0-9]+', '_', service_name.lower())
-            return (service_name, service_id, service_type)
+            if service_id not in seen_ids:
+                seen_ids.add(service_id)
+                results.append((service_name, service_id, service_type))
+
+    if results:
+        return results
 
     # If no specific match, try to extract company name from sender domain
     domain_match = re.search(r'@([a-zA-Z0-9\-]+)\.[a-zA-Z]+', from_addr)
@@ -187,7 +244,7 @@ def _extract_service_name(from_addr: str, subject: str, body: str) -> tuple[str,
             # Capitalize first letter of each word
             service_name = ' '.join(word.capitalize() for word in re.split(r'[-_]', domain))
             service_id = re.sub(r'[^a-z0-9]+', '_', domain.lower())
-            return (service_name, service_id, SERVICE_TYPE_UNKNOWN)
+            return [(service_name, service_id, SERVICE_TYPE_UNKNOWN)]
 
     # Try to extract from subject (look for company names in uppercase)
     # Pattern: consecutive uppercase words that might be a company name
@@ -197,9 +254,9 @@ def _extract_service_name(from_addr: str, subject: str, body: str) -> tuple[str,
         # Clean up
         company_name = re.sub(r'\s+S\.?A\.?$', '', company_name)
         service_id = re.sub(r'[^a-z0-9]+', '_', company_name.lower())
-        return (company_name.title(), service_id, SERVICE_TYPE_UNKNOWN)
+        return [(company_name.title(), service_id, SERVICE_TYPE_UNKNOWN)]
 
-    return None
+    return []
 
 
 def detect_services_from_imap(
@@ -271,16 +328,20 @@ def detect_services_from_imap(
                 
                 # Get email body
                 body = _get_email_body(msg)
-                
+
+                # Also collect attachment filenames — they often carry explicit
+                # service keywords (e.g. "Gastos Comunes Enero 2026.pdf").
+                attachment_names = _get_attachment_filenames(msg)
+                detection_text = body + (" " + attachment_names if attachment_names else "")
+
                 # Check if this is a billing email
-                if not _is_billing_email(from_addr, subject, body):
+                if not _is_billing_email(from_addr, subject, detection_text):
                     continue
-                
-                # Try to extract service name
-                service_info = _extract_service_name(from_addr, subject, body)
-                
-                if service_info:
-                    service_name, service_id, service_type = service_info
+
+                # Extract all services mentioned in this email
+                service_infos = _extract_service_names(from_addr, subject, detection_text)
+
+                for service_name, service_id, service_type in service_infos:
 
                     # Add or update detected service
                     if service_id not in detected_services:
