@@ -26,7 +26,7 @@ from .const import (
     DEFAULT_IMAP_PORT,
     DOMAIN,
 )
-from .service_detector import detect_services_from_imap
+from .service_detector import detect_services_from_imap, normalize_service_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -267,9 +267,11 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
                 _LOGGER.error("Failed to detect services: %s", err)
                 return self.async_abort(reason="detection_failed")  # type: ignore[return-value]
 
-            # Remove services that are already configured as subentries
+            # Remove services that are already configured as subentries.
+            # Normalise legacy IDs (e.g. "aguas_andinas" → "agua") so that
+            # services renamed in a previous version are still filtered out.
             existing_ids = {
-                subentry.data.get(CONF_SERVICE_ID)
+                normalize_service_id(subentry.data.get(CONF_SERVICE_ID, ""))
                 for subentry in entry.subentries.values()
             }
             self._available_services = [

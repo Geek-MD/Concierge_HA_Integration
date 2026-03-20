@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-03-20
+
+### Fixed
+- **Multi-service detection from a single combined bill email** (`service_detector.py`):
+
+  When a building-management company sends one email (and one PDF) that covers
+  both *Gastos Comunes* and *Agua Caliente*, the previous service-detector
+  returned only the **first** matching service pattern and silently discarded
+  all others.  As a result, neither service appeared in the "Add Service Device"
+  flow and the user could not add them.
+
+  Three related fixes are included:
+
+  1. **`_extract_service_names` (renamed from `_extract_service_name`)** — now
+     iterates *all* `SERVICE_PATTERNS` and collects **every** matching service
+     from the combined email text (from-address + subject + body + attachment
+     filenames), returning a list instead of a single tuple.  `detect_services_
+     from_imap` is updated to loop over the list and register each service
+     independently.
+
+  2. **"Agua Caliente" pattern added to `SERVICE_PATTERNS`** — a new entry with
+     regex `agua\s+caliente|agua\s+caliente\s+sanitaria|calefacci[oó]n\s+central`
+     and type `SERVICE_TYPE_HOT_WATER` is inserted *before* the generic water
+     patterns.  This prevents "Agua Caliente" text from being mis-classified as
+     the regular cold-water ("Agua") service and allows both services to be
+     detected from the same email.
+
+  3. **Attachment filenames included in detection context** — a new helper
+     `_get_attachment_filenames` extracts decoded filenames of all email
+     attachments (e.g. `"Gastos Comunes Enero 2026.pdf"`) and appends them to
+     the text that is matched against `SERVICE_PATTERNS`.  This fixes detection
+     for building-management emails whose subject is generic (e.g. "Cobro Enero
+     2026") but whose PDF attachment name makes the service unambiguous.
+
+- **Already-configured services reappearing in "Add Service Device"**
+  (`service_detector.py`, `config_flow.py`, `__init__.py`):
+
+  The v0.7.16 release renamed the "Aguas Andinas" display name to "Agua",
+  changing the derived `service_id` from `"aguas_andinas"` to `"agua"`.
+  Users who had configured the water service *before* v0.7.16 kept the old
+  `service_id` in their subentry data; the new detection code returned `"agua"`,
+  which did not match `"aguas_andinas"` in the already-configured set, so the
+  water service reappeared as available to add.
+
+  **Fix**: a new `normalize_service_id` function (and `_LEGACY_SERVICE_IDS`
+  mapping) resolves legacy IDs to their current canonical equivalents before
+  the "already-configured" check is performed in both `config_flow.py` and
+  `__init__.py`.
+
+- **`manifest.json`**: version bumped to `0.8.1`.
+
 ## [0.8.0] - 2026-03-20
 
 ### Added
