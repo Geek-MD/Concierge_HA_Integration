@@ -174,12 +174,19 @@ def _has_attachments(msg: email.message.Message) -> bool:
 def _is_billing_email(from_addr: str, subject: str, body: str) -> bool:
     """Check if email appears to be a billing/service email."""
     combined_text = f"{from_addr} {subject} {body}".lower()
-    
-    # Check for billing indicators
+
+    # Check for generic billing indicators
     for pattern in BILLING_INDICATORS:
         if re.search(pattern, combined_text, re.IGNORECASE):
             return True
-    
+
+    # If any known service pattern matches, it is by definition a billing email.
+    # This covers cases like "Gastos Comunes Ene 2026" whose subject contains no
+    # generic billing keywords but clearly identifies a recognised service.
+    for pattern, _service_name, _service_type in SERVICE_PATTERNS:
+        if re.search(pattern, combined_text, re.IGNORECASE):
+            return True
+
     return False
 
 

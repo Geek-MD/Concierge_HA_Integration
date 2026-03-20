@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-03-20
+
+### Fixed
+- **"Gastos Comunes" email not detected during service scan** (`service_detector.py`):
+
+  When a building-management email carries no generic billing keywords (e.g.
+  *factura*, *boleta*, *cuenta*, *pago* …) — its subject is simply
+  `"Gastos Comunes Ene 2026"` and its body is `"Enviado desde mi iPhone"` —
+  the `_is_billing_email` guard returned `False` and the email was silently
+  skipped.  `_extract_service_names` was never called, so the
+  *Gastos Comunes* service never appeared in the **Add Service Device** flow.
+
+  **Fix**: `_is_billing_email` now also iterates `SERVICE_PATTERNS`.  Any email
+  that matches a recognised service pattern is treated as a billing email by
+  definition, regardless of whether it contains generic billing vocabulary.
+  This covers:
+  - Emails with only a service-specific subject / attachment name and a sparse
+    body (forwarded from iPhone, short administrative messages, …).
+  - Any future service pattern whose emails might not include standard billing
+    keywords.
+
+- **`manifest.json`**: version bumped to `0.8.2`.
+
 ## [0.8.1] - 2026-03-20
 
 ### Fixed
