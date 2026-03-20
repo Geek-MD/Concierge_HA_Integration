@@ -35,8 +35,10 @@ from .const import (
     DOMAIN,
     PDF_MAX_AGE_DAYS,
     PDF_SUBDIR,
+    SERVICE_TYPE_COMMON_EXPENSES,
     SERVICE_TYPE_ELECTRICITY,
     SERVICE_TYPE_GAS,
+    SERVICE_TYPE_HOT_WATER,
     SERVICE_TYPE_UNKNOWN,
     SERVICE_TYPE_WATER,
 )
@@ -54,18 +56,30 @@ _CONSUMPTION_UNITS: dict[str, str] = {
     SERVICE_TYPE_GAS: "m³",
     SERVICE_TYPE_WATER: "m³",
     SERVICE_TYPE_ELECTRICITY: "kWh",
+    SERVICE_TYPE_HOT_WATER: "m³",
 }
 
 # The extracted attribute key that holds the cost-per-unit value, per service type.
 _COST_PER_UNIT_ATTR: dict[str, str] = {
     SERVICE_TYPE_GAS: "cost_per_m3s",
     SERVICE_TYPE_ELECTRICITY: "cost_per_kwh",
+    SERVICE_TYPE_HOT_WATER: "hot_water_cost_per_m3",
 }
 
 # Unit of measure for cost-per-unit sensors, per service type.
 _COST_PER_UNIT_UNITS: dict[str, str] = {
     SERVICE_TYPE_GAS: "$/m³",
     SERVICE_TYPE_ELECTRICITY: "$/kWh",
+    SERVICE_TYPE_HOT_WATER: "$/m³",
+}
+
+# The extracted attribute key that represents the *primary* total amount for
+# each service type.  For common-expenses the main payable is the apartment's
+# GC + fondos subtotal; for hot-water it is the agua-caliente amount.
+# All other service types use the generic ``total_amount`` key.
+_TOTAL_AMOUNT_ATTR: dict[str, str] = {
+    SERVICE_TYPE_COMMON_EXPENSES: "subtotal_departamento",
+    SERVICE_TYPE_HOT_WATER: "hot_water_amount",
 }
 
 # Billing-breakdown sensor definitions per service type.
@@ -93,6 +107,15 @@ _ELECTRICITY_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("electricity_transport",  "Electricity Transport",  "$", "electricity_transport"),
     ("stabilization_fund",     "Stabilization Fund",     "$", "electricity_stabilization_fund"),
     ("electricity_consumption","Electricity Consumption", "$", "electricity_consumption_charge"),
+]
+
+# Common expenses: billing breakdown (all CLP amounts).
+# Covers the Gastos Comunes device (gastos + fondos) and recargos.
+_COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
+    ("gastos_comunes_amount",   "Gastos Comunes",      "$", "gc_gastos_comunes_amount"),
+    ("fondos_amount",           "Fondos 5%",           "$", "gc_fondos_amount"),
+    ("subtotal_departamento",   "Subtotal Departamento","$", "gc_subtotal_departamento"),
+    ("subtotal_recargos",       "Subtotal Recargos",   "$", "gc_subtotal_recargos"),
 ]
 
 # Webmail provider domains that are too generic for sender-domain matching.
@@ -152,13 +175,21 @@ async def async_setup_entry(
             ConciergeServiceLastUpdateSensor(
                 coordinator, config_entry, subentry_id, subentry.data
             ),
-            ConciergeServiceConsumptionSensor(
-                coordinator, config_entry, subentry_id, subentry.data
-            ),
             ConciergeServiceTotalAmountSensor(
                 coordinator, config_entry, subentry_id, subentry.data
             ),
         ]
+
+        # Common-expenses device has no meaningful "consumption" metric —
+        # the billing unit is monetary only.  All other service types
+        # include a consumption sensor.
+        if service_type != SERVICE_TYPE_COMMON_EXPENSES:
+            entities.insert(
+                1,
+                ConciergeServiceConsumptionSensor(
+                    coordinator, config_entry, subentry_id, subentry.data
+                ),
+            )
 
         if service_type == SERVICE_TYPE_WATER:
             # Water services use granular peak/non-peak cost sensors instead of
@@ -177,6 +208,31 @@ async def async_setup_entry(
                         uid_suffix=uid_suffix,
                     )
                 )
+        elif service_type == SERVICE_TYPE_COMMON_EXPENSES:
+            # Common expenses expose billing breakdown sensors (GC amounts).
+            # No consumption or cost-per-unit sensor — the breakdown is by
+            # monetary amounts only.
+            for attr_key, name_suffix, unit, uid_suffix in _COMMON_EXPENSES_SPECIFIC_SENSORS:
+                entities.append(
+                    ConciergeServiceBillingBreakdownSensor(
+                        coordinator,
+                        config_entry,
+                        subentry_id,
+                        subentry.data,
+                        attr_key=attr_key,
+                        name_suffix=name_suffix,
+                        unit=unit,
+                        uid_suffix=uid_suffix,
+                    )
+                )
+        elif service_type == SERVICE_TYPE_HOT_WATER:
+            # Hot-water device exposes cost-per-m³ sensor (consumption is
+            # already included in the common base entities above).
+            entities.append(
+                ConciergeServiceCostPerUnitSensor(
+                    coordinator, config_entry, subentry_id, subentry.data
+                )
+            )
         else:
             # Gas and electricity expose a single cost-per-unit sensor.
             entities.append(
@@ -622,11 +678,17 @@ class ConciergeServiceConsumptionSensor(_ConciergeServiceBaseSensor):
         self._attr_name = f"Concierge {self._service_id} Consumption"
         self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}_consumption"
         self._attr_native_unit_of_measurement = _CONSUMPTION_UNITS.get(service_type)
+        # Hot-water consumption is stored under a separate attribute key.
+        self._consumption_attr = (
+            "hot_water_consumption"
+            if service_type == SERVICE_TYPE_HOT_WATER
+            else "consumption"
+        )
 
     @property
     def native_value(self) -> float | None:
         """Return the consumption value."""
-        return self._get_extracted_attrs().get("consumption")
+        return self._get_extracted_attrs().get(self._consumption_attr)
 
 
 class ConciergeServiceCostPerUnitSensor(_ConciergeServiceBaseSensor):
@@ -672,13 +734,17 @@ class ConciergeServiceTotalAmountSensor(_ConciergeServiceBaseSensor):
     ) -> None:
         """Initialize the total-amount sensor."""
         super().__init__(coordinator, config_entry, subentry_id, subentry_data)
+        service_type = subentry_data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
         self._attr_name = f"Concierge {self._service_id} Total Amount"
         self._attr_unique_id = f"{config_entry.entry_id}_{subentry_id}_total_amount"
+        # Use the service-type-specific attribute key, falling back to the
+        # generic ``total_amount`` for service types not listed in the map.
+        self._total_attr_key: str = _TOTAL_AMOUNT_ATTR.get(service_type, "total_amount")
 
     @property
     def native_value(self) -> float | None:
-        """Return the total bill amount."""
-        return self._get_extracted_attrs().get("total_amount")
+        """Return the total bill amount for this service device."""
+        return self._get_extracted_attrs().get(self._total_attr_key)
 
 
 class ConciergeServiceBillingBreakdownSensor(_ConciergeServiceBaseSensor):

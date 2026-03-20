@@ -23,6 +23,8 @@ SERVICE_TYPE_WATER = "water"
 SERVICE_TYPE_GAS = "gas"
 SERVICE_TYPE_ELECTRICITY = "electricity"
 SERVICE_TYPE_TELECOM = "telecom"
+SERVICE_TYPE_COMMON_EXPENSES = "common_expenses"
+SERVICE_TYPE_HOT_WATER = "hot_water"
 SERVICE_TYPE_UNKNOWN = "unknown"
 
 # PDF storage — subdirectory (relative to the HA config dir) and retention

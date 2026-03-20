@@ -22,8 +22,10 @@ from html.parser import HTMLParser
 from typing import Any
 
 from .const import (
+    SERVICE_TYPE_COMMON_EXPENSES,
     SERVICE_TYPE_ELECTRICITY,
     SERVICE_TYPE_GAS,
+    SERVICE_TYPE_HOT_WATER,
     SERVICE_TYPE_UNKNOWN,
     SERVICE_TYPE_WATER,
 )
@@ -1021,6 +1023,572 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Common-expenses service extractor (Gastos Comunes / Nota de Cobro)
+# ---------------------------------------------------------------------------
+# The Gastos Comunes PDF is a JPEG-backed document: the main billing table is
+# embedded as a JPEG image while only a partial text layer (pdfminer-readable)
+# overlays certain fields.  Two extraction tiers are used:
+#   1. pdfminer text layer  – always available; provides amounts, dates, owner.
+#   2. OCR (optional)       – requires pymupdf + pytesseract + tesseract-ocr
+#                             installed on the host; provides the hot-water
+#                             table (Agua Caliente) that lives only in the image.
+
+# "Nota de Cobro Enero 2026" – billing month and year
+_GC_BILLING_PERIOD_RE = re.compile(
+    r"nota\s+d[eo]\s+cobro\s+([A-Za-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1"
+    r"\u00c1\u00c9\u00cd\u00d3\u00da\u00d1]+)\s+(\d{4})",
+    re.IGNORECASE,
+)
+
+# Emission + due dates are on separate lines after the garbled labels.
+# Layout (pdfminer lines):
+#   "Fecha Eml11ón: "      ← font-garbled "Fecha Emisión:"
+#   "Pagar Huta: "         ← font-garbled "Pagar Hasta:"
+#   ""
+#   "18-02-2026 "          ← emission date (first date)
+#   "01-03-2028 "          ← due date (second date, year may be garbled)
+# Capture both dates together to correctly assign emission vs. due.
+_GC_DATES_BLOCK_RE = re.compile(
+    r"fecha\s+em[^:\n]+[:\s]+"         # "Fecha Emisión:" (garbled label)
+    r"pagar\s+[^:\n]+[:\s]+"           # "Pagar Hasta:"  (garbled label)
+    r"[\s\S]{0,30}?"
+    r"(\d{2}[/-]\d{2}[/-]\d{4})"       # first date = emission date
+    r"[\s\S]{0,20}?"
+    r"(\d{2}[/-]\d{2}[/-]\d{4})",      # second date = due date
+    re.IGNORECASE,
+)
+
+# Building RUT: "RUT: 56080400-8"
+_GC_RUT_RE = re.compile(
+    r"rut[:\s]+(\d{7,9}-[\dkK])",
+    re.IGNORECASE,
+)
+
+# Building name: "Edificio <Name>"
+# Capture everything up to the newline that precedes "RUT:"
+_GC_BUILDING_NAME_RE = re.compile(
+    r"edificio\s+([\w\s]{2,40}?)\s*\n",
+    re.IGNORECASE,
+)
+
+# Address: first non-empty line after the RUT line (e.g. "Curico 380 - Santiago")
+_GC_ADDRESS_RE = re.compile(
+    r"rut:\s*\d[\d.-]+-[\dkK]\s*\n([^\n]{5,60})",
+    re.IGNORECASE,
+)
+
+# Apartment / Depto
+_GC_APARTMENT_RE = re.compile(
+    r"d[oe]pto\.?\s*(\d+)",
+    re.IGNORECASE,
+)
+
+# Owner name: consecutive ALL-CAPS words (2–4 words) — allow optional trailing space
+_GC_OWNER_RE = re.compile(
+    r"^([A-Z\u00C0-\u00DC]{2,}(?:\s+[A-Z\u00C0-\u00DC]{2,}){1,4})\s*$",
+    re.MULTILINE,
+)
+
+# Alícuota percentage (e.g. "0,95110 %" or "O 95110 %" after font garbling)
+_GC_ALICUOTA_RE = re.compile(
+    r"(?:al[íif]cuota\s+total\s*)?[O0]\s*[,.]?\s*(\d{4,6})\s*%",
+    re.IGNORECASE,
+)
+
+# Building total expense: "$14.083.315" — 8-digit+ amounts appearing after the
+# "Gasto Común" / "Prorratur" / garbled label line.
+# Fallback: any large amount starting with "14" or "1x" followed by 7+ digits.
+_GC_BUILDING_TOTAL_RE = re.compile(
+    r"(?:gasto\s+com[uú]n|outo\s+c:om[oó]n|prorratu?r)[^\n]*\n[^\n]*\$\s*([\d.]+)"
+    r"|\$\s*(1\d[\d.]{6,})",           # fallback: ≥ 8-digit amount
+    re.IGNORECASE,
+)
+
+# Gastos comunes apartment portion (alícuota %) → amount
+# Text shows: "O 95110 % " on one line, "$133.946 " on the next.
+_GC_AMOUNT_RE = re.compile(
+    r"[O0]\s*9\d{4}\s*%\s*[\s\n]*\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# Fondos 5% → amount (text shows "500% " then "$ 6.697 ")
+_GC_FONDOS_AMOUNT_RE = re.compile(
+    r"5[0,]\s*0\s*%\s*[\s\n]*\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# Subtotal departamento (GC + fondos):
+# pdfminer text layer does NOT contain this label — derived from three-amounts block.
+_GC_SUBTOTAL_DEPTO_RE = re.compile(
+    r"subtotal\s+departamento[\s\S]{0,40}?\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# Three consecutive amounts that represent GC / fondos / subtotal
+# e.g. "$133.946 \n$ 6.697 \n$140.643 "
+_GC_THREE_AMOUNTS_RE = re.compile(
+    r"\$\s*([\d.,]+)\s*\n\s*\$\s*([\d.,]+)\s*\n\s*\$\s*([\d.,]+)",
+)
+
+# Subtotal Recargos: the label appears in the same block as "Total del mes".
+# Its amount is the FIRST dollar value in the totals block.
+_GC_SUBTOTAL_RECARGOS_RE = re.compile(
+    r"subtotal\s+recargos[\s\S]{0,60}?\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# Total del mes / Total a pagar — the actual total is the SECOND or THIRD amount
+# after the "Subtotal Recargos / Total del mes" label block.
+# Strategy: find all dollar amounts in the block starting at "Subtotal Recargos"
+# and return the maximum (the grand total is always the largest).
+_GC_TOTALS_SECTION_RE = re.compile(
+    r"subtotal\s+recargos[\s\S]{0,300}",
+    re.IGNORECASE,
+)
+
+# Last-payment section: three labels (Fecha / Monto / Folio) appear first,
+# then their values (date / amount / 5-digit folio) on separate lines.
+# Layout:
+#   "Fecha ultlmo Pago "   ← L45
+#   ""
+#   "Monto ultlmo Pago "   ← L47
+#   ""
+#   "Follo ultimo Pago "   ← L49
+#   ""
+#   "23-01-2028 "          ← L51  (date, year garbled)
+#   ""
+#   "$177.154 "            ← L53  (amount)
+#   ""
+#   "44829 "               ← L55  (folio, 5 digits)
+_GC_LAST_PAYMENT_DATE_RE = re.compile(
+    r"fecha\s+ult[il][lm][oi]\s+pago[\s\S]{0,100}?(\d{2}[/-]\d{2}[/-]\d{4})",
+    re.IGNORECASE,
+)
+_GC_LAST_PAYMENT_AMOUNT_RE = re.compile(
+    r"monto\s+ult[il][lm][oi]\s+pago[\s\S]{0,100}?\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+_GC_LAST_PAYMENT_FOLIO_RE = re.compile(
+    r"fol[il][oi]\s+ulti[\s\S]{0,100}?(\d{5,6})",   # 5–6 digits only (avoids 4-digit years)
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
+# OCR patterns (applied to tesseract output, which is more legible)
+# ---------------------------------------------------------------------------
+# Hot-water table row — two variants:
+# a) All on one line: "Agua Caliente  585,396000  588,379000  2,983000  7.034,70  $20.985"
+# b) "Agua Caliente" on preceding line, numbers on next line
+_GC_OCR_HOT_WATER_ROW_RE = re.compile(
+    r"agua\s+caliente[\s\S]{0,30}?"
+    r"([\d,]{6,}\d{3})\s+"   # lectura anterior (e.g. 585,396000)
+    r"([\d,]{6,}\d{3})\s+"   # lectura actual   (e.g. 588,379000)
+    r"([\d,]+)\s+"            # consumo          (e.g. 2,983000)
+    r"([\d.,]+)"              # valor total       (e.g. 7.034,70)
+    r"(?:[\s\S]{0,20}?\$\s*([\d.,]+))?",  # optional monto (e.g. $20.985)
+    re.IGNORECASE,
+)
+# Subtotal Consumo (hot-water subtotal) from OCR — the amount can be on the
+# same line or a nearby line.
+_GC_OCR_SUBTOTAL_CONSUMO_RE = re.compile(
+    r"subtotal\s+consumo[\s\S]{0,60}?\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# Maximum allowable year drift due to pdfminer font-encoding garbling.
+# Years garbled by more than this threshold are left unchanged.
+_GC_MAX_YEAR_DRIFT = 4
+
+# Month → number mapping (Spanish)
+_MONTH_NAME_TO_NUM: dict[str, int] = {
+    "enero": 1, "ene": 1,
+    "febrero": 2, "feb": 2,
+    "marzo": 3, "mar": 3,
+    "abril": 4, "abr": 4,
+    "mayo": 5,
+    "junio": 6, "jun": 6,
+    "julio": 7, "jul": 7,
+    "agosto": 8, "ago": 8,
+    "septiembre": 9, "sep": 9,
+    "octubre": 10, "oct": 10,
+    "noviembre": 11, "nov": 11,
+    "diciembre": 12, "dic": 12,
+}
+
+
+def _gc_fix_year(date_str: str, expected_year: str) -> str:
+    """Replace a garbled 4-digit year in *date_str* with *expected_year*.
+
+    pdfminer's font-encoding issues can cause digits to shift (e.g. "6"→"8"),
+    producing years like "2028" when the actual year is "2026".  If the
+    extracted year differs from *expected_year* by at most 4 years and the
+    extracted year is in the future relative to *expected_year*, substitute it.
+    """
+    m = re.search(r"(\d{4})$", date_str)
+    if not m:
+        return date_str
+    extracted_year = int(m.group(1))
+    try:
+        correct_year = int(expected_year)
+    except ValueError:
+        return date_str
+    if 0 < extracted_year - correct_year <= _GC_MAX_YEAR_DRIFT:
+        return date_str[: m.start()] + expected_year
+    return date_str
+
+
+def _parse_meter_reading(raw: str) -> float:
+    """Parse a water/hot-water meter reading that has 6 decimal places.
+
+    Meter readings in Chilean building documents use the format
+    ``NNN,NNNxxx`` or ``NNN.NNNxxx`` where ``xxx`` is typically ``000``
+    (sub-precision padding).  OCR often strips the decimal separator,
+    yielding a 9-digit integer like ``585396000``.  This function
+    normalises all such variants to a float in m³.
+
+    Examples::
+
+        "585,396000" → 585.396   (comma = decimal point, 6 decimal digits)
+        "585396000"  → 585.396   (no separator, 9 digits → first 3 = integer)
+        "2,983000"   → 2.983     (comma = decimal, 6 decimal digits)
+        "588.379000" → 588.379   (dot = decimal)
+    """
+    raw = raw.strip().replace(" ", "")
+    # Remove thousands separator if present (only when followed by exactly 3 digits)
+    # For meter readings, any separator followed by 4+ digits is a decimal point.
+    sep_match = re.search(r"([,.])([\d]+)$", raw)
+    if sep_match:
+        frac = sep_match.group(2)
+        if len(frac) >= 4:
+            # Treat separator as decimal point regardless of digit count
+            integer_part = raw[: sep_match.start()].replace(".", "").replace(",", "")
+            return float(f"{integer_part}.{frac}")
+    # No separator or only 3 digits after sep — try plain integer interpretation.
+    # A 9-digit number with no decimal: first 3 digits are integer part.
+    clean = raw.replace(",", "").replace(".", "")
+    if clean.isdigit():
+        if len(clean) == 9:
+            return float(clean[:3] + "." + clean[3:6])
+        if len(clean) == 7:
+            return float(clean[0] + "." + clean[1:4])
+    # Fallback: standard consumption parser
+    return _parse_consumption_to_float(raw)
+
+
+def _try_ocr_pdf(pdf_path: str) -> str:
+    """Render the first page of *pdf_path* and run Tesseract OCR on it.
+
+    Uses three passes:
+    1. Full-page OCR with PSM 1 (auto orientation) — captures header fields.
+    2. Middle-section crop with PSM 6 (uniform block) — captures the water
+       consumption table (Agua Caliente) which is column-heavy.
+    3. Full-page OCR with PSM 4 (single column) — captures the totals table
+       with accurate ``subtotal_recargos`` (e.g. ``$9.638``).
+
+    Returns the combined OCR plain text, or an empty string if the required
+    libraries (``pymupdf``, ``pytesseract``, ``PIL``) are not installed or if
+    any error occurs.  Failures are logged at DEBUG level only.
+    """
+    try:
+        import fitz  # type: ignore[import-untyped]  # pymupdf
+        import pytesseract  # type: ignore[import-untyped]
+        from PIL import Image  # type: ignore[import-untyped]
+    except ImportError as exc:
+        _LOGGER.warning(
+            "OCR unavailable for '%s': missing library (%s). "
+            "Install 'pymupdf', 'pytesseract', and 'Pillow' and ensure "
+            "tesseract-ocr is installed to enable Agua Caliente extraction.",
+            pdf_path,
+            exc,
+        )
+        return ""
+    # Use the modern Resampling API if available (Pillow ≥ 10.0.0), else fall
+    # back to the legacy attribute (Pillow < 10.0.0).
+    _lanczos = getattr(Image, "Resampling", Image).LANCZOS
+    try:
+        doc = fitz.open(pdf_path)
+        page = doc[0]
+        page_height = page.rect.height
+        mat = fitz.Matrix(3, 3)  # 3× zoom for better OCR accuracy
+        pix = page.get_pixmap(matrix=mat)
+        doc.close()
+        scale = 3
+        img_full = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+        # Pass 1 — full page, PSM 1
+        text_full: str = pytesseract.image_to_string(
+            img_full, lang="spa", config="--psm 1"
+        )
+
+        # Pass 2 — agua caliente area crop (≈ 30–55 % from top), PSM 6
+        crop2_top = int(page_height * 0.30 * scale)
+        crop2_bot = int(page_height * 0.55 * scale)
+        crop2 = img_full.crop((0, crop2_top, pix.width, crop2_bot))
+        crop2 = crop2.resize((pix.width * 2, (crop2_bot - crop2_top) * 2), _lanczos)
+        text_crop2: str = pytesseract.image_to_string(crop2, lang="spa", config="--psm 6")
+
+        # Pass 3 — full page, PSM 4 (single column).
+        # This pass reliably captures the totals table with accurate
+        # ``subtotal_recargos`` (column-separated amounts, e.g. "$9.638").
+        text_crop3: str = pytesseract.image_to_string(
+            img_full, lang="spa", config="--psm 4"
+        )
+
+        return text_full + "\n" + text_crop2 + "\n" + text_crop3
+    except pytesseract.TesseractNotFoundError as exc:
+        _LOGGER.warning(
+            "Tesseract OCR not found for '%s': %s. "
+            "Install tesseract-ocr to enable Agua Caliente extraction.",
+            pdf_path,
+            exc,
+        )
+        return ""
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("OCR failed for '%s': %s", pdf_path, err)
+        return ""
+
+
+def _extract_common_expenses_pdf_attributes(
+    text: str, pdf_path: str = ""
+) -> dict[str, Any]:
+    """Extract Gastos Comunes (and optional Agua Caliente) attributes from a PDF.
+
+    This extractor handles the "Nota de Cobro" document issued by Chilean
+    building administrators.  The PDF is JPEG-backed: only a partial text layer
+    (pdfminer-readable, but font-encoded) overlays certain fields.  The
+    hot-water table lives exclusively in the JPEG background and requires OCR
+    (optional: pymupdf + pytesseract + tesseract-ocr must be installed).
+
+    **Tier 1 – pdfminer text layer** (always attempted):
+        ``billing_period_month``, ``billing_period_year``,
+        ``billing_period_start``, ``billing_period_end``,
+        ``emission_date``, ``due_date``,
+        ``building_name``, ``building_rut``, ``address``,
+        ``apartment``, ``owner_name``, ``alicuota``,
+        ``building_total_expense``,
+        ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
+        ``subtotal_recargos``, ``total_amount``,
+        ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``
+
+    **Tier 2 – OCR on JPEG background** (requires pdf_path + optional libs):
+        ``hot_water_reading_prev``, ``hot_water_reading_curr``,
+        ``hot_water_consumption``, ``hot_water_consumption_unit``,
+        ``hot_water_cost_per_m3``, ``hot_water_amount``
+
+    Reference PDF: "Gastos Comunes Enero 2026" (Edificio Jose Miguel, 1 page).
+    """
+    attrs: dict[str, Any] = {}
+
+    # ------------------------------------------------------------------
+    # Billing period (month + year)
+    # ------------------------------------------------------------------
+    period_m = _GC_BILLING_PERIOD_RE.search(text)
+    if period_m:
+        month_name = period_m.group(1).lower()
+        year_str = period_m.group(2)
+        attrs["billing_period_month"] = period_m.group(1).capitalize()
+        attrs["billing_period_year"] = year_str
+        month_num = _MONTH_NAME_TO_NUM.get(month_name[:3], 0)
+        if month_num:
+            attrs["billing_period_start"] = f"01-{month_num:02d}-{year_str}"
+            # End = last day of billing month (approximate: next month day 0)
+            import calendar
+            last_day = calendar.monthrange(int(year_str), month_num)[1]
+            attrs["billing_period_end"] = f"{last_day:02d}-{month_num:02d}-{year_str}"
+    else:
+        year_str = ""
+
+    # ------------------------------------------------------------------
+    # Emission date + due date (two dates extracted together)
+    # Both labels and their values appear in the same text-block region.
+    # The first date is the emission date; the second is the due date.
+    # ------------------------------------------------------------------
+    dates_m = _GC_DATES_BLOCK_RE.search(text)
+    if dates_m:
+        attrs["emission_date"] = dates_m.group(1).replace("/", "-")
+        raw_due = dates_m.group(2).replace("/", "-")
+        attrs["due_date"] = _gc_fix_year(raw_due, year_str) if year_str else raw_due
+
+    # ------------------------------------------------------------------
+    # Building RUT and name
+    # ------------------------------------------------------------------
+    rut_m = _GC_RUT_RE.search(text)
+    if rut_m:
+        attrs["building_rut"] = rut_m.group(1)
+
+    name_m = _GC_BUILDING_NAME_RE.search(text)
+    if name_m:
+        # Prepend "Edificio" prefix which belongs to the building name
+        attrs["building_name"] = ("Edificio " + name_m.group(1).strip()).strip()
+
+    # ------------------------------------------------------------------
+    # Address (line immediately after the RUT line)
+    # ------------------------------------------------------------------
+    addr_m = _GC_ADDRESS_RE.search(text)
+    if addr_m:
+        attrs["address"] = addr_m.group(1).strip()
+
+    # ------------------------------------------------------------------
+    # Apartment number
+    # ------------------------------------------------------------------
+    apt_m = _GC_APARTMENT_RE.search(text)
+    if apt_m:
+        attrs["apartment"] = apt_m.group(1)
+
+    # ------------------------------------------------------------------
+    # Owner name (UPPERCASE, 2–4 words)
+    # ------------------------------------------------------------------
+    owner_candidates = _GC_OWNER_RE.findall(text)
+    # Filter out short single-word matches (e.g. "SANTIAGO") and known labels
+    _OWNER_EXCLUDE = {"SANTIAGO", "RUT", "FONDOS", "MENSUAL", "ADMINISTRACIONES"}
+    for candidate in owner_candidates:
+        words = candidate.split()
+        if len(words) >= 2 and not _OWNER_EXCLUDE.issuperset(words):
+            attrs["owner_name"] = candidate.strip()
+            break
+
+    # ------------------------------------------------------------------
+    # Alícuota percentage
+    # ------------------------------------------------------------------
+    alicuota_m = _GC_ALICUOTA_RE.search(text)
+    if alicuota_m:
+        raw = "0." + alicuota_m.group(1).lstrip("0") or "0"
+        try:
+            attrs["alicuota"] = round(float(raw), 6)
+        except ValueError:
+            pass
+
+    # ------------------------------------------------------------------
+    # Building total expense (e.g. $14.083.315)
+    # ------------------------------------------------------------------
+    bldg_total_m = _GC_BUILDING_TOTAL_RE.search(text)
+    if bldg_total_m:
+        raw = (bldg_total_m.group(1) or bldg_total_m.group(2) or "").replace(".", "")
+        if raw.isdigit():
+            attrs["building_total_expense"] = int(raw)
+
+    # ------------------------------------------------------------------
+    # Breakdown table: GC amount / fondos / subtotal departamento
+    # First try individual patterns; fall back to the three-amount block.
+    # ------------------------------------------------------------------
+    gc_m = _GC_AMOUNT_RE.search(text)
+    if gc_m:
+        attrs["gastos_comunes_amount"] = _parse_amount_to_int(gc_m.group(1))
+
+    fondos_m = _GC_FONDOS_AMOUNT_RE.search(text)
+    if fondos_m:
+        attrs["fondos_amount"] = _parse_amount_to_int(fondos_m.group(1))
+
+    sub_depto_m = _GC_SUBTOTAL_DEPTO_RE.search(text)
+    if sub_depto_m:
+        attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_m.group(1))
+
+    # Fallback: three-consecutive-amounts block (GC / fondos / subtotal)
+    if not (
+        attrs.get("gastos_comunes_amount")
+        and attrs.get("fondos_amount")
+        and attrs.get("subtotal_departamento")
+    ):
+        three_m = _GC_THREE_AMOUNTS_RE.search(text)
+        if three_m:
+            a1 = _parse_amount_to_int(three_m.group(1))
+            a2 = _parse_amount_to_int(three_m.group(2))
+            a3 = _parse_amount_to_int(three_m.group(3))
+            if not attrs.get("gastos_comunes_amount") and a1:
+                attrs["gastos_comunes_amount"] = a1
+            if not attrs.get("fondos_amount") and a2:
+                attrs["fondos_amount"] = a2
+            if not attrs.get("subtotal_departamento") and a3:
+                attrs["subtotal_departamento"] = a3
+
+    # ------------------------------------------------------------------
+    # Subtotal recargos + total amount
+    # The totals block has three amounts: recargos, total del mes, total a pagar.
+    # We take the FIRST as recargos and the MAXIMUM as the grand total.
+    # ------------------------------------------------------------------
+    totals_m = _GC_TOTALS_SECTION_RE.search(text)
+    if totals_m:
+        section = totals_m.group(0)
+        all_amounts = re.findall(r"\$\s*([\d.,]+)", section)
+        parsed_amounts = [_parse_amount_to_int(a) for a in all_amounts]
+        if parsed_amounts:
+            attrs["subtotal_recargos"] = parsed_amounts[0]
+        if len(parsed_amounts) >= 2:
+            attrs["total_amount"] = max(parsed_amounts)
+    else:
+        # Fallback individual patterns
+        rec_m = _GC_SUBTOTAL_RECARGOS_RE.search(text)
+        if rec_m:
+            attrs["subtotal_recargos"] = _parse_amount_to_int(rec_m.group(1))
+        total_generic = _extract_total_amount(text)
+        if total_generic:
+            attrs["total_amount"] = total_generic
+
+    # ------------------------------------------------------------------
+    # Last payment information
+    # Three labels appear consecutively, then three values on separate lines.
+    # ------------------------------------------------------------------
+    lp_date_m = _GC_LAST_PAYMENT_DATE_RE.search(text)
+    if lp_date_m:
+        raw_lp = lp_date_m.group(1).replace("/", "-")
+        attrs["last_payment_date"] = _gc_fix_year(raw_lp, year_str) if year_str else raw_lp
+
+    lp_amount_m = _GC_LAST_PAYMENT_AMOUNT_RE.search(text)
+    if lp_amount_m:
+        attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_m.group(1))
+
+    lp_folio_m = _GC_LAST_PAYMENT_FOLIO_RE.search(text)
+    if lp_folio_m:
+        attrs["last_payment_folio"] = lp_folio_m.group(1)
+
+    # ------------------------------------------------------------------
+    # Tier 2: OCR-based hot-water extraction (optional)
+    # ------------------------------------------------------------------
+    if pdf_path:
+        ocr_text = _try_ocr_pdf(pdf_path)
+        if ocr_text:
+            # Hot-water row — use meter-reading-aware parser for readings
+            hw_m = _GC_OCR_HOT_WATER_ROW_RE.search(ocr_text)
+            if hw_m:
+                attrs["hot_water_reading_prev"] = _parse_meter_reading(hw_m.group(1))
+                attrs["hot_water_reading_curr"] = _parse_meter_reading(hw_m.group(2))
+                attrs["hot_water_consumption"] = _parse_meter_reading(hw_m.group(3))
+                attrs["hot_water_consumption_unit"] = "m³"
+                attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(
+                    hw_m.group(4)
+                )
+                # Monto is optional in the regex (group 5 may be None)
+                if hw_m.group(5):
+                    attrs["hot_water_amount"] = _parse_amount_to_int(hw_m.group(5))
+
+            # Subtotal Consumo (hot-water subtotal) — prefer this as hot-water
+            # total if individual monto was not captured.
+            sc_m = _GC_OCR_SUBTOTAL_CONSUMO_RE.search(ocr_text)
+            if sc_m:
+                subtotal_consumo = _parse_amount_to_int(sc_m.group(1))
+                attrs["subtotal_consumo"] = subtotal_consumo
+                if not attrs.get("hot_water_amount") and subtotal_consumo:
+                    attrs["hot_water_amount"] = subtotal_consumo
+
+            # OCR gives more accurate subtotal_recargos when the $ amount
+            # appears on the same line as the label (PSM modes that preserve
+            # columns). Use a tight pattern (≤ 20 chars) to avoid accidentally
+            # capturing the next line's total.
+            rec_ocr_m = re.search(
+                r"subtotal\s+recargos[\s|]{0,15}\$?\s*([\d.,]+)",
+                ocr_text,
+                re.IGNORECASE,
+            )
+            if rec_ocr_m:
+                candidate = _parse_amount_to_int(rec_ocr_m.group(1))
+                # Sanity: recargos should be smaller than the grand total
+                if candidate and candidate < attrs.get("total_amount", float("inf")):
+                    attrs["subtotal_recargos"] = candidate
+
+    return attrs
+
+
+# ---------------------------------------------------------------------------
 # Routing helpers
 # ---------------------------------------------------------------------------
 
@@ -1032,16 +1600,28 @@ def _extract_type_specific_attributes(text: str, service_type: str) -> dict[str,
         return _extract_gas_attributes(text)
     if service_type == SERVICE_TYPE_ELECTRICITY:
         return _extract_electricity_attributes(text)
+    # Common expenses and hot water carry no useful data in the notification
+    # email body — all information is in the PDF attachment.
+    if service_type in (SERVICE_TYPE_COMMON_EXPENSES, SERVICE_TYPE_HOT_WATER):
+        return {}
     return {}
 
 
-def _extract_pdf_type_specific_attributes(text: str, service_type: str) -> dict[str, Any]:
+def _extract_pdf_type_specific_attributes(
+    text: str, service_type: str, pdf_path: str = ""
+) -> dict[str, Any]:
     """Dispatch to the **PDF** extractor for *service_type* and return its results.
 
     Each service type has a dedicated PDF extractor whose patterns are tuned to
     the layout of that issuer's PDF bill — separate from the email extractor.
     Service types that do not yet have a PDF-specific extractor fall back to an
     empty dict (no attributes extracted from the PDF).
+
+    Args:
+        text:         Plain text extracted from the PDF via pdfminer.
+        service_type: One of the ``SERVICE_TYPE_*`` constants.
+        pdf_path:     Optional absolute path to the PDF file.  Passed to the
+                      common-expenses extractor to enable optional OCR.
     """
     if service_type == SERVICE_TYPE_WATER:
         return _extract_water_pdf_attributes(text)
@@ -1049,6 +1629,10 @@ def _extract_pdf_type_specific_attributes(text: str, service_type: str) -> dict[
         return _extract_gas_pdf_attributes(text)
     if service_type == SERVICE_TYPE_ELECTRICITY:
         return _extract_electricity_pdf_attributes(text)
+    if service_type in (SERVICE_TYPE_COMMON_EXPENSES, SERVICE_TYPE_HOT_WATER):
+        # Both devices are fed by the same PDF; the caller can differentiate
+        # by service_type when consuming the returned dictionary.
+        return _extract_common_expenses_pdf_attributes(text, pdf_path)
     return {}
 
 
@@ -1243,6 +1827,22 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
       ``billing_period_start``, ``billing_period_end``, ``consumption``,
       ``consumption_unit``, ``electricity_consumption``, ``service_administration``,
       ``electricity_transport``, ``stabilization_fund``, ``cost_per_kwh``
+    - **common_expenses / hot_water** — :func:`_extract_common_expenses_pdf_attributes`
+      (Chilean building administrator "Nota de Cobro", Jan 2026).
+      Both ``SERVICE_TYPE_COMMON_EXPENSES`` and ``SERVICE_TYPE_HOT_WATER`` share
+      the same PDF; the full extracted dictionary is returned for both so the
+      caller can select the relevant fields.
+      Tier-1 (pdfminer): ``billing_period_month``, ``billing_period_year``,
+      ``billing_period_start``, ``billing_period_end``, ``emission_date``,
+      ``due_date``, ``building_name``, ``building_rut``, ``address``,
+      ``apartment``, ``owner_name``, ``alicuota``, ``building_total_expense``,
+      ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
+      ``subtotal_recargos``, ``total_amount``, ``last_payment_date``,
+      ``last_payment_amount``, ``last_payment_folio``.
+      Tier-2 (OCR, requires pymupdf + pytesseract + tesseract-ocr):
+      ``hot_water_reading_prev``, ``hot_water_reading_curr``,
+      ``hot_water_consumption``, ``hot_water_consumption_unit``,
+      ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
 
     Args:
         pdf_path:     Absolute path to the downloaded PDF file.
@@ -1280,7 +1880,7 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
         # Apply the PDF-specific extractor for this service type.
         # Each service type has its own PDF extractor tuned to that issuer's
         # PDF layout (separate from the email extractor).
-        pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type)
+        pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type, pdf_path)
         attrs.update(pdf_attrs)
     except Exception as err:
         _LOGGER.debug("Error extracting attributes from PDF '%s': %s", pdf_path, err)
