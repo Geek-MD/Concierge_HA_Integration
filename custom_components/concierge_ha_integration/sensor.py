@@ -78,7 +78,7 @@ _COST_PER_UNIT_UNITS: dict[str, str] = {
 # GC + fondos subtotal; for hot-water it is the agua-caliente amount.
 # All other service types use the generic ``total_amount`` key.
 _TOTAL_AMOUNT_ATTR: dict[str, str] = {
-    SERVICE_TYPE_COMMON_EXPENSES: "subtotal_departamento",
+    SERVICE_TYPE_COMMON_EXPENSES: "gc_total",
     SERVICE_TYPE_HOT_WATER: "hot_water_amount",
 }
 
@@ -112,11 +112,15 @@ _ELECTRICITY_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
 # Common expenses: billing breakdown (all CLP amounts).
 # gastos_comunes_amount is exposed as "Bill" so the entity ID becomes
 # sensor.concierge_{service_id}_bill — the primary payable for the apartment.
+# The "Total" sensor (gc_total) covers the GC-only total: Subtotal + Cargo Fijo.
+# The overall bill (including hot water) is on the separate hot-water device.
 _COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
-    ("gastos_comunes_amount",   "Bill",                "$", "gc_bill"),
-    ("fondos_amount",           "Fondos 5%",           "$", "gc_fondos_amount"),
-    ("subtotal_departamento",   "Subtotal Departamento","$", "gc_subtotal_departamento"),
-    ("subtotal_recargos",       "Subtotal Recargos",   "$", "gc_subtotal_recargos"),
+    ("gastos_comunes_amount",       "Bill",                       "$",  "gc_bill"),
+    ("funds_provision_percentage",  "Funds Provision Percentage", "%",  "gc_funds_provision_pct"),
+    ("funds_provision",             "Funds Provision",            "$",  "gc_funds_provision"),
+    ("subtotal",                    "Subtotal",                   "$",  "gc_subtotal"),
+    ("fixed_charge",                "Fixed Charge",               "$",  "gc_fixed_charge"),
+    ("gc_total",                    "Total",                      "$",  "gc_total"),
 ]
 
 # Webmail provider domains that are too generic for sender-domain matching.

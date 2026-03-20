@@ -1112,9 +1112,25 @@ _GC_AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Fondos provision percentage (e.g. "FONDOS 5% DEL GASTO MENSUAL" → 5).
+# Only the integer part is captured because the percentage is always a whole
+# number (5, 10, …); the "00" suffix from pdfminer garbling is discarded.
+_GC_FONDOS_PCT_RE = re.compile(
+    r"fondos\s+(\d+)\s*%",
+    re.IGNORECASE,
+)
+
 # Fondos 5% → amount (text shows "500% " then "$ 6.697 ")
 _GC_FONDOS_AMOUNT_RE = re.compile(
     r"5[0,]\s*0\s*%\s*[\s\n]*\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# Cargo Fijo → fixed-charge amount (appears in the "recargos" section).
+# In pdfminer text the label is "Cargo Fijo"; in OCR output it can be garbled.
+# OCR-extracted value is preferred because pdfminer misreads some digits.
+_GC_CARGO_FIJO_RE = re.compile(
+    r"cargo\s+fijo[\s\S]{0,40}?\$\s*([\d.,]+)",
     re.IGNORECASE,
 )
 
@@ -1200,6 +1216,14 @@ _GC_OCR_SUBTOTAL_CONSUMO_RE = re.compile(
 # on a single line — capture the words between "Edificio" and "Fecha".
 _GC_OCR_BUILDING_NAME_RE = re.compile(
     r"edificio\s+([\w\s]{2,50}?)\s+fecha\s+em",
+    re.IGNORECASE,
+)
+
+# OCR Cargo Fijo: the fixed-charge row.  PSM modes that preserve columns render
+# "Cargo Fijo   $9.638" (or with a pipe separator) on one line.
+# Use a tight window (≤ 30 chars) to avoid capturing the next-line total.
+_GC_OCR_CARGO_FIJO_RE = re.compile(
+    r"cargo\s+fijo[\s|]{0,30}\$?\s*([\d.,]+)",
     re.IGNORECASE,
 )
 
@@ -1304,13 +1328,13 @@ def _parse_meter_reading(raw: str) -> float:
     # A 9-digit number with no decimal: first 3 digits are integer part.
     clean = raw.replace(",", "").replace(".", "")
     if clean.isdigit():
-        if len(clean) == 9:  # noqa: PLR2004 — 9-digit meter-reading format
+        if len(clean) == 9:  # noqa: PLR2004 -- 9-digit meter-reading format
             return float(
                 clean[:_METER_9DIGIT_INT_DIGITS]
                 + "."
                 + clean[_METER_9DIGIT_INT_DIGITS : _METER_9DIGIT_INT_DIGITS + _METER_9DIGIT_DEC_DIGITS]
             )
-        if len(clean) == 7:  # noqa: PLR2004 — 7-digit meter-reading format
+        if len(clean) == 7:  # noqa: PLR2004 -- 7-digit meter-reading format
             return float(
                 clean[:_METER_7DIGIT_INT_DIGITS]
                 + "."
@@ -1515,6 +1539,26 @@ def _extract_common_expenses_pdf_attributes(
             attrs["building_total_expense"] = int(raw)
 
     # ------------------------------------------------------------------
+    # Fondos provision percentage (integer, e.g. 5 from "FONDOS 5%")
+    # ------------------------------------------------------------------
+    fondos_pct_m = _GC_FONDOS_PCT_RE.search(text)
+    if fondos_pct_m:
+        try:
+            attrs["fondos_pct"] = int(fondos_pct_m.group(1))
+        except ValueError:
+            pass
+
+    # ------------------------------------------------------------------
+    # Cargo Fijo (fixed charge) — pdfminer tier
+    # The label may not appear clearly; rely on OCR for accuracy (see
+    # Tier 2 below).  This pattern is a best-effort attempt on the text
+    # layer so the value is available even without OCR libraries.
+    # ------------------------------------------------------------------
+    cargo_fijo_m = _GC_CARGO_FIJO_RE.search(text)
+    if cargo_fijo_m:
+        attrs["cargo_fijo"] = _parse_amount_to_int(cargo_fijo_m.group(1))
+
+    # ------------------------------------------------------------------
     # Breakdown table: GC amount / fondos / subtotal departamento
     # First try individual patterns; fall back to the three-amount block.
     # ------------------------------------------------------------------
@@ -1638,6 +1682,16 @@ def _extract_common_expenses_pdf_attributes(
             if bldg_ocr_m:
                 attrs["building_name"] = "Edificio " + bldg_ocr_m.group(1).strip()
 
+            # OCR gives the correct Cargo Fijo amount (pdfminer may misread
+            # digit glyphs, e.g. "$9.638" → "$9.838").  Override any pdfminer
+            # value when OCR succeeds.
+            cargo_fijo_ocr_m = _GC_OCR_CARGO_FIJO_RE.search(ocr_text)
+            if cargo_fijo_ocr_m:
+                candidate = _parse_amount_to_int(cargo_fijo_ocr_m.group(1))
+                # Sanity: cargo fijo should be smaller than the grand total
+                if candidate and candidate < attrs.get("total_amount", float("inf")):
+                    attrs["cargo_fijo"] = candidate
+
     # ------------------------------------------------------------------
     # Combined address for binary-sensor display
     # Format: "<building_name>, <street> Depto.<apt>, <city>"
@@ -1678,6 +1732,31 @@ def _extract_common_expenses_pdf_attributes(
         attrs["previous_measure"] = attrs["hot_water_reading_prev"]
     if "hot_water_reading_curr" in attrs:
         attrs["actual_measure"] = attrs["hot_water_reading_curr"]
+
+    # ------------------------------------------------------------------
+    # Derived common-expenses sensor aliases
+    # These keys are consumed by the dedicated breakdown sensor entities.
+    # ------------------------------------------------------------------
+    # Funds provision percentage: integer (e.g. 5 from "FONDOS 5%")
+    if "fondos_pct" in attrs:
+        attrs["funds_provision_percentage"] = attrs["fondos_pct"]
+    # Funds provision amount = fondos 5% (e.g. $6.697)
+    if "fondos_amount" in attrs:
+        attrs["funds_provision"] = attrs["fondos_amount"]
+    # Subtotal = GC apartment portion + fondos (Subtotal Departamento)
+    if "subtotal_departamento" in attrs:
+        attrs["subtotal"] = attrs["subtotal_departamento"]
+    # Fixed charge (Cargo Fijo) — prefer cargo_fijo; fall back to subtotal_recargos
+    if not attrs.get("cargo_fijo") and attrs.get("subtotal_recargos"):
+        attrs["cargo_fijo"] = attrs["subtotal_recargos"]
+    if "cargo_fijo" in attrs:
+        attrs["fixed_charge"] = attrs["cargo_fijo"]
+    # GC total = Subtotal Departamento + Cargo Fijo
+    # (does NOT include hot-water, which is a separate device)
+    subtotal_val = attrs.get("subtotal_departamento", 0)
+    cargo_val = attrs.get("cargo_fijo", 0)
+    if subtotal_val and cargo_val:
+        attrs["gc_total"] = subtotal_val + cargo_val
 
     return attrs
 
