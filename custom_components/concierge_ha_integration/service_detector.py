@@ -10,6 +10,7 @@ from email.header import decode_header
 from typing import Any
 
 from .const import (
+    SERVICE_TYPE_COMMON_EXPENSES,
     SERVICE_TYPE_ELECTRICITY,
     SERVICE_TYPE_GAS,
     SERVICE_TYPE_TELECOM,
@@ -58,6 +59,13 @@ SERVICE_PATTERNS: list[tuple[str, str, str]] = [
     # Telecom
     (r"movistar|entel|claro|wom|vtr", "Telecomunicaciones", SERVICE_TYPE_TELECOM),
     (r"mundo.*pac[íi]fico|gtd|telefonica", "Internet/TV", SERVICE_TYPE_TELECOM),
+    # Common expenses (building administration — "Gastos Comunes")
+    (
+        r"gastos?\s+comunes?|nota\s+de\s+cobro|administraci[oó]n\s+edificio|"
+        r"administradora\s+(?:de\s+)?edificio|copropietarios?",
+        "Gastos Comunes",
+        SERVICE_TYPE_COMMON_EXPENSES,
+    ),
     # Generic utility fallback (type resolved at runtime from keyword)
     (r"compa[ñn][íi]a\s+de\s+agua", "Agua", SERVICE_TYPE_WATER),
     (r"compa[ñn][íi]a\s+de\s+electricidad", "Electricidad", SERVICE_TYPE_ELECTRICITY),

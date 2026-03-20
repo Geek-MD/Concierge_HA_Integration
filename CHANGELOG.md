@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-20
+
+### Added
+- **Common Expenses billing-breakdown sensors** (`sensor.py`, `attribute_extractor.py`):
+
+  Five new dedicated sensor entities are now created for every `common_expenses`
+  device, providing a full breakdown of the monthly GC (Gastos Comunes) bill:
+
+  | Entity suffix | Value | Unit | Source / formula |
+  |---|---|---|---|
+  | `_funds_provision_percentage` | e.g. `5` | `%` | "PROVISIÓN DE FONDOS 5% DEL GASTO MENSUAL" label |
+  | `_funds_provision` | e.g. `$6.697` | `$` | Bill × Funds % / 100 |
+  | `_subtotal` | e.g. `$140.643` | `$` | Bill + Funds Provision ("Subtotal Departamento") |
+  | `_fixed_charge` | e.g. `$9.638` | `$` | "Cargo Fijo" line |
+  | `_total` (via `_total_amount`) | e.g. `$150.281` | `$` | Subtotal + Fixed Charge |
+
+  The `_total_amount` sensor (already present in all devices) now uses
+  `gc_total` as its attribute key for `common_expenses` devices, replacing
+  the previous `subtotal_departamento`.
+
+  **Extraction changes** (`attribute_extractor.py`):
+  - New regex `_GC_FONDOS_PCT_RE` — extracts the integer provision percentage
+    from "FONDOS 5% DEL GASTO MENSUAL".
+  - New regex `_GC_CARGO_FIJO_RE` — best-effort pdfminer extraction of the
+    fixed-charge amount from "Cargo Fijo $X".
+  - New regex `_GC_OCR_CARGO_FIJO_RE` — OCR-accurate fixed-charge extraction
+    (PSM-4 output); overrides the pdfminer value when present because pdfminer
+    can misread font-encoded digits (e.g. `$9.838` instead of `$9.638`).
+  - New derived alias keys written at the end of the extractor:
+    `funds_provision_percentage`, `funds_provision`, `subtotal`,
+    `fixed_charge`, `gc_total`.
+
+- **`manifest.json`**: version bumped to `0.8.0`.
+- **`README.md`**: added Common Expenses entity table (8 entities).
+
 ## [0.7.16] - 2026-03-19
 
 ### Fixed

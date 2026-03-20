@@ -22,8 +22,10 @@ from .const import (
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
     DOMAIN,
+    SERVICE_TYPE_COMMON_EXPENSES,
     SERVICE_TYPE_ELECTRICITY,
     SERVICE_TYPE_GAS,
+    SERVICE_TYPE_HOT_WATER,
     SERVICE_TYPE_UNKNOWN,
     SERVICE_TYPE_WATER,
 )
@@ -56,10 +58,24 @@ _ELECTRICITY_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
 _WATER_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
 }
 
+# Gastos Comunes: building-level totals used to verify the apartment portion.
+_COMMON_EXPENSES_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
+    "gross_common_expenses": 0,
+    "gross_common_expenses_percentage": 0,
+}
+
+# Agua Caliente: meter readings used to verify consumption.
+_HOT_WATER_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
+    "previous_measure": 0,
+    "actual_measure": 0,
+}
+
 _SERVICE_TYPE_STATUS_ATTR_DEFAULTS: dict[str, dict[str, Any]] = {
     SERVICE_TYPE_WATER: _WATER_STATUS_ATTR_DEFAULTS,
     SERVICE_TYPE_GAS: _GAS_STATUS_ATTR_DEFAULTS,
     SERVICE_TYPE_ELECTRICITY: _ELECTRICITY_STATUS_ATTR_DEFAULTS,
+    SERVICE_TYPE_COMMON_EXPENSES: _COMMON_EXPENSES_STATUS_ATTR_DEFAULTS,
+    SERVICE_TYPE_HOT_WATER: _HOT_WATER_STATUS_ATTR_DEFAULTS,
 }
 
 
