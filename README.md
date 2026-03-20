@@ -80,6 +80,19 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal before surcharges (`$`) |
   | `sensor.concierge_{id}_other_charges` | Sensor | — | Net surcharges (`$`) |
 
+  **Common Expenses (8 entities):**
+
+  | Entity | Type | Category | Value / Purpose |
+  |---|---|---|---|
+  | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_total_amount` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
+  | `sensor.concierge_{id}_bill` | Sensor | — | GC apartment portion (`$`) — alícuota % of building expense |
+  | `sensor.concierge_{id}_funds_provision_percentage` | Sensor | — | Funds provision percentage (`%`) — e.g. 5 |
+  | `sensor.concierge_{id}_funds_provision` | Sensor | — | Funds provision amount (`$`) — Bill × Funds % / 100 |
+  | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
+  | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
+
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
   - Service identity: `service_id`, `service_name`, `service_type`, `friendly_name`, `icon`
