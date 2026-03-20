@@ -15,6 +15,7 @@ which accepts an optional *service_type* argument (one of the
 """
 from __future__ import annotations
 
+import calendar
 import logging
 import re
 from html import unescape as _html_unescape
@@ -1195,9 +1196,45 @@ _GC_OCR_SUBTOTAL_CONSUMO_RE = re.compile(
     re.IGNORECASE,
 )
 
+# OCR building name: PSM-4 pass renders "Edificio Jose Miguel Fecha Emisión:"
+# on a single line — capture the words between "Edificio" and "Fecha".
+_GC_OCR_BUILDING_NAME_RE = re.compile(
+    r"edificio\s+([\w\s]{2,50}?)\s+fecha\s+em",
+    re.IGNORECASE,
+)
+
 # Maximum allowable year drift due to pdfminer font-encoding garbling.
 # Years garbled by more than this threshold are left unchanged.
 _GC_MAX_YEAR_DRIFT = 4
+
+# ---------------------------------------------------------------------------
+# Meter-reading format constants
+# ---------------------------------------------------------------------------
+# Minimum number of fractional digits for a separator to be treated as a
+# decimal point rather than a thousands separator.
+_METER_DECIMAL_MIN_DIGITS: int = 4
+
+# Meter reading with no separator: digit counts and split positions.
+# A 9-digit integer (e.g. 585396000) → first 3 digits = integer, next 3 = decimal.
+_METER_9DIGIT_INT_DIGITS: int = 3
+_METER_9DIGIT_DEC_DIGITS: int = 3
+# A 7-digit integer (e.g. 2983000) → first 1 digit = integer, next 3 = decimal.
+_METER_7DIGIT_INT_DIGITS: int = 1
+_METER_7DIGIT_DEC_DIGITS: int = 3
+
+# ---------------------------------------------------------------------------
+# OCR rendering constants
+# ---------------------------------------------------------------------------
+# Zoom factor applied when rendering PDF pages for OCR.  3× gives ~216 DPI
+# from a 72-DPI base, which is adequate for Tesseract accuracy.
+_OCR_ZOOM_FACTOR: int = 3
+
+# Upscale factor applied to cropped sections before Tesseract (pass 2).
+_OCR_CROP_RESIZE_FACTOR: int = 2
+
+# Vertical crop ratios (fraction of page height) for the Agua Caliente table.
+_OCR_CROP2_TOP_RATIO: float = 0.30
+_OCR_CROP2_BOTTOM_RATIO: float = 0.55
 
 # Month → number mapping (Spanish)
 _MONTH_NAME_TO_NUM: dict[str, int] = {
@@ -1259,7 +1296,7 @@ def _parse_meter_reading(raw: str) -> float:
     sep_match = re.search(r"([,.])([\d]+)$", raw)
     if sep_match:
         frac = sep_match.group(2)
-        if len(frac) >= 4:
+        if len(frac) >= _METER_DECIMAL_MIN_DIGITS:
             # Treat separator as decimal point regardless of digit count
             integer_part = raw[: sep_match.start()].replace(".", "").replace(",", "")
             return float(f"{integer_part}.{frac}")
@@ -1267,10 +1304,18 @@ def _parse_meter_reading(raw: str) -> float:
     # A 9-digit number with no decimal: first 3 digits are integer part.
     clean = raw.replace(",", "").replace(".", "")
     if clean.isdigit():
-        if len(clean) == 9:
-            return float(clean[:3] + "." + clean[3:6])
-        if len(clean) == 7:
-            return float(clean[0] + "." + clean[1:4])
+        if len(clean) == 9:  # noqa: PLR2004 — 9-digit meter-reading format
+            return float(
+                clean[:_METER_9DIGIT_INT_DIGITS]
+                + "."
+                + clean[_METER_9DIGIT_INT_DIGITS : _METER_9DIGIT_INT_DIGITS + _METER_9DIGIT_DEC_DIGITS]
+            )
+        if len(clean) == 7:  # noqa: PLR2004 — 7-digit meter-reading format
+            return float(
+                clean[:_METER_7DIGIT_INT_DIGITS]
+                + "."
+                + clean[_METER_7DIGIT_INT_DIGITS : _METER_7DIGIT_INT_DIGITS + _METER_7DIGIT_DEC_DIGITS]
+            )
     # Fallback: standard consumption parser
     return _parse_consumption_to_float(raw)
 
@@ -1302,17 +1347,16 @@ def _try_ocr_pdf(pdf_path: str) -> str:
             exc,
         )
         return ""
-    # Use the modern Resampling API if available (Pillow ≥ 10.0.0), else fall
-    # back to the legacy attribute (Pillow < 10.0.0).
+    # Use the modern Resampling API if available (Pillow ≥ 10.0.0, where LANCZOS
+    # moved under Image.Resampling), else fall back to the legacy attribute.
     _lanczos = getattr(Image, "Resampling", Image).LANCZOS
     try:
         doc = fitz.open(pdf_path)
         page = doc[0]
         page_height = page.rect.height
-        mat = fitz.Matrix(3, 3)  # 3× zoom for better OCR accuracy
+        mat = fitz.Matrix(_OCR_ZOOM_FACTOR, _OCR_ZOOM_FACTOR)
         pix = page.get_pixmap(matrix=mat)
         doc.close()
-        scale = 3
         img_full = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
         # Pass 1 — full page, PSM 1
@@ -1321,10 +1365,14 @@ def _try_ocr_pdf(pdf_path: str) -> str:
         )
 
         # Pass 2 — agua caliente area crop (≈ 30–55 % from top), PSM 6
-        crop2_top = int(page_height * 0.30 * scale)
-        crop2_bot = int(page_height * 0.55 * scale)
+        crop2_top = int(page_height * _OCR_CROP2_TOP_RATIO * _OCR_ZOOM_FACTOR)
+        crop2_bot = int(page_height * _OCR_CROP2_BOTTOM_RATIO * _OCR_ZOOM_FACTOR)
         crop2 = img_full.crop((0, crop2_top, pix.width, crop2_bot))
-        crop2 = crop2.resize((pix.width * 2, (crop2_bot - crop2_top) * 2), _lanczos)
+        crop2 = crop2.resize(
+            (pix.width * _OCR_CROP_RESIZE_FACTOR,
+             (crop2_bot - crop2_top) * _OCR_CROP_RESIZE_FACTOR),
+            _lanczos,
+        )
         text_crop2: str = pytesseract.image_to_string(crop2, lang="spa", config="--psm 6")
 
         # Pass 3 — full page, PSM 4 (single column).
@@ -1392,7 +1440,6 @@ def _extract_common_expenses_pdf_attributes(
         if month_num:
             attrs["billing_period_start"] = f"01-{month_num:02d}-{year_str}"
             # End = last day of billing month (approximate: next month day 0)
-            import calendar
             last_day = calendar.monthrange(int(year_str), month_num)[1]
             attrs["billing_period_end"] = f"{last_day:02d}-{month_num:02d}-{year_str}"
     else:
@@ -1452,7 +1499,7 @@ def _extract_common_expenses_pdf_attributes(
     # ------------------------------------------------------------------
     alicuota_m = _GC_ALICUOTA_RE.search(text)
     if alicuota_m:
-        raw = "0." + alicuota_m.group(1).lstrip("0") or "0"
+        raw = "0." + (alicuota_m.group(1).lstrip("0") or "0")
         try:
             attrs["alicuota"] = round(float(raw), 6)
         except ValueError:
@@ -1584,6 +1631,53 @@ def _extract_common_expenses_pdf_attributes(
                 # Sanity: recargos should be smaller than the grand total
                 if candidate and candidate < attrs.get("total_amount", float("inf")):
                     attrs["subtotal_recargos"] = candidate
+
+            # OCR (PSM 4) gives a cleaner building name than pdfminer which
+            # garbles font-encoded characters (e.g. "Jon" instead of "Jose").
+            bldg_ocr_m = _GC_OCR_BUILDING_NAME_RE.search(ocr_text)
+            if bldg_ocr_m:
+                attrs["building_name"] = "Edificio " + bldg_ocr_m.group(1).strip()
+
+    # ------------------------------------------------------------------
+    # Combined address for binary-sensor display
+    # Format: "<building_name>, <street> Depto.<apt>, <city>"
+    # Built from the three separately extracted fields; stored back into
+    # the ``address`` key so the standard binary-sensor lookup works.
+    # ------------------------------------------------------------------
+    building = attrs.get("building_name", "")
+    raw_addr = attrs.get("address", "")  # e.g. "Curico 380 - Santiago"
+    apt_str = attrs.get("apartment", "")
+    if building and raw_addr:
+        if " - " in raw_addr:
+            street_part, city_part = raw_addr.split(" - ", 1)
+        else:
+            street_part, city_part = raw_addr, ""
+        street_seg = street_part.strip()
+        if apt_str:
+            street_seg += f" Depto.{apt_str}"
+        combined_parts = [building]
+        if street_seg:
+            combined_parts.append(street_seg)
+        if city_part:
+            combined_parts.append(city_part.strip())
+        attrs["address"] = ", ".join(combined_parts)
+
+    # ------------------------------------------------------------------
+    # Attribute aliases consumed by the status binary sensor.
+    # The binary sensor looks up keys by the alias names defined in its
+    # service-type-specific defaults dict; these aliases map the raw
+    # extracted keys to the expected names without duplicating logic.
+    # ------------------------------------------------------------------
+    # common_expenses binary-sensor attributes
+    if "building_total_expense" in attrs:
+        attrs["gross_common_expenses"] = attrs["building_total_expense"]
+    if "alicuota" in attrs:
+        attrs["gross_common_expenses_percentage"] = attrs["alicuota"]
+    # hot_water binary-sensor attributes
+    if "hot_water_reading_prev" in attrs:
+        attrs["previous_measure"] = attrs["hot_water_reading_prev"]
+    if "hot_water_reading_curr" in attrs:
+        attrs["actual_measure"] = attrs["hot_water_reading_curr"]
 
     return attrs
 

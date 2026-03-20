@@ -5,7 +5,7 @@ import email
 import imaplib
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -110,9 +110,10 @@ _ELECTRICITY_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
 ]
 
 # Common expenses: billing breakdown (all CLP amounts).
-# Covers the Gastos Comunes device (gastos + fondos) and recargos.
+# gastos_comunes_amount is exposed as "Bill" so the entity ID becomes
+# sensor.concierge_{service_id}_bill — the primary payable for the apartment.
 _COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
-    ("gastos_comunes_amount",   "Gastos Comunes",      "$", "gc_gastos_comunes_amount"),
+    ("gastos_comunes_amount",   "Bill",                "$", "gc_bill"),
     ("fondos_amount",           "Fondos 5%",           "$", "gc_fondos_amount"),
     ("subtotal_departamento",   "Subtotal Departamento","$", "gc_subtotal_departamento"),
     ("subtotal_recargos",       "Subtotal Recargos",   "$", "gc_subtotal_recargos"),
@@ -421,6 +422,26 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                                 pdf_path, service_type
                                             )
                                             latest_attributes.update(pdf_attrs)
+                                            # For PDF-only services (common_expenses,
+                                            # hot_water) the email Date header reflects
+                                            # when the administrator forwarded the bill,
+                                            # not the bill issue date.  Override
+                                            # last_updated with the bill's Fecha Emisión
+                                            # extracted from the PDF when available.
+                                            if service_type in (
+                                                SERVICE_TYPE_COMMON_EXPENSES,
+                                                SERVICE_TYPE_HOT_WATER,
+                                            ):
+                                                emission_str = latest_attributes.get(
+                                                    "emission_date"
+                                                )
+                                                if emission_str:
+                                                    try:
+                                                        latest_date = datetime.strptime(
+                                                            emission_str, "%d-%m-%Y"
+                                                        ).replace(tzinfo=timezone.utc)
+                                                    except ValueError:
+                                                        pass
                                     except Exception as pdf_err:
                                         _LOGGER.warning(
                                             "PDF download failed for service '%s': %s",
