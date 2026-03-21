@@ -34,6 +34,28 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Extraction confidence scores (0–100)
+# ---------------------------------------------------------------------------
+# Each PDF-sourced attribute carries a confidence score that reflects how
+# reliable the extraction method is.  Callers can surface these scores in
+# sensor ``extra_state_attributes`` so users see at a glance how trustworthy
+# each value is.
+#
+# Score meanings:
+#   PDFMINER  (70) – extracted from the PDF text layer; pdfminer can
+#                    misread font-encoded glyphs (e.g. "6" → "8").
+#   OCR       (85) – extracted via Tesseract OCR on the PDF image; more
+#                    accurate for image-backed PDFs but still fallible.
+#   DERIVED   (60) – calculated from other extracted values (e.g.
+#                    subtotal_consumo = total − subtotal_depto − cargo_fijo).
+#   OVERRIDE (100) – user-supplied correction stored by the ``set_value``
+#                    service; treated as ground truth.
+CONF_SCORE_PDFMINER: float = 70.0
+CONF_SCORE_OCR: float = 85.0
+CONF_SCORE_DERIVED: float = 60.0
+CONF_SCORE_OVERRIDE: float = 100.0
+
 
 # Patterns for billing period dates (start and end)
 DATE_PATTERNS = [
@@ -1462,6 +1484,9 @@ def _extract_common_expenses_pdf_attributes(
     Reference PDF: "Gastos Comunes Enero 2026" (Edificio Jose Miguel, 1 page).
     """
     attrs: dict[str, Any] = {}
+    # Per-attribute confidence scores populated as each field is extracted.
+    # Merged into attrs["_confidence"] at the end of the function.
+    _confidence: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Billing period (month + year)
@@ -1478,6 +1503,10 @@ def _extract_common_expenses_pdf_attributes(
             # End = last day of billing month (approximate: next month day 0)
             last_day = calendar.monthrange(int(year_str), month_num)[1]
             attrs["billing_period_end"] = f"{last_day:02d}-{month_num:02d}-{year_str}"
+        for _k in ("billing_period_month", "billing_period_year",
+                   "billing_period_start", "billing_period_end"):
+            if _k in attrs:
+                _confidence[_k] = CONF_SCORE_PDFMINER
     else:
         year_str = ""
 
@@ -1491,6 +1520,8 @@ def _extract_common_expenses_pdf_attributes(
         attrs["emission_date"] = dates_m.group(1).replace("/", "-")
         raw_due = dates_m.group(2).replace("/", "-")
         attrs["due_date"] = _gc_fix_year(raw_due, year_str) if year_str else raw_due
+        _confidence["emission_date"] = CONF_SCORE_PDFMINER
+        _confidence["due_date"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Building RUT and name
@@ -1498,6 +1529,7 @@ def _extract_common_expenses_pdf_attributes(
     rut_m = _GC_RUT_RE.search(text)
     if rut_m:
         attrs["building_rut"] = rut_m.group(1)
+        _confidence["building_rut"] = CONF_SCORE_PDFMINER
 
     name_m = _GC_BUILDING_NAME_RE.search(text)
     if name_m:
@@ -1519,6 +1551,7 @@ def _extract_common_expenses_pdf_attributes(
             attrs["building_name"] = _GC_KNOWN_BUILDING_NAME
         else:
             attrs["building_name"] = extracted_name
+        _confidence["building_name"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Address (line immediately after the RUT line)
@@ -1526,6 +1559,7 @@ def _extract_common_expenses_pdf_attributes(
     addr_m = _GC_ADDRESS_RE.search(text)
     if addr_m:
         attrs["address"] = addr_m.group(1).strip()
+        _confidence["address"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Apartment number
@@ -1533,6 +1567,7 @@ def _extract_common_expenses_pdf_attributes(
     apt_m = _GC_APARTMENT_RE.search(text)
     if apt_m:
         attrs["apartment"] = apt_m.group(1)
+        _confidence["apartment"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Owner name (UPPERCASE, 2–4 words)
@@ -1544,6 +1579,7 @@ def _extract_common_expenses_pdf_attributes(
         words = candidate.split()
         if len(words) >= 2 and not _OWNER_EXCLUDE.issuperset(words):
             attrs["owner_name"] = candidate.strip()
+            _confidence["owner_name"] = CONF_SCORE_PDFMINER
             break
 
     # ------------------------------------------------------------------
@@ -1554,6 +1590,7 @@ def _extract_common_expenses_pdf_attributes(
         raw = "0." + (alicuota_m.group(1).lstrip("0") or "0")
         try:
             attrs["alicuota"] = round(float(raw), 4)
+            _confidence["alicuota"] = CONF_SCORE_PDFMINER
         except ValueError:
             pass
 
@@ -1565,6 +1602,7 @@ def _extract_common_expenses_pdf_attributes(
         raw = (bldg_total_m.group(1) or bldg_total_m.group(2) or "").replace(".", "")
         if raw.isdigit():
             attrs["building_total_expense"] = int(raw)
+            _confidence["building_total_expense"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Fondos provision percentage (integer, e.g. 5 from "FONDOS 5%")
@@ -1573,6 +1611,7 @@ def _extract_common_expenses_pdf_attributes(
     if fondos_pct_m:
         try:
             attrs["fondos_pct"] = int(fondos_pct_m.group(1))
+            _confidence["fondos_pct"] = CONF_SCORE_PDFMINER
         except ValueError:
             pass
 
@@ -1585,6 +1624,7 @@ def _extract_common_expenses_pdf_attributes(
     cargo_fijo_m = _GC_CARGO_FIJO_RE.search(text)
     if cargo_fijo_m:
         attrs["cargo_fijo"] = _parse_amount_to_int(cargo_fijo_m.group(1))
+        _confidence["cargo_fijo"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Breakdown table: GC amount / fondos / subtotal departamento
@@ -1593,14 +1633,17 @@ def _extract_common_expenses_pdf_attributes(
     gc_m = _GC_AMOUNT_RE.search(text)
     if gc_m:
         attrs["gastos_comunes_amount"] = _parse_amount_to_int(gc_m.group(1))
+        _confidence["gastos_comunes_amount"] = CONF_SCORE_PDFMINER
 
     fondos_m = _GC_FONDOS_AMOUNT_RE.search(text)
     if fondos_m:
         attrs["fondos_amount"] = _parse_amount_to_int(fondos_m.group(1))
+        _confidence["fondos_amount"] = CONF_SCORE_PDFMINER
 
     sub_depto_m = _GC_SUBTOTAL_DEPTO_RE.search(text)
     if sub_depto_m:
         attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_m.group(1))
+        _confidence["subtotal_departamento"] = CONF_SCORE_PDFMINER
 
     # Fallback: three-consecutive-amounts block (GC / fondos / subtotal)
     if not (
@@ -1615,10 +1658,13 @@ def _extract_common_expenses_pdf_attributes(
             a3 = _parse_amount_to_int(three_m.group(3))
             if not attrs.get("gastos_comunes_amount") and a1:
                 attrs["gastos_comunes_amount"] = a1
+                _confidence["gastos_comunes_amount"] = CONF_SCORE_PDFMINER
             if not attrs.get("fondos_amount") and a2:
                 attrs["fondos_amount"] = a2
+                _confidence["fondos_amount"] = CONF_SCORE_PDFMINER
             if not attrs.get("subtotal_departamento") and a3:
                 attrs["subtotal_departamento"] = a3
+                _confidence["subtotal_departamento"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Subtotal recargos + total amount
@@ -1632,16 +1678,20 @@ def _extract_common_expenses_pdf_attributes(
         parsed_amounts = [_parse_amount_to_int(a) for a in all_amounts]
         if parsed_amounts:
             attrs["subtotal_recargos"] = parsed_amounts[0]
+            _confidence["subtotal_recargos"] = CONF_SCORE_PDFMINER
         if len(parsed_amounts) >= 2:
             attrs["total_amount"] = max(parsed_amounts)
+            _confidence["total_amount"] = CONF_SCORE_PDFMINER
     else:
         # Fallback individual patterns
         rec_m = _GC_SUBTOTAL_RECARGOS_RE.search(text)
         if rec_m:
             attrs["subtotal_recargos"] = _parse_amount_to_int(rec_m.group(1))
+            _confidence["subtotal_recargos"] = CONF_SCORE_PDFMINER
         total_generic = _extract_total_amount(text)
         if total_generic:
             attrs["total_amount"] = total_generic
+            _confidence["total_amount"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Last payment information
@@ -1651,14 +1701,17 @@ def _extract_common_expenses_pdf_attributes(
     if lp_date_m:
         raw_lp = lp_date_m.group(1).replace("/", "-")
         attrs["last_payment_date"] = _gc_fix_year(raw_lp, year_str) if year_str else raw_lp
+        _confidence["last_payment_date"] = CONF_SCORE_PDFMINER
 
     lp_amount_m = _GC_LAST_PAYMENT_AMOUNT_RE.search(text)
     if lp_amount_m:
         attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_m.group(1))
+        _confidence["last_payment_amount"] = CONF_SCORE_PDFMINER
 
     lp_folio_m = _GC_LAST_PAYMENT_FOLIO_RE.search(text)
     if lp_folio_m:
         attrs["last_payment_folio"] = lp_folio_m.group(1)
+        _confidence["last_payment_folio"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
     # Tier 2: OCR-based hot-water extraction (optional)
@@ -1676,9 +1729,13 @@ def _extract_common_expenses_pdf_attributes(
                 attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(
                     hw_m.group(4)
                 )
+                for _k in ("hot_water_reading_prev", "hot_water_reading_curr",
+                           "hot_water_consumption", "hot_water_cost_per_m3"):
+                    _confidence[_k] = CONF_SCORE_OCR
                 # Monto is optional in the regex (group 5 may be None)
                 if hw_m.group(5):
                     attrs["hot_water_amount"] = _parse_amount_to_int(hw_m.group(5))
+                    _confidence["hot_water_amount"] = CONF_SCORE_OCR
 
             # Subtotal Consumo (hot-water subtotal) — prefer this as hot-water
             # total if individual monto was not captured.
@@ -1686,8 +1743,10 @@ def _extract_common_expenses_pdf_attributes(
             if sc_m:
                 subtotal_consumo = _parse_amount_to_int(sc_m.group(1))
                 attrs["subtotal_consumo"] = subtotal_consumo
+                _confidence["subtotal_consumo"] = CONF_SCORE_OCR
                 if not attrs.get("hot_water_amount") and subtotal_consumo:
                     attrs["hot_water_amount"] = subtotal_consumo
+                    _confidence["hot_water_amount"] = CONF_SCORE_OCR
 
             # OCR gives more accurate subtotal_recargos when the $ amount
             # appears on the same line as the label (PSM modes that preserve
@@ -1703,12 +1762,14 @@ def _extract_common_expenses_pdf_attributes(
                 # Sanity: recargos should be smaller than the grand total
                 if candidate and candidate < attrs.get("total_amount", float("inf")):
                     attrs["subtotal_recargos"] = candidate
+                    _confidence["subtotal_recargos"] = CONF_SCORE_OCR
 
             # OCR (PSM 4) gives a cleaner building name than pdfminer which
             # garbles font-encoded characters (e.g. "Jon" instead of "Jose").
             bldg_ocr_m = _GC_OCR_BUILDING_NAME_RE.search(ocr_text)
             if bldg_ocr_m:
                 attrs["building_name"] = "Edificio " + bldg_ocr_m.group(1).strip()
+                _confidence["building_name"] = CONF_SCORE_OCR
 
             # OCR gives the correct Cargo Fijo amount (pdfminer may misread
             # digit glyphs, e.g. "$9.638" → "$9.838").  Override any pdfminer
@@ -1719,6 +1780,7 @@ def _extract_common_expenses_pdf_attributes(
                 # Sanity: cargo fijo should be smaller than the grand total
                 if candidate and candidate < attrs.get("total_amount", float("inf")):
                     attrs["cargo_fijo"] = candidate
+                    _confidence["cargo_fijo"] = CONF_SCORE_OCR
 
     # ------------------------------------------------------------------
     # Combined address for binary-sensor display
@@ -1768,17 +1830,22 @@ def _extract_common_expenses_pdf_attributes(
     # Funds provision percentage: integer (e.g. 5 from "FONDOS 5%")
     if "fondos_pct" in attrs:
         attrs["funds_provision_percentage"] = attrs["fondos_pct"]
+        _confidence["funds_provision_percentage"] = _confidence.get("fondos_pct", CONF_SCORE_PDFMINER)
     # Funds provision amount = fondos 5% (e.g. $6.697)
     if "fondos_amount" in attrs:
         attrs["funds_provision"] = attrs["fondos_amount"]
+        _confidence["funds_provision"] = _confidence.get("fondos_amount", CONF_SCORE_PDFMINER)
     # Subtotal = GC apartment portion + fondos (Subtotal Departamento)
     if "subtotal_departamento" in attrs:
         attrs["subtotal"] = attrs["subtotal_departamento"]
+        _confidence["subtotal"] = _confidence.get("subtotal_departamento", CONF_SCORE_PDFMINER)
     # Fixed charge (Cargo Fijo) — prefer cargo_fijo; fall back to subtotal_recargos
     if not attrs.get("cargo_fijo") and attrs.get("subtotal_recargos"):
         attrs["cargo_fijo"] = attrs["subtotal_recargos"]
+        _confidence["cargo_fijo"] = _confidence.get("subtotal_recargos", CONF_SCORE_PDFMINER)
     if "cargo_fijo" in attrs:
         attrs["fixed_charge"] = attrs["cargo_fijo"]
+        _confidence["fixed_charge"] = _confidence.get("cargo_fijo", CONF_SCORE_PDFMINER)
 
     # ------------------------------------------------------------------
     # Agua caliente (Subtotal Consumo) derivation — fallback when OCR did
@@ -1798,8 +1865,10 @@ def _extract_common_expenses_pdf_attributes(
         if total and sub_depto and cargo and total > sub_depto + cargo:
             derived_consumo = total - sub_depto - cargo
             attrs["subtotal_consumo"] = derived_consumo
+            _confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
             if not attrs.get("hot_water_amount"):
                 attrs["hot_water_amount"] = derived_consumo
+                _confidence["hot_water_amount"] = CONF_SCORE_DERIVED
 
     # GC total = Subtotal Departamento + Cargo Fijo
     # (does NOT include hot-water, which is a separate device)
@@ -1807,6 +1876,30 @@ def _extract_common_expenses_pdf_attributes(
     cargo_val = attrs.get("cargo_fijo", 0)
     if subtotal_val and cargo_val:
         attrs["gc_total"] = subtotal_val + cargo_val
+        _confidence["gc_total"] = CONF_SCORE_DERIVED
+
+    # Propagate alias confidence from binary-sensor attributes
+    if "building_total_expense" in attrs:
+        _confidence["gross_common_expenses"] = _confidence.get(
+            "building_total_expense", CONF_SCORE_PDFMINER
+        )
+    if "alicuota" in attrs:
+        _confidence["gross_common_expenses_percentage"] = _confidence.get(
+            "alicuota", CONF_SCORE_PDFMINER
+        )
+    if "hot_water_reading_prev" in attrs:
+        _confidence["previous_measure"] = _confidence.get(
+            "hot_water_reading_prev", CONF_SCORE_OCR
+        )
+    if "hot_water_reading_curr" in attrs:
+        _confidence["actual_measure"] = _confidence.get(
+            "hot_water_reading_curr", CONF_SCORE_OCR
+        )
+
+    # Store per-attribute confidence scores in the returned dict.
+    # Keys starting with "_" are metadata — not exposed as HA state attributes.
+    if _confidence:
+        attrs["_confidence"] = _confidence
 
     return attrs
 
@@ -2105,6 +2198,14 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
         # PDF layout (separate from the email extractor).
         pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type, pdf_path)
         attrs.update(pdf_attrs)
+
+        # Ensure every non-metadata attribute has a confidence score.
+        # Extractors that do not provide per-attribute confidence (water, gas,
+        # electricity) receive the default pdfminer confidence (70%).
+        confidence = attrs.setdefault("_confidence", {})
+        for key in list(attrs):
+            if not key.startswith("_") and key not in confidence:
+                confidence[key] = CONF_SCORE_PDFMINER
     except Exception as err:
         _LOGGER.debug("Error extracting attributes from PDF '%s': %s", pdf_path, err)
 
