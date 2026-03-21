@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-03-21
+
+### Fixed
+
+- **`sensor.concierge_gastos_comunes_last_update` timezone and time** (`sensor.py`):
+
+  The emission date extracted from the PDF was stored as midnight UTC
+  (`2026-02-18T00:00:00+00:00`), which rolled back to the previous day in
+  negative-offset timezones (e.g. `America/Santiago`, UTC−3).
+
+  **Fix**: The datetime is now created at **noon (12:00)** in the HA-configured
+  local timezone by using `dt_util.DEFAULT_TIME_ZONE` instead of `timezone.utc`.
+  The displayed value becomes e.g. `2026-02-18T12:00:00-03:00`.
+
+- **`address` attribute on `binary_sensor.concierge_gastos_comunes_status`**
+  (`attribute_extractor.py`):
+
+  pdfminer's font-encoding misread "Jose" as "Jon" (e.g. "Edificio Jon Miguel"
+  instead of "Edificio Jose Miguel").  This happened because the building-name
+  glyphs are embedded in a non-standard font that pdfminer cannot decode
+  accurately.
+
+  **Fix**: A `difflib.SequenceMatcher` heuristic compares the pdfminer-extracted
+  building name with the known-correct reference
+  (`_GC_KNOWN_BUILDING_NAME = "Edificio Jose Miguel"`).  When the similarity
+  ratio is ≥ 0.75 (a minor garbling), the known-correct name is used.  Only a
+  substantially different extracted name (ratio < 0.75) is accepted as a genuine
+  building change.  The OCR tier (Tier 2) continues to override with the
+  accurately-read value when the optional libraries are installed.
+
+- **`gross_common_expenses_percentage` precision**
+  (`attribute_extractor.py`):
+
+  The alícuota percentage was rounded to 6 decimal places; the user-visible value
+  is now rounded to **4 decimal places** (e.g. `0.9511` instead of `0.951100`).
+
+- **`sensor.concierge_gastos_comunes_fixed_charge` preferred extraction process**
+  (`attribute_extractor.py`):
+
+  pdfminer misreads the "Cargo Fijo" digit glyphs (e.g. `$9.638` → `$9.838`).
+  The OCR tier (Tier 2, `_GC_OCR_CARGO_FIJO_RE`) was already present and
+  correctly extracts `$9.638`; it is now explicitly documented as the
+  **preferred** process and overrides the pdfminer-derived value when the
+  optional OCR libraries are installed.
+
+- **Agua Caliente (Subtotal Consumo) not extracted from Gastos Comunes PDF**
+  (`attribute_extractor.py`, `binary_sensor.py`):
+
+  The "Nota de Cobro" PDF contains an Agua Caliente section whose meter-reading
+  table lives in the JPEG background and is therefore invisible to pdfminer.
+  The OCR tier already extracted individual meter readings when available.
+  However, the hot-water subtotal (`subtotal_consumo`) and amount
+  (`hot_water_amount`) were missing when OCR was unavailable.
+
+  **Fix**: After all OCR and pdfminer extraction, a derivation fallback computes:
+  `subtotal_consumo = total_amount − subtotal_departamento − cargo_fijo`.
+  When `cargo_fijo` comes from OCR the result is exact; without OCR the value
+  is approximate (off by the pdfminer digit-garbling error, ~$200).
+
+  The new attributes `hot_water_amount`, `subtotal_consumo`, and
+  `funds_provision_percentage` are now also exposed as attributes of
+  `binary_sensor.concierge_gastos_comunes_status`.
+
+### Changed
+
+- **`sensor.concierge_gastos_comunes_funds_provision_percentage` → attribute**
+  (`sensor.py`, `binary_sensor.py`):
+
+  The dedicated sensor entity `sensor.concierge_gastos_comunes_funds_provision_pct`
+  has been removed.  The `funds_provision_percentage` value is now exposed as an
+  attribute of `binary_sensor.concierge_gastos_comunes_status`, alongside the
+  other building-level fields.
+
+- **`manifest.json`**: version bumped to `0.8.5`.
+
 ## [0.8.4] - 2026-03-21
 
 ### Added
