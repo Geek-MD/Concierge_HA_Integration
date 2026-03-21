@@ -56,7 +56,8 @@ _SERVICE_SET_VALUE_SCHEMA = vol.Schema(
         vol.Required(_ATTR_ENTITY_ID): cv.string,
         vol.Optional(_ATTR_ATTRIBUTE): cv.string,
         vol.Required(_ATTR_VALUE): vol.Any(vol.Coerce(float), str),
-    }
+    },
+    extra=vol.REMOVE_EXTRA,
 )
 
 # How often to re-scan the inbox for new services
