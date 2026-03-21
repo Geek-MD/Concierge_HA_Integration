@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-03-21
+
+### Changed
+
+- **`set_value` service — entity selector** (`__init__.py`, `services.yaml`,
+  `strings.json`, `translations/en.json`, `translations/es.json`):
+
+  The `set_value` action now targets a **Concierge HA Integration entity**
+  (e.g. `sensor.concierge_gastos_comunes_fixed_charge`) instead of a device.
+  This makes selection more precise and avoids ambiguity when a device exposes
+  multiple sensors.
+
+  The `attribute` field is now **optional**: when omitted, the attribute key is
+  inferred automatically from the selected entity's unique_id, so callers that
+  pick a dedicated sensor entity (e.g. the *Fixed Charge* sensor) do not need
+  to know the internal key name.
+
+  Updated service fields:
+
+  | Field | Type | Description |
+  |-------|------|-------------|
+  | `entity_id` | entity selector | Any entity from the Concierge HA Integration |
+  | `attribute` | text (optional) | Internal attribute key — inferred from the entity when omitted |
+  | `value` | number | The correct value (e.g. `9638`) |
+
+### Fixed
+
+- **Duplicate `total_amount` sensor for Common Expenses** (`sensor.py`,
+  `__init__.py`):
+
+  `sensor.concierge_{id}_total_amount` was reading the same `gc_total`
+  extracted attribute as `sensor.concierge_{id}_total` (the *Total*
+  billing-breakdown sensor).  The `total_amount` sensor is no longer created
+  for `common_expenses` devices.
+
+  Existing installations are migrated automatically (config-entry minor version
+  1.3 → 1.4): the stale `total_amount` entity is removed from the HA entity
+  registry on the first restart after the upgrade.
+
+- **`manifest.json`**: version bumped to `0.9.1`.
+
 ## [0.9.0] - 2026-03-21
 
 ### Added

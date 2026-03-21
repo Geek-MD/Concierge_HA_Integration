@@ -17,7 +17,7 @@ force_refresh:
 set_value:
   name: "Set Value (Learning Override)"
   description: >
-    Forces a specific value for a named attribute of a Concierge service device
+    Forces a specific value for a named attribute of a Concierge service entity
     and persists it as a learning override. The correction is applied immediately
     and will be re-applied automatically after every future email/PDF analysis,
     overriding any value extracted by pdfminer or OCR. Use this when the
@@ -25,14 +25,14 @@ set_value:
     re-scanning (e.g. due to font-encoding errors in the PDF).
     The overridden sensor will show extraction_confidence = 100.
   fields:
-    device_id:
-      name: "Device"
+    entity_id:
+      name: "Entity"
       description: >
-        The Concierge service device whose attribute you want to correct. Only
-        devices belonging to the Concierge HA Integration are shown.
+        Any entity belonging to the Concierge service whose attribute you want
+        to correct. Only entities from the Concierge HA Integration are shown.
       required: true
       selector:
-        device:
+        entity:
           integration: concierge_ha_integration
     attribute:
       name: "Attribute"
@@ -40,8 +40,9 @@ set_value:
         The internal attribute key to override (e.g. "fixed_charge",
         "gastos_comunes_amount", "cargo_fijo", "hot_water_amount"). This must
         match the key used internally by the extractor, which is also the key
-        shown in the sensor's state attributes.
-      required: true
+        shown in the sensor's state attributes. When omitted the key is inferred
+        automatically from the selected entity.
+      required: false
       selector:
         text:
     value:

@@ -135,6 +135,34 @@ _COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("gc_total",                    "Total",                      "$",  "gc_total"),
 ]
 
+# Reverse mapping: unique_id suffix → extracted attribute key.
+# Used by the set_value service to infer the attribute key from an entity when
+# the caller does not specify it explicitly.
+_UID_SUFFIX_TO_ATTR_KEY: dict[str, str] = {
+    uid_suffix: attr_key
+    for attr_key, _, _, uid_suffix in (
+        _WATER_SPECIFIC_SENSORS
+        + _ELECTRICITY_SPECIFIC_SENSORS
+        + _COMMON_EXPENSES_SPECIFIC_SENSORS
+    )
+}
+
+
+def attr_key_from_uid_suffix(uid_suffix: str, service_type: str) -> str:
+    """Return the extracted-attribute key for a sensor's unique_id suffix.
+
+    For billing-breakdown sensors the uid_suffix → attr_key mapping is looked
+    up in ``_UID_SUFFIX_TO_ATTR_KEY``.  For the generic ``total_amount``
+    sensor the attribute key is service-type-specific (see
+    ``_TOTAL_AMOUNT_ATTR``).  Any other suffix is returned as-is.
+    """
+    if uid_suffix in _UID_SUFFIX_TO_ATTR_KEY:
+        return _UID_SUFFIX_TO_ATTR_KEY[uid_suffix]
+    if uid_suffix == "total_amount":
+        return _TOTAL_AMOUNT_ATTR.get(service_type, "total_amount")
+    return uid_suffix
+
+
 # Webmail provider domains that are too generic for sender-domain matching.
 # Emails forwarded through these services carry the forwarder's address, not
 # the original utility company's address.
@@ -165,7 +193,11 @@ async def async_setup_entry(
     (no device) so it does not appear in the "Devices that don't belong to a
     sub-entry" category.
     Per-subentry sensors:
-    - All service types: last_update, consumption, total_amount.
+    - All service types except common_expenses: last_update, consumption,
+      total_amount.
+    - Common expenses: last_update + breakdown sensors (bill, funds_provision,
+      subtotal, fixed_charge, total).  No total_amount — it would duplicate
+      the "total" (gc_total) breakdown sensor.
     - Gas: cost_per_unit (generic $/unit sensor).
     - Electricity: cost_per_unit + 4 billing-breakdown sensors
       (service_administration, electricity_transport, stabilization_fund,
@@ -192,10 +224,16 @@ async def async_setup_entry(
             ConciergeServiceLastUpdateSensor(
                 coordinator, config_entry, subentry_id, subentry.data
             ),
-            ConciergeServiceTotalAmountSensor(
-                coordinator, config_entry, subentry_id, subentry.data
-            ),
         ]
+
+        # Common-expenses already exposes gc_total via the breakdown sensor
+        # ("Total"), so the generic total_amount sensor would be a duplicate.
+        if service_type != SERVICE_TYPE_COMMON_EXPENSES:
+            entities.append(
+                ConciergeServiceTotalAmountSensor(
+                    coordinator, config_entry, subentry_id, subentry.data
+                )
+            )
 
         # Common-expenses device has no meaningful "consumption" metric —
         # the billing unit is monetary only.  All other service types
