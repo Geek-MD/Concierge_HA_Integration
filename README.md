@@ -36,7 +36,7 @@
 - 📡 **Per-Service Entity Architecture** (v0.7.0+): Each configured service device
   exposes entities based on service type:
 
-  **Gas (5 entities):**
+  **Gas (6 entities):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -45,8 +45,9 @@
   | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
   | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ |
   | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
+  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
-  **Electricity (9 entities):**
+  **Electricity (10 entities):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -59,8 +60,9 @@
   | `sensor.concierge_{id}_electricity_transport` | Sensor | — | Electricity transport charge (`$`) |
   | `sensor.concierge_{id}_stabilization_fund` | Sensor | — | Stabilisation fund charge (`$`) |
   | `sensor.concierge_{id}_electricity_consumption` | Sensor | — | Cost of consumed electricity (`$`) |
+  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
-  **Water (14 entities — `cost_per_unit` is replaced by granular sensors):**
+  **Water (15 entities — `cost_per_unit` is replaced by granular sensors):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -78,9 +80,9 @@
   | `sensor.concierge_{id}_wastewater_recolection` | Sensor | — | Wastewater collection charge (`$`) |
   | `sensor.concierge_{id}_wastewater_treatment` | Sensor | — | Wastewater treatment charge (`$`) |
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal before surcharges (`$`) |
-  | `sensor.concierge_{id}_other_charges` | Sensor | — | Net surcharges (`$`) |
+  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
-  **Common Expenses (8 entities):**
+  **Common Expenses (9 entities):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -92,6 +94,7 @@
   | `sensor.concierge_{id}_funds_provision` | Sensor | — | Funds provision amount (`$`) — Bill × Funds % / 100 |
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
+  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
@@ -118,7 +121,47 @@
 
 ---
 
-## 📦 Installation
+## 🔧 Services (Actions)
+
+### `concierge_ha_integration.force_refresh`
+
+Forces an immediate email reading and PDF analysis for a single service device,
+bypassing the regular 30-minute polling interval.
+
+| Field | Required | Selector | Description |
+|---|---|---|---|
+| `device_id` | ✅ | `device` (integration filter) | The Concierge service device to refresh. Only devices from this integration are shown in the picker. |
+
+> **UI filter** — the device picker automatically filters to show **only** devices that belong to
+> `concierge_ha_integration`.  Devices from other integrations or domains are never listed.
+
+#### Usage examples
+
+**Developer Tools → Actions:**
+```yaml
+action: concierge_ha_integration.force_refresh
+data:
+  device_id: "abc123def456abc123def456"   # HA device registry ID
+```
+
+**Automation / Script:**
+```yaml
+action: concierge_ha_integration.force_refresh
+target: {}
+data:
+  device_id: "{{ device_id('sensor.concierge_enel_total_amount') }}"
+```
+
+#### Per-device button entity
+
+Each service device also exposes a `button.concierge_{service_id}_force_refresh` entity
+(category: **Configuration**).  Pressing the button from the device detail page
+(**Settings → Devices & Services → *device name***) triggers the same targeted refresh
+without any scripting or service call.
+
+---
+
+
 
 ### Option 1: HACS (Recommended)
 
@@ -271,6 +314,8 @@ with five entities:
 - ✅ Per-service entity architecture (v0.7.0): each service device exposes `binary_sensor.concierge_{id}_status` (Diagnostic) + `sensor.concierge_{id}_last_update` (Diagnostic) + `sensor.concierge_{id}_consumption` + `sensor.concierge_{id}_cost_per_unit` + `sensor.concierge_{id}_total_amount`
 - ✅ `sensor.concierge_{id}_last_update` holds the full ISO 8601 bill datetime (v0.7.1)
 - ✅ Passes ruff, mypy and hassfest checks
+- ✅ `force_refresh` service (v0.8.4): forces immediate email scan + PDF analysis for a single device; device picker is filtered to Concierge HA Integration only
+- ✅ Per-device *Force Refresh* button entity (v0.8.4): `button.concierge_{id}_force_refresh` appears in the device Configuration panel; pressing it triggers the same targeted refresh as the service
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services

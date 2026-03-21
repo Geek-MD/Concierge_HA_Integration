@@ -294,6 +294,87 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             raise UpdateFailed(f"Error communicating with IMAP server: {err}") from err
 
+    async def async_refresh_service(self, subentry_id: str) -> None:
+        """Force an immediate email scan and PDF analysis for a single service subentry.
+
+        Opens a dedicated IMAP connection, fetches the latest email for the
+        specified subentry, merges the result into the coordinator data, and
+        notifies all listeners so that every entity tied to the device updates
+        immediately.
+        """
+        _LOGGER.info(
+            "Concierge Services: force refresh started for subentry %s", subentry_id
+        )
+        try:
+            result = await self.hass.async_add_executor_job(
+                self._fetch_single_service_data, subentry_id
+            )
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "Concierge Services: force refresh failed for subentry %s: %s",
+                subentry_id,
+                err,
+            )
+            return
+
+        # Merge the fresh result into the current coordinator state and notify
+        # all listeners so every entity linked to this device is refreshed.
+        current: dict[str, Any] = (
+            self.data if self.data is not None
+            else {"connection_status": "OK", "services": {}}
+        )
+        current.setdefault("services", {})[subentry_id] = result
+        self.async_set_updated_data(current)
+        _LOGGER.info(
+            "Concierge Services: force refresh completed for subentry %s", subentry_id
+        )
+
+    def _fetch_single_service_data(self, subentry_id: str) -> dict[str, Any]:
+        """Open a fresh IMAP connection and fetch data for one service subentry.
+
+        This runs in an executor thread (blocking I/O).
+        """
+        imap = None
+        empty: dict[str, Any] = {"last_updated": None, "attributes": {}}
+        try:
+            cfg = self._cfg
+            imap = imaplib.IMAP4_SSL(
+                cfg[CONF_IMAP_SERVER], cfg[CONF_IMAP_PORT], timeout=30
+            )
+            imap.login(cfg[CONF_EMAIL], cfg[CONF_PASSWORD])
+
+            assert self.config_entry is not None
+            subentry = self.config_entry.subentries.get(subentry_id)  # type: ignore[attr-defined]
+            if subentry is None:
+                _LOGGER.warning(
+                    "Concierge Services: subentry %s not found during force refresh",
+                    subentry_id,
+                )
+                return empty
+
+            return self._find_latest_email_for_service(imap, subentry.data)
+
+        except imaplib.IMAP4.error as err:
+            _LOGGER.warning(
+                "Concierge Services: IMAP auth failed during force refresh for %s: %s",
+                subentry_id,
+                err,
+            )
+            return empty
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "Concierge Services: force refresh IMAP error for %s: %s",
+                subentry_id,
+                err,
+            )
+            return empty
+        finally:
+            if imap is not None:
+                try:
+                    imap.logout()
+                except Exception:  # pylint: disable=broad-except
+                    pass
+
     def _fetch_service_data(self) -> dict[str, Any]:
         """Fetch service data from IMAP."""
         imap = None

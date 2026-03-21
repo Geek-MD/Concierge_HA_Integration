@@ -102,5 +102,17 @@
         "subentry_added": "Dispositivo de servicio agregado exitosamente."
       }
     }
+  },
+  "services": {
+    "force_refresh": {
+      "name": "Forzar Actualización",
+      "description": "Fuerza la lectura inmediata de correos electrónicos y el análisis de PDF para un dispositivo de servicio específico, omitiendo el intervalo de sondeo regular.",
+      "fields": {
+        "device_id": {
+          "name": "Dispositivo",
+          "description": "El dispositivo de servicio Concierge a actualizar. Solo se muestran los dispositivos pertenecientes a la integración Concierge HA."
+        }
+      }
+    }
   }
 }
