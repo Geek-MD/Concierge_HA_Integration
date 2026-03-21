@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from datetime import timedelta
+from typing import Any
 
 import voluptuous as vol
 
@@ -34,11 +35,24 @@ PLATFORMS: list[str] = ["sensor", "binary_sensor", "button"]
 # HA service name for the force-refresh action
 SERVICE_FORCE_REFRESH = "force_refresh"
 
+# HA service name for the learning-override action
+SERVICE_SET_VALUE = "set_value"
+
 # Field name passed in the service call data
 _ATTR_DEVICE_ID = "device_id"
+_ATTR_ATTRIBUTE = "attribute"
+_ATTR_VALUE = "value"
 
 _SERVICE_FORCE_REFRESH_SCHEMA = vol.Schema(
     {vol.Required(_ATTR_DEVICE_ID): cv.string}
+)
+
+_SERVICE_SET_VALUE_SCHEMA = vol.Schema(
+    {
+        vol.Required(_ATTR_DEVICE_ID): cv.string,
+        vol.Required(_ATTR_ATTRIBUTE): cv.string,
+        vol.Required(_ATTR_VALUE): vol.Any(vol.Coerce(float), str),
+    }
 )
 
 # How often to re-scan the inbox for new services
@@ -201,6 +215,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # entry so it is automatically removed when the entry is unloaded.
     _async_register_force_refresh_service(hass, entry)
 
+    # Register the set_value (learning-override) service.
+    _async_register_set_value_service(hass, entry)
+
     # Run an initial inbox scan for new services right after setup.
     hass.async_create_task(
         _async_discover_services(hass, entry),
@@ -288,6 +305,90 @@ def _async_register_force_refresh_service(
     )
     entry.async_on_unload(
         lambda: hass.services.async_remove(DOMAIN, SERVICE_FORCE_REFRESH)
+    )
+
+
+@callback
+def _async_register_set_value_service(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Register the ``set_value`` service for learning-override corrections.
+
+    The service is registered only once (guarded by ``has_service``).  It
+    stores a user-supplied correct value for a named attribute of a specific
+    service device, persists it to the learning store, and applies it
+    immediately so all related entities refresh without waiting for the next
+    polling cycle.
+    """
+    if hass.services.has_service(DOMAIN, SERVICE_SET_VALUE):
+        return
+
+    async def _handle_set_value(service_call: ServiceCall) -> None:
+        """Store a user-corrected attribute value for a Concierge service device.
+
+        Parameters
+        ----------
+        device_id : str
+            HA device registry ID of the target Concierge service device.
+        attribute : str
+            Internal attribute key to override (e.g. ``fixed_charge``,
+            ``cargo_fijo``, ``gastos_comunes_amount``).
+        value : float | str
+            The correct value.  Integers are stored as-is; floats that are
+            whole numbers (e.g. ``9638.0``) are coerced to ``int`` to match
+            the type expected by the sensor.
+        """
+        device_id: str = service_call.data[_ATTR_DEVICE_ID]
+        attribute: str = service_call.data[_ATTR_ATTRIBUTE]
+        raw_value = service_call.data[_ATTR_VALUE]
+
+        # Coerce whole-number floats to int so sensors receive the expected type.
+        if isinstance(raw_value, float) and raw_value.is_integer():
+            value: Any = int(raw_value)
+        else:
+            value = raw_value
+
+        dev_reg = dr.async_get(hass)
+
+        for entry_id, entry_data in hass.data.get(DOMAIN, {}).items():
+            coordinator: ConciergeServicesCoordinator | None = entry_data.get(
+                "coordinator"
+            )
+            if coordinator is None:
+                continue
+            config_entry = hass.config_entries.async_get_entry(entry_id)
+            if config_entry is None:
+                continue
+            for sub_id in config_entry.subentries:  # type: ignore[attr-defined]
+                sub_device = dev_reg.async_get_device(
+                    identifiers={(DOMAIN, f"{entry_id}_{sub_id}")}
+                )
+                if sub_device is not None and sub_device.id == device_id:
+                    _LOGGER.info(
+                        "Concierge Services: set_value for device %s "
+                        "(subentry %s), %s=%r",
+                        device_id,
+                        sub_id,
+                        attribute,
+                        value,
+                    )
+                    await coordinator.async_set_learning_override(
+                        sub_id, attribute, value
+                    )
+                    return
+
+        raise HomeAssistantError(
+            f"Device '{device_id}' is not a Concierge HA Integration service device."
+        )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_VALUE,
+        _handle_set_value,
+        schema=_SERVICE_SET_VALUE_SCHEMA,
+    )
+    entry.async_on_unload(
+        lambda: hass.services.async_remove(DOMAIN, SERVICE_SET_VALUE)
     )
 
 

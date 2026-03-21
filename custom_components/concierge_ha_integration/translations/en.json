@@ -113,6 +113,24 @@
           "description": "The Concierge service device to refresh. Only devices from the Concierge HA Integration are shown."
         }
       }
+    },
+    "set_value": {
+      "name": "Set Value (Learning Override)",
+      "description": "Forces a specific value for a named attribute of a Concierge service device and persists it as a learning override. The value is applied immediately and after every future email/PDF analysis.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Concierge service device whose attribute you want to correct. Only devices from the Concierge HA Integration are shown."
+        },
+        "attribute": {
+          "name": "Attribute",
+          "description": "The internal attribute key to override (e.g. 'fixed_charge', 'gastos_comunes_amount')."
+        },
+        "value": {
+          "name": "Value",
+          "description": "The correct numeric value for the attribute (e.g. 9638)."
+        }
+      }
     }
   }
 }

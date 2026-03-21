@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import email
 import imaplib
+import json
 import logging
+import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -43,11 +45,21 @@ from .const import (
     SERVICE_TYPE_UNKNOWN,
     SERVICE_TYPE_WATER,
 )
-from .attribute_extractor import extract_attributes_from_email_body, extract_attributes_from_pdf, _strip_html
+from .attribute_extractor import (
+    CONF_SCORE_OVERRIDE,
+    extract_attributes_from_email_body,
+    extract_attributes_from_pdf,
+    _strip_html,
+)
 from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
 from .service_detector import classify_service_type
 
 _LOGGER = logging.getLogger(__name__)
+
+# Subdirectory (relative to the HA config dir) used for the learning data file.
+_LEARNING_FILE_SUBDIR = "concierge_ha_integration"
+# File name for the persistent learning-override store.
+_LEARNING_FILE_NAME = "learning.json"
 
 # Update interval for checking mail server connection
 SCAN_INTERVAL = timedelta(minutes=30)
@@ -286,6 +298,120 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_entry = config_entry
         self._cfg = effective_cfg
         self._pdf_dir: str = hass.config.path(PDF_SUBDIR)
+        self._learning_file: str = hass.config.path(
+            _LEARNING_FILE_SUBDIR, _LEARNING_FILE_NAME
+        )
+
+    # ------------------------------------------------------------------
+    # Learning-override helpers
+    # ------------------------------------------------------------------
+
+    def _load_learning_data(self) -> dict[str, Any]:
+        """Load learning overrides from the persistent JSON store.
+
+        Returns an empty dict when the file does not exist yet or when it
+        cannot be parsed (corrupt file).  Failures are logged at WARNING
+        level only.
+        """
+        try:
+            with open(self._learning_file, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                return data
+        except FileNotFoundError:
+            pass
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "Concierge Services: could not load learning data from '%s': %s",
+                self._learning_file,
+                err,
+            )
+        return {}
+
+    def _save_learning_data(self, data: dict[str, Any]) -> None:
+        """Persist *data* to the learning JSON file.
+
+        Creates parent directories if they do not exist.
+        """
+        try:
+            os.makedirs(os.path.dirname(self._learning_file), exist_ok=True)
+            with open(self._learning_file, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, ensure_ascii=False)
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "Concierge Services: could not save learning data to '%s': %s",
+                self._learning_file,
+                err,
+            )
+
+    def _set_learning_override_sync(
+        self, subentry_id: str, attribute: str, value: Any
+    ) -> None:
+        """Blocking part of ``async_set_learning_override``.
+
+        Loads the current learning store, updates the entry for
+        (*subentry_id*, *attribute*), and writes the result back to disk.
+        """
+        data = self._load_learning_data()
+        data.setdefault(subentry_id, {})[attribute] = {
+            "value": value,
+            "set_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._save_learning_data(data)
+        _LOGGER.info(
+            "Concierge Services: learning override saved — subentry=%s, %s=%r",
+            subentry_id,
+            attribute,
+            value,
+        )
+
+    async def async_set_learning_override(
+        self, subentry_id: str, attribute: str, value: Any
+    ) -> None:
+        """Store a user-supplied correction and apply it to in-memory data.
+
+        The value is written to the persistent learning store (in an executor
+        thread) and then immediately reflected in the coordinator data so all
+        entities update without waiting for the next polling cycle.
+        """
+        await self.hass.async_add_executor_job(
+            self._set_learning_override_sync, subentry_id, attribute, value
+        )
+
+        # Update in-memory coordinator data so entities refresh immediately.
+        if self.data is not None:
+            service_data = self.data.get("services", {}).get(subentry_id)
+            if service_data is not None:
+                attrs = service_data.setdefault("attributes", {})
+                attrs[attribute] = value
+                attrs.setdefault("_confidence", {})[attribute] = CONF_SCORE_OVERRIDE
+                self.async_set_updated_data(self.data)
+
+    def _apply_learning_overrides(
+        self, attrs: dict[str, Any], subentry_id: str
+    ) -> None:
+        """Apply any stored learning overrides to *attrs* in-place.
+
+        Called at the end of :meth:`_find_latest_email_for_service` so that
+        user-corrected values are always applied after automatic extraction.
+        """
+        data = self._load_learning_data()
+        overrides = data.get(subentry_id, {})
+        if not overrides:
+            return
+        confidence = attrs.setdefault("_confidence", {})
+        for attr_name, override in overrides.items():
+            override_value = override.get("value")
+            if override_value is None:
+                continue
+            attrs[attr_name] = override_value
+            confidence[attr_name] = CONF_SCORE_OVERRIDE
+            _LOGGER.debug(
+                "Concierge Services: learning override applied — subentry=%s, %s=%r",
+                subentry_id,
+                attr_name,
+                override_value,
+            )
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from IMAP server."""
@@ -352,7 +478,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 return empty
 
-            return self._find_latest_email_for_service(imap, subentry.data)
+            return self._find_latest_email_for_service(imap, subentry.data, subentry_id)
 
         except imaplib.IMAP4.error as err:
             _LOGGER.warning(
@@ -400,7 +526,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Fetch data for each subentry (service device)
             assert self.config_entry is not None
             for subentry_id, subentry in self.config_entry.subentries.items():  # type: ignore[attr-defined]
-                service_data = self._find_latest_email_for_service(imap, subentry.data)
+                service_data = self._find_latest_email_for_service(imap, subentry.data, subentry_id)
                 result["services"][subentry_id] = service_data
 
         except imaplib.IMAP4.error as err:
@@ -429,7 +555,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return result
 
     def _find_latest_email_for_service(
-        self, imap: imaplib.IMAP4_SSL, service_data: dict[str, Any]
+        self, imap: imaplib.IMAP4_SSL, service_data: dict[str, Any],
+        subentry_id: str | None = None,
     ) -> dict[str, Any]:
         """Find the latest email for a service and extract attributes."""
         result: dict[str, Any] = {
@@ -557,6 +684,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             result["last_updated"] = latest_date
             result["attributes"] = latest_attributes
+
+            # Apply any user-corrected values stored via the ``set_value`` service.
+            # This must run after all automatic extraction so overrides always win.
+            if subentry_id:
+                self._apply_learning_overrides(latest_attributes, subentry_id)
 
             if latest_date is None:
                 _LOGGER.warning(
@@ -743,6 +875,18 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
             return {}
         return service_data.get("attributes", {})
 
+    def _get_confidence(self, attr_key: str) -> float | None:
+        """Return the extraction confidence (0–100) for *attr_key*, or None.
+
+        The confidence is stored under the ``_confidence`` metadata key in the
+        extracted attributes dict.  Values are:
+          70  – pdfminer text layer (may have font-encoding errors)
+          85  – OCR (Tesseract) — more accurate for image-backed PDFs
+          60  – derived/calculated from other extracted values
+         100  – user-supplied correction (learning override via ``set_value``)
+        """
+        return self._get_extracted_attrs().get("_confidence", {}).get(attr_key)
+
 
 class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
     """Sensor reporting the date of the latest processed bill for a service.
@@ -811,6 +955,14 @@ class ConciergeServiceConsumptionSensor(_ConciergeServiceBaseSensor):
         """Return the consumption value."""
         return self._get_extracted_attrs().get(self._consumption_attr)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extraction confidence for this sensor's value."""
+        conf = self._get_confidence(self._consumption_attr)
+        if conf is not None:
+            return {"extraction_confidence": conf}
+        return {}
+
 
 class ConciergeServiceCostPerUnitSensor(_ConciergeServiceBaseSensor):
     """Sensor reporting the cost per consumption unit extracted from the latest bill."""
@@ -839,6 +991,15 @@ class ConciergeServiceCostPerUnitSensor(_ConciergeServiceBaseSensor):
             return None
         return self._get_extracted_attrs().get(self._cost_attr_key)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extraction confidence for this sensor's value."""
+        if self._cost_attr_key:
+            conf = self._get_confidence(self._cost_attr_key)
+            if conf is not None:
+                return {"extraction_confidence": conf}
+        return {}
+
 
 class ConciergeServiceTotalAmountSensor(_ConciergeServiceBaseSensor):
     """Sensor reporting the total bill amount extracted from the latest bill."""
@@ -866,6 +1027,14 @@ class ConciergeServiceTotalAmountSensor(_ConciergeServiceBaseSensor):
     def native_value(self) -> float | None:
         """Return the total bill amount for this service device."""
         return self._get_extracted_attrs().get(self._total_attr_key)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extraction confidence for this sensor's value."""
+        conf = self._get_confidence(self._total_attr_key)
+        if conf is not None:
+            return {"extraction_confidence": conf}
+        return {}
 
 
 class ConciergeServiceBillingBreakdownSensor(_ConciergeServiceBaseSensor):
@@ -902,6 +1071,14 @@ class ConciergeServiceBillingBreakdownSensor(_ConciergeServiceBaseSensor):
     def native_value(self) -> float | int | None:
         """Return the billing breakdown attribute value."""
         return self._get_extracted_attrs().get(self._attr_key)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extraction confidence for this sensor's value."""
+        conf = self._get_confidence(self._attr_key)
+        if conf is not None:
+            return {"extraction_confidence": conf}
+        return {}
 
 
 class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):

@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-21
+
+### Added
+
+- **Extraction confidence score on PDF-sourced sensors** (`attribute_extractor.py`,
+  `sensor.py`):
+
+  Every sensor whose value is derived from a PDF bill now exposes an
+  `extraction_confidence` attribute (0–100) in its state attributes.  The
+  score reflects how reliable the extraction method is:
+
+  | Score | Source |
+  |-------|--------|
+  | 70    | pdfminer text layer (may have font-encoding errors) |
+  | 85    | Tesseract OCR (more accurate for image-backed PDFs) |
+  | 60    | Derived / calculated from other extracted values |
+  | 100   | User-supplied correction via `set_value` service |
+
+  This is implemented by the new `_confidence` metadata dict returned by
+  `_extract_common_expenses_pdf_attributes()` (and added as a default
+  70 % fallback by `extract_attributes_from_pdf()` for all other service
+  types: water, gas, electricity).
+
+  The new constants `CONF_SCORE_PDFMINER`, `CONF_SCORE_OCR`,
+  `CONF_SCORE_DERIVED`, and `CONF_SCORE_OVERRIDE` are exported from
+  `attribute_extractor.py`.
+
+  Sensors that now carry `extraction_confidence`:
+  - `sensor.*_consumption` (ConciergeServiceConsumptionSensor)
+  - `sensor.*_cost_per_unit` (ConciergeServiceCostPerUnitSensor)
+  - `sensor.*_total_amount` (ConciergeServiceTotalAmountSensor)
+  - `sensor.*_bill`, `sensor.*_fixed_charge`, `sensor.*_subtotal`,
+    `sensor.*_funds_provision`, `sensor.*_total`, and all other
+    billing-breakdown sensors (ConciergeServiceBillingBreakdownSensor)
+
+- **`set_value` service — learning override** (`__init__.py`,
+  `sensor.py`, `services.yaml`, `strings.json`,
+  `translations/en.json`):
+
+  A new Home Assistant action `concierge_ha_integration.set_value` that
+  allows forcing a correct value for any named attribute of a Concierge
+  service device.  The correction is:
+
+  1. **Persisted** to `<ha_config>/concierge_ha_integration/learning.json`
+     so it survives HA restarts.
+  2. **Applied immediately** — the sensor updates without waiting for the
+     next 30-minute polling cycle.
+  3. **Re-applied automatically** after every future email/PDF analysis,
+     overriding any value extracted by pdfminer or OCR.
+  4. **Flagged with `extraction_confidence = 100`** so users can see that
+     the value comes from a user correction rather than automatic
+     extraction.
+
+  Service fields:
+
+  | Field | Type | Description |
+  |-------|------|-------------|
+  | `device_id` | device selector | The Concierge service device |
+  | `attribute` | text | Internal attribute key (e.g. `fixed_charge`) |
+  | `value` | number | The correct value (e.g. `9638`) |
+
+  **Use case**: `sensor.concierge_gastos_comunes_fixed_charge` reads
+  `9838` because neither pdfminer nor OCR can decode the PDF glyph
+  correctly.  Calling `set_value` with `attribute: fixed_charge`,
+  `value: 9638` stores the correction and all dependent sensors
+  (`gc_total`, `subtotal_consumo`, etc.) are also re-derived from the
+  correct base value on the next refresh.
+
+- **`manifest.json`**: version bumped to `0.9.0`.
+
 ## [0.8.5] - 2026-03-21
 
 ### Fixed
