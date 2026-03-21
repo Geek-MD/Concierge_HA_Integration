@@ -22,9 +22,12 @@ from .const import (
     CONF_IMAP_SERVER,
     CONF_PASSWORD,
     CONF_SERVICE_ID,
+    CONF_SERVICE_TYPE,
     DOMAIN,
+    SERVICE_TYPE_COMMON_EXPENSES,
+    SERVICE_TYPE_UNKNOWN,
 )
-from .sensor import ConciergeServicesCoordinator
+from .sensor import ConciergeServicesCoordinator, attr_key_from_uid_suffix
 from .service_detector import detect_services_from_imap, normalize_service_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,6 +43,7 @@ SERVICE_SET_VALUE = "set_value"
 
 # Field name passed in the service call data
 _ATTR_DEVICE_ID = "device_id"
+_ATTR_ENTITY_ID = "entity_id"
 _ATTR_ATTRIBUTE = "attribute"
 _ATTR_VALUE = "value"
 
@@ -49,8 +53,8 @@ _SERVICE_FORCE_REFRESH_SCHEMA = vol.Schema(
 
 _SERVICE_SET_VALUE_SCHEMA = vol.Schema(
     {
-        vol.Required(_ATTR_DEVICE_ID): cv.string,
-        vol.Required(_ATTR_ATTRIBUTE): cv.string,
+        vol.Required(_ATTR_ENTITY_ID): cv.string,
+        vol.Optional(_ATTR_ATTRIBUTE): cv.string,
         vol.Required(_ATTR_VALUE): vol.Any(vol.Coerce(float), str),
     }
 )
@@ -71,6 +75,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     - 1.2 (≥ v0.5.x): service entities carry config_subentry_id; hub device removed.
     - 1.3 (≥ v0.7.0): single service sensor split into binary_sensor + 4 sensors;
       old sensor.concierge_services_* entities removed from entity registry.
+    - 1.4 (≥ v0.9.1): redundant total_amount sensor removed from common_expenses
+      devices (duplicated the gc_total billing-breakdown sensor).
     """
     _LOGGER.info(
         "Migrating Concierge Services config entry from version %s.%s",
@@ -87,6 +93,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_1_2_to_1_3(hass, entry)
         hass.config_entries.async_update_entry(entry, minor_version=3)  # type: ignore[call-arg]
         _LOGGER.info("Concierge Services migration to version 1.3 completed")
+
+    if entry.version == 1 and entry.minor_version < 4:
+        _migrate_1_3_to_1_4(hass, entry)
+        hass.config_entries.async_update_entry(entry, minor_version=4)  # type: ignore[call-arg]
+        _LOGGER.info("Concierge Services migration to version 1.4 completed")
 
     return True
 
@@ -186,6 +197,32 @@ def _migrate_1_2_to_1_3(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 "Removed legacy service sensor entity %s (unique_id: %s)",
                 entity_entry.entity_id,
                 entity_entry.unique_id,
+            )
+
+
+@callback
+def _migrate_1_3_to_1_4(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Migrate entity registry from v1.3 (≤ v0.9.0) to v1.4 (≥ v0.9.1).
+
+    Removes the redundant ``total_amount`` sensor for common_expenses subentries.
+    That sensor read ``gc_total`` — identical to the ``total`` billing-breakdown
+    sensor — so the two were duplicates.  Only the breakdown sensor is kept.
+    """
+    ent_reg = er.async_get(hass)
+    subentries = entry.subentries  # type: ignore[attr-defined]
+
+    for sub_id, subentry in subentries.items():
+        if subentry.data.get(CONF_SERVICE_TYPE) != SERVICE_TYPE_COMMON_EXPENSES:
+            continue
+        old_unique_id = f"{entry.entry_id}_{sub_id}_total_amount"
+        entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, old_unique_id)
+        if entity_id is not None:
+            ent_reg.async_remove(entity_id)
+            _LOGGER.debug(
+                "Removed duplicate total_amount sensor for common_expenses "
+                "subentry %s (entity: %s)",
+                sub_id,
+                entity_id,
             )
 
 
@@ -324,22 +361,25 @@ def _async_register_set_value_service(
         return
 
     async def _handle_set_value(service_call: ServiceCall) -> None:
-        """Store a user-corrected attribute value for a Concierge service device.
+        """Store a user-corrected attribute value for a Concierge service entity.
 
         Parameters
         ----------
-        device_id : str
-            HA device registry ID of the target Concierge service device.
-        attribute : str
+        entity_id : str
+            HA entity registry ID of any entity belonging to the target
+            Concierge service subentry.
+        attribute : str | None
             Internal attribute key to override (e.g. ``fixed_charge``,
-            ``cargo_fijo``, ``gastos_comunes_amount``).
+            ``gastos_comunes_amount``).  When omitted the key is inferred
+            from the entity's unique_id suffix so the caller does not need to
+            know the internal name.
         value : float | str
             The correct value.  Integers are stored as-is; floats that are
             whole numbers (e.g. ``9638.0``) are coerced to ``int`` to match
             the type expected by the sensor.
         """
-        device_id: str = service_call.data[_ATTR_DEVICE_ID]
-        attribute: str = service_call.data[_ATTR_ATTRIBUTE]
+        entity_id: str = service_call.data[_ATTR_ENTITY_ID]
+        attribute: str | None = service_call.data.get(_ATTR_ATTRIBUTE)
         raw_value = service_call.data[_ATTR_VALUE]
 
         # Coerce whole-number floats to int so sensors receive the expected type.
@@ -348,38 +388,57 @@ def _async_register_set_value_service(
         else:
             value = raw_value
 
-        dev_reg = dr.async_get(hass)
+        ent_reg = er.async_get(hass)
+        entity_entry = ent_reg.async_get(entity_id)
 
-        for entry_id, entry_data in hass.data.get(DOMAIN, {}).items():
-            coordinator: ConciergeServicesCoordinator | None = entry_data.get(
-                "coordinator"
+        if entity_entry is None or entity_entry.platform != DOMAIN:
+            raise HomeAssistantError(
+                f"Entity '{entity_id}' is not a Concierge HA Integration entity."
             )
-            if coordinator is None:
-                continue
-            config_entry = hass.config_entries.async_get_entry(entry_id)
-            if config_entry is None:
-                continue
-            for sub_id in config_entry.subentries:  # type: ignore[attr-defined]
-                sub_device = dev_reg.async_get_device(
-                    identifiers={(DOMAIN, f"{entry_id}_{sub_id}")}
-                )
-                if sub_device is not None and sub_device.id == device_id:
-                    _LOGGER.info(
-                        "Concierge Services: set_value for device %s "
-                        "(subentry %s), %s=%r",
-                        device_id,
-                        sub_id,
-                        attribute,
-                        value,
-                    )
-                    await coordinator.async_set_learning_override(
-                        sub_id, attribute, value
-                    )
-                    return
 
-        raise HomeAssistantError(
-            f"Device '{device_id}' is not a Concierge HA Integration service device."
+        sub_id: str | None = entity_entry.config_subentry_id  # type: ignore[attr-defined]
+        entry_id: str | None = entity_entry.config_entry_id  # type: ignore[attr-defined]
+
+        if sub_id is None or entry_id is None:
+            raise HomeAssistantError(
+                f"Entity '{entity_id}' is not associated with a Concierge "
+                "service subentry."
+            )
+
+        entry_data = hass.data.get(DOMAIN, {}).get(entry_id, {})
+        coordinator: ConciergeServicesCoordinator | None = entry_data.get(
+            "coordinator"
         )
+        if coordinator is None:
+            raise HomeAssistantError(
+                f"No coordinator found for entity '{entity_id}'."
+            )
+
+        # Infer the attribute key from the entity's unique_id when not provided.
+        if attribute is None:
+            config_entry = hass.config_entries.async_get_entry(entry_id)
+            service_type: str = SERVICE_TYPE_UNKNOWN
+            if config_entry is not None and sub_id in config_entry.subentries:  # type: ignore[attr-defined]
+                service_type = config_entry.subentries[sub_id].data.get(  # type: ignore[attr-defined]
+                    CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN
+                )
+            unique_id: str = entity_entry.unique_id or ""
+            prefix = f"{entry_id}_{sub_id}_"
+            uid_suffix = (
+                unique_id[len(prefix):]
+                if unique_id.startswith(prefix)
+                else unique_id
+            )
+            attribute = attr_key_from_uid_suffix(uid_suffix, service_type)
+
+        _LOGGER.info(
+            "Concierge Services: set_value for entity %s (subentry %s), %s=%r",
+            entity_id,
+            sub_id,
+            attribute,
+            value,
+        )
+        await coordinator.async_set_learning_override(sub_id, attribute, value)
 
     hass.services.async_register(
         DOMAIN,

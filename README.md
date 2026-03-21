@@ -82,18 +82,17 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal before surcharges (`$`) |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
-  **Common Expenses (9 entities):**
+  **Common Expenses (8 entities):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
   | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
-  | `sensor.concierge_{id}_total_amount` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
   | `sensor.concierge_{id}_bill` | Sensor | — | GC apartment portion (`$`) — alícuota % of building expense |
-  | `sensor.concierge_{id}_funds_provision_percentage` | Sensor | — | Funds provision percentage (`%`) — e.g. 5 |
   | `sensor.concierge_{id}_funds_provision` | Sensor | — | Funds provision amount (`$`) — Bill × Funds % / 100 |
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
+  | `sensor.concierge_{id}_total` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
