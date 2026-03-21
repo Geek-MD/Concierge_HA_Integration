@@ -5,7 +5,7 @@ import email
 import imaplib
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import Any
