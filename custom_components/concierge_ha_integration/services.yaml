@@ -1,0 +1,15 @@
+force_refresh:
+  name: "Force Refresh"
+  description: >
+    Forces an immediate email reading and PDF analysis for a single Concierge
+    service device, bypassing the regular polling interval.
+  fields:
+    device_id:
+      name: "Device"
+      description: >
+        The Concierge service device to refresh. Only devices belonging to the
+        Concierge HA Integration are shown.
+      required: true
+      selector:
+        device:
+          integration: concierge_ha_integration

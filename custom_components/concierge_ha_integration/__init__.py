@@ -5,8 +5,12 @@ import logging
 from dataclasses import asdict
 from datetime import timedelta
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
@@ -25,7 +29,17 @@ from .service_detector import detect_services_from_imap, normalize_service_id
 _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to support
-PLATFORMS: list[str] = ["sensor", "binary_sensor"]
+PLATFORMS: list[str] = ["sensor", "binary_sensor", "button"]
+
+# HA service name for the force-refresh action
+SERVICE_FORCE_REFRESH = "force_refresh"
+
+# Field name passed in the service call data
+_ATTR_DEVICE_ID = "device_id"
+
+_SERVICE_FORCE_REFRESH_SCHEMA = vol.Schema(
+    {vol.Required(_ATTR_DEVICE_ID): cv.string}
+)
 
 # How often to re-scan the inbox for new services
 _DISCOVERY_INTERVAL = timedelta(hours=1)
@@ -176,12 +190,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
 
-    # Forward the setup to sensor and binary_sensor platforms
+    # Forward the setup to sensor, binary_sensor, and button platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Reload the entry whenever it is updated (options changed, subentries
     # added/removed) so that sensors are recreated with the latest config.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    # Register the force_refresh service.  The service is tied to this config
+    # entry so it is automatically removed when the entry is unloaded.
+    _async_register_force_refresh_service(hass, entry)
 
     # Run an initial inbox scan for new services right after setup.
     hass.async_create_task(
@@ -208,6 +226,69 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     return True
+
+
+@callback
+def _async_register_force_refresh_service(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Register the ``force_refresh`` service and schedule its removal on unload.
+
+    The service is registered only once (guarded by ``has_service``). Because
+    ``single_config_entry: true`` is set in the manifest, ``async_setup_entry``
+    is called at most once per HA session, so this guard is a safety net for
+    potential future changes.
+    """
+    if hass.services.has_service(DOMAIN, SERVICE_FORCE_REFRESH):
+        return
+
+    async def _handle_force_refresh(service_call: ServiceCall) -> None:
+        """Force an immediate email scan and PDF analysis for a service device.
+
+        The caller must pass ``device_id`` — the HA device registry ID of a
+        Concierge service device.  The handler locates the matching subentry,
+        asks the coordinator to refresh only that service, and returns once
+        the refresh is complete (or has failed with a warning).
+        """
+        device_id: str = service_call.data[_ATTR_DEVICE_ID]
+        dev_reg = dr.async_get(hass)
+
+        for entry_id, entry_data in hass.data.get(DOMAIN, {}).items():
+            coordinator: ConciergeServicesCoordinator | None = entry_data.get(
+                "coordinator"
+            )
+            if coordinator is None:
+                continue
+            config_entry = hass.config_entries.async_get_entry(entry_id)
+            if config_entry is None:
+                continue
+            for sub_id in config_entry.subentries:  # type: ignore[attr-defined]
+                sub_device = dev_reg.async_get_device(
+                    identifiers={(DOMAIN, f"{entry_id}_{sub_id}")}
+                )
+                if sub_device is not None and sub_device.id == device_id:
+                    _LOGGER.info(
+                        "Concierge Services: force refresh requested for "
+                        "device %s (subentry %s)",
+                        device_id,
+                        sub_id,
+                    )
+                    await coordinator.async_refresh_service(sub_id)
+                    return
+
+        raise HomeAssistantError(
+            f"Device '{device_id}' is not a Concierge HA Integration service device."
+        )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_FORCE_REFRESH,
+        _handle_force_refresh,
+        schema=_SERVICE_FORCE_REFRESH_SCHEMA,
+    )
+    entry.async_on_unload(
+        lambda: hass.services.async_remove(DOMAIN, SERVICE_FORCE_REFRESH)
+    )
 
 
 async def _async_discover_services(hass: HomeAssistant, entry: ConfigEntry) -> None:

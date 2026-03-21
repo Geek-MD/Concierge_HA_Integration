@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-03-21
+
+### Added
+
+- **`force_refresh` service** (`__init__.py`, `services.yaml`):
+
+  A new Home Assistant action `concierge_ha_integration.force_refresh` that
+  forces an immediate email scan and PDF analysis for a single service device,
+  bypassing the regular 30-minute polling interval.
+
+  - **Device selector filtered to this integration** — the UI field only
+    shows devices that belong to `concierge_ha_integration`; devices from
+    other integrations or domains are never listed.
+  - Accepts one required field: `device_id` (the HA device registry ID of
+    the target Concierge service device).
+  - Can be called from **Developer Tools → Actions**, automations, scripts,
+    or the Lovelace button card.
+
+- **Per-device *Force Refresh* button entity** (`button.py`):
+
+  A `ButtonEntity` (entity category: `CONFIG`) is created for every service
+  device subentry.  Pressing the button from the device detail page in
+  **Settings → Devices & Services** triggers the same targeted refresh as
+  the service above — only that one device's emails are re-scanned and its
+  PDF re-analysed, without waiting for the next polling cycle.
+
+  Entity ID pattern: `button.concierge_{service_id}_force_refresh`
+
+- **`async_refresh_service` / `_fetch_single_service_data`** (`sensor.py`):
+
+  Two new methods on `ConciergeServicesCoordinator`:
+  - `async_refresh_service(subentry_id)` — async entry point; opens a
+    dedicated IMAP connection for the targeted service, merges the fresh
+    result into coordinator state, and notifies all listeners.
+  - `_fetch_single_service_data(subentry_id)` — blocking helper (runs in
+    an executor thread) that connects to IMAP, fetches and processes the
+    latest email for a single subentry, and returns the result dict.
+
+- **`"button"` platform** added to `PLATFORMS` in `__init__.py`.
+
+- **Translations** (`strings.json`, `translations/en.json`,
+  `translations/es.json`): new `services.force_refresh` section with
+  English and Spanish labels/descriptions for the service and its
+  `device_id` field.
+
+- **`manifest.json`**: version bumped to `0.8.4`.
+
 ## [0.8.3] - 2026-03-21
 
 ### Fixed
