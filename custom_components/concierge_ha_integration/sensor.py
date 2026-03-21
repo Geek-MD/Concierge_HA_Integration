@@ -403,59 +403,60 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         if date_header:
                             try:
                                 email_date = parsedate_to_datetime(date_header)
-                                if latest_date is None or email_date > latest_date:
-                                    latest_date = email_date
-                                    latest_attributes = extract_attributes_from_email_body(
-                                        subject, body, service_type
+                                latest_date = email_date
+                                latest_attributes = extract_attributes_from_email_body(
+                                    subject, body, service_type
+                                )
+                                # Attempt to download (or locate) the bill PDF
+                                try:
+                                    pdf_path = download_pdf_from_email(
+                                        msg,
+                                        self._pdf_dir,
+                                        service_id,
+                                        email_date,
+                                        latest_attributes,
                                     )
-                                    # Attempt to download (or locate) the bill PDF
-                                    try:
-                                        pdf_path = download_pdf_from_email(
-                                            msg,
-                                            self._pdf_dir,
-                                            service_id,
-                                            email_date,
-                                            latest_attributes,
+                                    if pdf_path:
+                                        latest_attributes["pdf_path"] = pdf_path
+                                        # Extract additional attributes from the
+                                        # PDF (e.g. consumption for Metrogas).
+                                        # PDF values override email-derived values.
+                                        pdf_attrs = extract_attributes_from_pdf(
+                                            pdf_path, service_type
                                         )
-                                        if pdf_path:
-                                            latest_attributes["pdf_path"] = pdf_path
-                                            # Extract additional attributes from the
-                                            # PDF (e.g. consumption for Metrogas).
-                                            # PDF values override email-derived values.
-                                            pdf_attrs = extract_attributes_from_pdf(
-                                                pdf_path, service_type
+                                        latest_attributes.update(pdf_attrs)
+                                        # For PDF-only services (common_expenses,
+                                        # hot_water) the email Date header reflects
+                                        # when the administrator forwarded the bill,
+                                        # not the bill issue date.  Override
+                                        # last_updated with the bill's Fecha Emisión
+                                        # extracted from the PDF when available.
+                                        if service_type in (
+                                            SERVICE_TYPE_COMMON_EXPENSES,
+                                            SERVICE_TYPE_HOT_WATER,
+                                        ):
+                                            emission_str = latest_attributes.get(
+                                                "emission_date"
                                             )
-                                            latest_attributes.update(pdf_attrs)
-                                            # For PDF-only services (common_expenses,
-                                            # hot_water) the email Date header reflects
-                                            # when the administrator forwarded the bill,
-                                            # not the bill issue date.  Override
-                                            # last_updated with the bill's Fecha Emisión
-                                            # extracted from the PDF when available.
-                                            if service_type in (
-                                                SERVICE_TYPE_COMMON_EXPENSES,
-                                                SERVICE_TYPE_HOT_WATER,
-                                            ):
-                                                emission_str = latest_attributes.get(
-                                                    "emission_date"
-                                                )
-                                                if emission_str:
-                                                    try:
-                                                        latest_date = datetime.strptime(
-                                                            emission_str, "%d-%m-%Y"
-                                                        ).replace(tzinfo=timezone.utc)
-                                                    except ValueError:
-                                                        pass
-                                    except Exception as pdf_err:
-                                        _LOGGER.warning(
-                                            "PDF download failed for service '%s': %s",
-                                            service_id, pdf_err,
-                                        )
+                                            if emission_str:
+                                                try:
+                                                    latest_date = datetime.strptime(
+                                                        emission_str, "%d-%m-%Y"
+                                                    ).replace(tzinfo=timezone.utc)
+                                                except ValueError:
+                                                    pass
+                                except Exception as pdf_err:
+                                    _LOGGER.warning(
+                                        "PDF download failed for service '%s': %s",
+                                        service_id, pdf_err,
+                                    )
                             except Exception:
                                 pass
 
-                        if latest_date:
-                            break
+                        # Only analyse the single most-recent matching email.
+                        # Emails are iterated newest-first (reversed), so the
+                        # first match is always the most recent one.
+                        break
 
                 except Exception as err:
                     _LOGGER.debug("Error processing email %s: %s", email_id, err)
@@ -586,8 +587,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if matches >= len(significant_words):
                     return True
 
-        # Match by service_id pattern
-        service_pattern = service_id.replace('_', '.*')
+        # Match by service_id pattern using whole-word boundaries so that a
+        # short service ID such as "gas" does not spuriously match words that
+        # merely contain it as a substring (e.g. "Gastos Comunes").
+        service_pattern = r'\b' + service_id.replace('_', r'.*') + r'\b'
         if re.search(service_pattern, combined_text, re.IGNORECASE):
             return True
 
