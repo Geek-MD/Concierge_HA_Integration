@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-03-21
+
+### Fixed
+- **Gas service incorrectly matching "Gastos Comunes" emails** (`sensor.py`):
+
+  The service-ID pattern used in `_matches_service` was a plain substring
+  search (`re.search("gas", combined_text, re.IGNORECASE)`).  Because "gas"
+  is a prefix of "Gastos", any email whose subject or body contained the
+  word "Gastos Comunes" was matched by the gas service account.  This caused
+  the gas service to download the Gastos Comunes PDF (attached to the
+  Gastos Comunes email) and rename it `gas_*.pdf`, producing incorrect
+  sensor values.
+
+  **Fix**: The service-ID pattern now uses whole-word (`\b`) boundaries:
+  `\bgas\b` no longer matches "Gastos" while continuing to match standalone
+  occurrences of the word "Gas" in email text.
+
+- **Gas bill (and all services) now analyse only the most-recent matching
+  email** (`sensor.py`):
+
+  The email loop already iterates from newest to oldest.  The redundant
+  `if latest_date is None or email_date > latest_date:` guard has been
+  removed and the `break` is now unconditional once a matching email is
+  found.  This makes the "use only the most-recent email" contract
+  explicit: as soon as the first (newest) matching email is processed,
+  the loop exits immediately — no further emails are examined regardless
+  of their content.
+
+- **`manifest.json`**: version bumped to `0.8.3`.
+
 ## [0.8.2] - 2026-03-20
 
 ### Fixed
