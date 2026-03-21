@@ -58,10 +58,15 @@ _ELECTRICITY_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
 _WATER_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
 }
 
-# Gastos Comunes: building-level totals used to verify the apartment portion.
+# Gastos Comunes: building-level totals used to verify the apartment portion,
+# plus the funds-provision percentage and agua caliente subtotal extracted
+# from the same "Nota de Cobro" PDF.
 _COMMON_EXPENSES_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
     "gross_common_expenses": 0,
     "gross_common_expenses_percentage": 0,
+    "funds_provision_percentage": 0,
+    "hot_water_amount": 0,
+    "subtotal_consumo": 0,
 }
 
 # Agua Caliente: meter readings used to verify consumption.

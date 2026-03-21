@@ -21,6 +21,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_EMAIL,
@@ -116,7 +117,6 @@ _ELECTRICITY_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
 # The overall bill (including hot water) is on the separate hot-water device.
 _COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("gastos_comunes_amount",       "Bill",                       "$",  "gc_bill"),
-    ("funds_provision_percentage",  "Funds Provision Percentage", "%",  "gc_funds_provision_pct"),
     ("funds_provision",             "Funds Provision",            "$",  "gc_funds_provision"),
     ("subtotal",                    "Subtotal",                   "$",  "gc_subtotal"),
     ("fixed_charge",                "Fixed Charge",               "$",  "gc_fixed_charge"),
@@ -521,9 +521,21 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             )
                                             if emission_str:
                                                 try:
-                                                    latest_date = datetime.strptime(
+                                                    parsed = datetime.strptime(
                                                         emission_str, "%d-%m-%Y"
-                                                    ).replace(tzinfo=timezone.utc)
+                                                    )
+                                                    # Use the HA-configured local
+                                                    # timezone at noon so the sensor
+                                                    # displays the correct local date
+                                                    # (avoids UTC-midnight rollover to
+                                                    # the previous day in negative-offset
+                                                    # timezones such as America/Santiago).
+                                                    latest_date = parsed.replace(
+                                                        hour=12,
+                                                        minute=0,
+                                                        second=0,
+                                                        tzinfo=dt_util.DEFAULT_TIME_ZONE,
+                                                    )
                                                 except ValueError:
                                                     pass
                                 except Exception as pdf_err:
