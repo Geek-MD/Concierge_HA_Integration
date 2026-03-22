@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-03-21
+
+### Fixed
+
+- **OCR log level** (`attribute_extractor.py`):
+
+  The `ImportError` raised when `pymupdf`, `pytesseract`, or `Pillow` are not
+  installed was logged at `WARNING` level, producing a noisy log entry on every
+  PDF scan for users who do not need OCR.  Downgraded to `DEBUG`, consistent
+  with the function docstring ("Failures are logged at DEBUG level only").
+
+- **`set_value` service — `device_id` rejection** (`__init__.py`):
+
+  When the service was invoked from the **Developer Tools → Actions** panel or
+  any other HA UI picker, Home Assistant automatically injected `device_id`
+  into the service-call data.  The voluptuous schema had no `device_id` key,
+  so validation raised:
+
+  > `extra keys not allowed @ data['device_id']. Got None`
+
+  Fixed by adding `extra=vol.REMOVE_EXTRA` to `_SERVICE_SET_VALUE_SCHEMA` so
+  the automatically-injected key is silently discarded before validation.
+
+### Changed
+
+- **`set_value` service — `value` field UI** (`services.yaml`):
+
+  The `value` field selector was changed from `number` (spinner widget) to
+  `text`, giving a plain text input box consistent with the `attribute` field.
+  Users now see two intuitive text boxes side-by-side in the visual editor
+  instead of a numeric spinner.
+
+  Updated service fields:
+
+  | Field | Type | Description |
+  |-------|------|-------------|
+  | `entity_id` | entity selector | Any entity from the Concierge HA Integration |
+  | `attribute` | text (optional) | Internal attribute key — inferred from entity when omitted |
+  | `value` | **text** | The correct value (e.g. `9638`) |
+
+- **`manifest.json`**: version bumped to `0.9.2`.
+
 ## [0.9.1] - 2026-03-21
 
 ### Changed

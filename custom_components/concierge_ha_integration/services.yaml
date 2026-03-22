@@ -48,12 +48,8 @@ set_value:
     value:
       name: "Value"
       description: >
-        The correct numeric value for the attribute (e.g. 9638 for a
-        fixed-charge amount in CLP). Whole-number floats are stored as integers.
+        The correct value for the attribute (e.g. 9638 for a fixed-charge
+        amount in CLP). Enter a number or text value as needed.
       required: true
       selector:
-        number:
-          min: -9999999999
-          max: 9999999999
-          step: 1
-          mode: box
+        text:
