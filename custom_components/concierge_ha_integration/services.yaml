@@ -24,16 +24,10 @@ set_value:
     automatic extraction produces a wrong value that cannot be corrected by
     re-scanning (e.g. due to font-encoding errors in the PDF).
     The overridden sensor will show extraction_confidence = 100.
+  target:
+    entity:
+      integration: concierge_ha_integration
   fields:
-    entity_id:
-      name: "Entity"
-      description: >
-        Any entity belonging to the Concierge service whose attribute you want
-        to correct. Only entities from the Concierge HA Integration are shown.
-      required: true
-      selector:
-        entity:
-          integration: concierge_ha_integration
     attribute:
       name: "Attribute"
       description: >

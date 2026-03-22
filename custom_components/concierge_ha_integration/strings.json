@@ -118,10 +118,6 @@
       "name": "Set Value (Learning Override)",
       "description": "Forces a specific value for a named attribute of a Concierge service entity and persists it as a learning override. The value is applied immediately and after every future email/PDF analysis.",
       "fields": {
-        "entity_id": {
-          "name": "Entity",
-          "description": "Any entity belonging to the Concierge service whose attribute you want to correct. Only entities from the Concierge HA Integration are shown."
-        },
         "attribute": {
           "name": "Attribute",
           "description": "The internal attribute key to override (e.g. 'fixed_charge', 'gastos_comunes_amount'). When omitted the key is inferred automatically from the selected entity."

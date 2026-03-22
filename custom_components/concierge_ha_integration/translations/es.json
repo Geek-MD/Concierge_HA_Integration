@@ -118,10 +118,6 @@
       "name": "Establecer Valor (Corrección de Aprendizaje)",
       "description": "Fuerza un valor específico para un atributo de una entidad del servicio Concierge y lo persiste como corrección de aprendizaje. El valor se aplica de inmediato y después de cada análisis futuro de correo/PDF.",
       "fields": {
-        "entity_id": {
-          "name": "Entidad",
-          "description": "Cualquier entidad perteneciente al servicio Concierge cuyo atributo desea corregir. Solo se muestran entidades de la integración Concierge HA."
-        },
         "attribute": {
           "name": "Atributo",
           "description": "La clave de atributo interno a sobrescribir (p.ej. 'fixed_charge', 'gastos_comunes_amount'). Si se omite, la clave se infiere automáticamente de la entidad seleccionada."

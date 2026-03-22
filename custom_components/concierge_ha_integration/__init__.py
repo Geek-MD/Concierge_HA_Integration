@@ -43,7 +43,6 @@ SERVICE_SET_VALUE = "set_value"
 
 # Field name passed in the service call data
 _ATTR_DEVICE_ID = "device_id"
-_ATTR_ENTITY_ID = "entity_id"
 _ATTR_ATTRIBUTE = "attribute"
 _ATTR_VALUE = "value"
 
@@ -53,11 +52,9 @@ _SERVICE_FORCE_REFRESH_SCHEMA = vol.Schema(
 
 _SERVICE_SET_VALUE_SCHEMA = vol.Schema(
     {
-        vol.Required(_ATTR_ENTITY_ID): cv.string,
         vol.Optional(_ATTR_ATTRIBUTE): cv.string,
         vol.Required(_ATTR_VALUE): vol.Any(vol.Coerce(float), str),
-    },
-    extra=vol.REMOVE_EXTRA,
+    }
 )
 
 # How often to re-scan the inbox for new services
@@ -366,9 +363,11 @@ def _async_register_set_value_service(
 
         Parameters
         ----------
-        entity_id : str
+        target.entity_id : str
             HA entity registry ID of any entity belonging to the target
-            Concierge service subentry.
+            Concierge service subentry.  Provided via the service target
+            (not as a data field) so that HA renders the entity picker and
+            the ``attribute``/``value`` fields as proper form inputs.
         attribute : str | None
             Internal attribute key to override (e.g. ``fixed_charge``,
             ``gastos_comunes_amount``).  When omitted the key is inferred
@@ -379,7 +378,16 @@ def _async_register_set_value_service(
             whole numbers (e.g. ``9638.0``) are coerced to ``int`` to match
             the type expected by the sensor.
         """
-        entity_id: str = service_call.data[_ATTR_ENTITY_ID]
+        # Read entity_id from the service target (not from data).
+        target = service_call.target or {}
+        entity_id_raw = target.get("entity_id")
+        if not entity_id_raw:
+            raise HomeAssistantError(
+                "No entity_id provided. Select a Concierge HA Integration entity as the target."
+            )
+        entity_id: str = (
+            entity_id_raw[0] if isinstance(entity_id_raw, list) else entity_id_raw
+        )
         attribute: str | None = service_call.data.get(_ATTR_ATTRIBUTE)
         raw_value = service_call.data[_ATTR_VALUE]
 
