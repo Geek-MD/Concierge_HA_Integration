@@ -127,13 +127,23 @@ _ELECTRICITY_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
 # gastos_comunes_amount is exposed as "Bill" so the entity ID becomes
 # sensor.concierge_{service_id}_bill — the primary payable for the apartment.
 # The "Total" sensor (gc_total) covers the GC-only total: Subtotal + Cargo Fijo.
-# The overall bill (including hot water) is on the separate hot-water device.
 _COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("gastos_comunes_amount",       "Bill",                       "$",  "gc_bill"),
     ("funds_provision",             "Funds Provision",            "$",  "gc_funds_provision"),
     ("subtotal",                    "Subtotal",                   "$",  "gc_subtotal"),
     ("fixed_charge",                "Fixed Charge",               "$",  "gc_fixed_charge"),
     ("gc_total",                    "Total",                      "$",  "gc_total"),
+]
+
+# Agua Caliente (hot-water) sensors grouped under the Gastos Comunes device.
+# These are extracted from the same "Nota de Cobro" PDF via OCR (Tier 2).
+# All five attributes are set by _extract_common_expenses_pdf_attributes.
+_COMMON_EXPENSES_HOT_WATER_SENSORS: list[tuple[str, str, str, str]] = [
+    ("hot_water_consumption",  "Agua Caliente Consumption",  "m³",   "gc_hw_consumption"),
+    ("hot_water_cost_per_m3",  "Agua Caliente Cost Per Unit","$/m³",  "gc_hw_cost_per_m3"),
+    ("hot_water_amount",       "Agua Caliente Amount",       "$",     "gc_hw_amount"),
+    ("hot_water_reading_prev", "Agua Caliente Prev Reading", "m³",    "gc_hw_prev_reading"),
+    ("hot_water_reading_curr", "Agua Caliente Curr Reading", "m³",    "gc_hw_curr_reading"),
 ]
 
 # Reverse mapping: unique_id suffix → extracted attribute key.
@@ -145,6 +155,7 @@ _UID_SUFFIX_TO_ATTR_KEY: dict[str, str] = {
         _WATER_SPECIFIC_SENSORS
         + _ELECTRICITY_SPECIFIC_SENSORS
         + _COMMON_EXPENSES_SPECIFIC_SENSORS
+        + _COMMON_EXPENSES_HOT_WATER_SENSORS
     )
 }
 
@@ -197,8 +208,9 @@ async def async_setup_entry(
     - All service types except common_expenses: last_update, consumption,
       total_amount.
     - Common expenses: last_update + breakdown sensors (bill, funds_provision,
-      subtotal, fixed_charge, total).  No total_amount — it would duplicate
-      the "total" (gc_total) breakdown sensor.
+      subtotal, fixed_charge, total) + 5 Agua Caliente sensors (consumption,
+      cost_per_unit, amount, prev_reading, curr_reading).  No total_amount —
+      it would duplicate the "total" (gc_total) breakdown sensor.
     - Gas: cost_per_unit (generic $/unit sensor).
     - Electricity: cost_per_unit + 4 billing-breakdown sensors
       (service_administration, electricity_transport, stabilization_fund,
@@ -269,6 +281,22 @@ async def async_setup_entry(
             # No consumption or cost-per-unit sensor — the breakdown is by
             # monetary amounts only.
             for attr_key, name_suffix, unit, uid_suffix in _COMMON_EXPENSES_SPECIFIC_SENSORS:
+                entities.append(
+                    ConciergeServiceBillingBreakdownSensor(
+                        coordinator,
+                        config_entry,
+                        subentry_id,
+                        subentry.data,
+                        attr_key=attr_key,
+                        name_suffix=name_suffix,
+                        unit=unit,
+                        uid_suffix=uid_suffix,
+                    )
+                )
+            # Agua Caliente is a sub-account within Gastos Comunes: its data
+            # comes from the same "Nota de Cobro" PDF.  Expose dedicated sensors
+            # on the same GC device so they are grouped together in HA.
+            for attr_key, name_suffix, unit, uid_suffix in _COMMON_EXPENSES_HOT_WATER_SENSORS:
                 entities.append(
                     ConciergeServiceBillingBreakdownSensor(
                         coordinator,

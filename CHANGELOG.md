@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-03-22
+
+### Added
+
+- **Agua Caliente sensors on the Gastos Comunes device** (`sensor.py`,
+  `binary_sensor.py`):
+
+  The "Nota de Cobro" PDF for Gastos Comunes already includes a hot-water
+  (Agua Caliente) consumption table that is extracted via OCR (Tier 2).
+  However, no dedicated sensor entities existed for those values on the
+  Gastos Comunes device — and a standalone "Agua Caliente" subentry would
+  never work because there is no separate email for it; the data lives
+  exclusively inside the Gastos Comunes email/PDF.
+
+  **Fix**: Five new `ConciergeServiceBillingBreakdownSensor` entities are now
+  created automatically for every `SERVICE_TYPE_COMMON_EXPENSES` subentry,
+  grouped on the same Gastos Comunes device:
+
+  | Entity suffix | Attribute key | Unit | Unique-ID suffix |
+  |---|---|---|---|
+  | Agua Caliente Consumption | `hot_water_consumption` | m³ | `gc_hw_consumption` |
+  | Agua Caliente Cost Per Unit | `hot_water_cost_per_m3` | $/m³ | `gc_hw_cost_per_m3` |
+  | Agua Caliente Amount | `hot_water_amount` | $ | `gc_hw_amount` |
+  | Agua Caliente Prev Reading | `hot_water_reading_prev` | m³ | `gc_hw_prev_reading` |
+  | Agua Caliente Curr Reading | `hot_water_reading_curr` | m³ | `gc_hw_curr_reading` |
+
+  Values are populated automatically whenever the OCR Tier-2 pass on the PDF
+  succeeds (requires `pymupdf`, `pytesseract`, and `tesseract-ocr`).  When
+  OCR is unavailable, the sensors exist but report `None` until a manual
+  override is applied via the `set_value` service.
+
+  The Gastos Comunes status binary sensor (`binary_sensor.py`) now also
+  includes `previous_measure` and `actual_measure` (meter readings) in its
+  diagnostic attributes, consistent with the new sensor entities.
+
+- **`manifest.json`**: version bumped to `0.9.5`.
+
 ## [0.9.4] - 2026-03-22
 
 ### Changed

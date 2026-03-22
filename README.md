@@ -82,7 +82,7 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal before surcharges (`$`) |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
-  **Common Expenses (8 entities):**
+  **Common Expenses (13 entities — includes Agua Caliente sub-account):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -93,7 +93,19 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
   | `sensor.concierge_{id}_total` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
+  | `sensor.concierge_{id}_agua_caliente_consumption` | Sensor | — | Agua Caliente consumption (`m³`) — from OCR |
+  | `sensor.concierge_{id}_agua_caliente_cost_per_unit` | Sensor | — | Agua Caliente cost per m³ (`$/m³`) — from OCR |
+  | `sensor.concierge_{id}_agua_caliente_amount` | Sensor | — | Agua Caliente charge (`$`) — from OCR or derived |
+  | `sensor.concierge_{id}_agua_caliente_prev_reading` | Sensor | — | Agua Caliente previous meter reading (`m³`) — from OCR |
+  | `sensor.concierge_{id}_agua_caliente_curr_reading` | Sensor | — | Agua Caliente current meter reading (`m³`) — from OCR |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
+
+  > **Agua Caliente** is a sub-account billed within the Gastos Comunes "Nota de
+  > Cobro" PDF — there is no separate email for it.  Its five sensors are
+  > populated automatically when the OCR Tier-2 pass succeeds (requires
+  > `pymupdf`, `pytesseract`, and `tesseract-ocr`).  When OCR is unavailable
+  > the sensors exist but report `None` until a manual override is applied via
+  > the `set_value` service.
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
@@ -104,6 +116,9 @@
   - **Electricity** extras: `tariff_code`, `connected_power`, `connected_power_unit`,
     `area`, `substation`, `pdf_url`
   - **Gas** extras: `pdf_url`
+  - **Common Expenses** extras: `gross_common_expenses`, `gross_common_expenses_percentage`,
+    `funds_provision_percentage`, `hot_water_amount`, `subtotal_consumo`,
+    `previous_measure` (Agua Caliente prev meter reading), `actual_measure` (Agua Caliente curr meter reading)
 - 📄 **Heuristic PDF Download**: Automatically downloads the billing PDF for each matched email:
   - If the email has a PDF attachment it is saved directly
   - Otherwise the HTML body is scanned for billing links (*"ver boleta"*, *"descargue su boleta"*, etc.) and the first valid PDF URL is downloaded
@@ -362,6 +377,7 @@ with five entities:
 - ✅ `set_value` learning-override service (v0.9.0): forces a correct value for any named attribute of a Concierge entity; entity picker is filtered to Concierge HA Integration only; `extraction_confidence` is set to 100 on overridden sensors (v0.9.3: entity selection moved to HA `target` so `attribute` and `value` render as proper form inputs in the UI; v0.9.4: restricted to exactly one entity per call; formula-derived sensors auto-recalculate when an input changes)
 - ✅ `force_refresh` service (v0.8.4): forces immediate email scan + PDF analysis for a single device; device picker is filtered to Concierge HA Integration only
 - ✅ Per-device *Force Refresh* button entity (v0.8.4): `button.concierge_{id}_force_refresh` appears in the device Configuration panel; pressing it triggers the same targeted refresh as the service
+- ✅ Agua Caliente sensors on the Gastos Comunes device (v0.9.5): five dedicated sensor entities (`consumption`, `cost_per_unit`, `amount`, `prev_reading`, `curr_reading`) are automatically created for every Gastos Comunes service and populated from the same "Nota de Cobro" PDF via OCR — no separate "Agua Caliente" service device is required or supported, since the hot-water data lives exclusively inside the Gastos Comunes email/PDF
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services
