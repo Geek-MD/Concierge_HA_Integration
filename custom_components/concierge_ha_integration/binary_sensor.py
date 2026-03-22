@@ -67,6 +67,8 @@ _COMMON_EXPENSES_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
     "funds_provision_percentage": 0,
     "hot_water_amount": 0,
     "subtotal_consumo": 0,
+    "previous_measure": 0,
+    "actual_measure": 0,
 }
 
 # Agua Caliente: meter readings used to verify consumption.
