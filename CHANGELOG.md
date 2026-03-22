@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-03-22
+
+### Fixed
+
+- **`set_value` service — UI fields and value not applied** (`__init__.py`,
+  `services.yaml`, `strings.json`, `translations/en.json`,
+  `translations/es.json`):
+
+  Two related bugs were fixed:
+
+  1. **UI fell back to YAML instead of showing form fields.**  In HA's service
+     framework, a `fields` entry named `entity_id` is treated as a special
+     *target* entity selector by the frontend.  This caused the `attribute` and
+     `value` fields to not render as proper text-input widgets, forcing users
+     to edit raw YAML.  The fix moves entity selection to HA's standard
+     `target` mechanism in `services.yaml` and removes `entity_id` from
+     `fields`.  The entity picker now renders as the action's target (shown
+     above the fields), and `attribute` / `value` render as plain text inputs.
+
+  2. **Override value was never applied to the sensor.**  Because the UI
+     showed YAML, users had to type the data manually.  The YAML in the
+     screenshot shows `attribute: sensor.concierge_gastos_comunes_fixed_charge`
+     — the entity_id was entered in the attribute field instead of the real
+     attribute key (`fixed_charge`).  As a result, the learning store saved the
+     override under the wrong key and the sensor never picked it up.  With the
+     form fields rendering correctly, users select the entity via the picker and
+     type only the numeric value, so the attribute key is always inferred
+     correctly from the entity's unique_id when left empty.
+
+  Updated service signature:
+
+  | Field | Type | Description |
+  |-------|------|-------------|
+  | *(target)* | entity selector | Any entity from the Concierge HA Integration |
+  | `attribute` | text (optional) | Internal attribute key — inferred from entity when omitted |
+  | `value` | text | The correct value (e.g. `9638`) |
+
+  The handler in `__init__.py` now reads `entity_id` from
+  `service_call.target` instead of `service_call.data`.
+
+- **`manifest.json`**: version bumped to `0.9.3`.
+
 ## [0.9.2] - 2026-03-21
 
 ### Fixed
