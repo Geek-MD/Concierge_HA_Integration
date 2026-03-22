@@ -168,14 +168,21 @@ will be re-applied automatically after every future email/PDF analysis, overridi
 any value extracted by pdfminer or OCR.  The overridden sensor will show
 `extraction_confidence = 100`.
 
+Formula-derived sensors (e.g. `sensor.concierge_gastos_comunes_total`, which equals
+`subtotal_departamento + cargo_fijo`) are **automatically recalculated** when any of
+their inputs change.
+
 | Field | Required | Selector | Description |
 |---|---|---|---|
-| *(target)* | ✅ | `entity` (integration filter) | Any entity belonging to the target Concierge service. Only entities from this integration are shown. |
+| *(target)* | ✅ | `entity` (integration filter) | **Exactly one** entity belonging to the target Concierge service. Only entities from this integration are shown. |
 | `attribute` | ❌ | `text` | Internal attribute key to override (e.g. `fixed_charge`, `gastos_comunes_amount`). When omitted the key is inferred automatically from the entity's unique_id. |
 | `value` | ✅ | `text` | The correct value (e.g. `9638`). |
 
 > **UI filter** — the entity picker automatically filters to show **only** entities that belong to
 > `concierge_ha_integration`.  Entities from other integrations are never listed.
+
+> **Single entity** — only one entity may be targeted per call.  Selecting multiple entities
+> raises an error.
 
 #### Usage examples
 
@@ -352,7 +359,7 @@ with five entities:
 - ✅ acepta.com Custodium multi-hop PDF download: follows the full chain (fidelizador tracking URL → outer wrapper → Custodium JS page → PdfView "no plugin" page → PDF); handles percent-encoded hrefs, extra rendering parameters, and root-relative paths (v0.7.15)
 - ✅ Per-service entity architecture (v0.7.0): each service device exposes `binary_sensor.concierge_{id}_status` (Diagnostic) + `sensor.concierge_{id}_last_update` (Diagnostic) + `sensor.concierge_{id}_consumption` + `sensor.concierge_{id}_cost_per_unit` + `sensor.concierge_{id}_total_amount`
 - ✅ `sensor.concierge_{id}_last_update` holds the full ISO 8601 bill datetime (v0.7.1)
-- ✅ `set_value` learning-override service (v0.9.0): forces a correct value for any named attribute of a Concierge entity; entity picker is filtered to Concierge HA Integration only; `extraction_confidence` is set to 100 on overridden sensors (v0.9.3: entity selection moved to HA `target` so `attribute` and `value` render as proper form inputs in the UI)
+- ✅ `set_value` learning-override service (v0.9.0): forces a correct value for any named attribute of a Concierge entity; entity picker is filtered to Concierge HA Integration only; `extraction_confidence` is set to 100 on overridden sensors (v0.9.3: entity selection moved to HA `target` so `attribute` and `value` render as proper form inputs in the UI; v0.9.4: restricted to exactly one entity per call; formula-derived sensors auto-recalculate when an input changes)
 - ✅ `force_refresh` service (v0.8.4): forces immediate email scan + PDF analysis for a single device; device picker is filtered to Concierge HA Integration only
 - ✅ Per-device *Force Refresh* button entity (v0.8.4): `button.concierge_{id}_force_refresh` appears in the device Configuration panel; pressing it triggers the same targeted refresh as the service
 

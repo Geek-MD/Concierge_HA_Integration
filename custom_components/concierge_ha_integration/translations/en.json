@@ -116,7 +116,7 @@
     },
     "set_value": {
       "name": "Set Value (Learning Override)",
-      "description": "Forces a specific value for a named attribute of a Concierge service entity and persists it as a learning override. The value is applied immediately and after every future email/PDF analysis.",
+      "description": "Forces a specific value for a named attribute of a Concierge service entity and persists it as a learning override. The value is applied immediately and after every future email/PDF analysis. Formula-derived sensors (e.g. Total = Subtotal + Fixed Charge) are recalculated automatically. Only one entity may be selected at a time.",
       "fields": {
         "attribute": {
           "name": "Attribute",

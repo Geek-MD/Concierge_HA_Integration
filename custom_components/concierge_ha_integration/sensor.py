@@ -46,6 +46,7 @@ from .const import (
     SERVICE_TYPE_WATER,
 )
 from .attribute_extractor import (
+    CONF_SCORE_DERIVED,
     CONF_SCORE_OVERRIDE,
     extract_attributes_from_email_body,
     extract_attributes_from_pdf,
@@ -411,6 +412,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         The value is written to the persistent learning store (in an executor
         thread) and then immediately reflected in the coordinator data so all
         entities update without waiting for the next polling cycle.
+
+        After applying the override, formula-based derived attributes (e.g.
+        ``gc_total = subtotal_departamento + cargo_fijo``) are recomputed so
+        that dependent sensor entities update immediately without waiting for
+        the next email/PDF scan.
         """
         await self.hass.async_add_executor_job(
             self._set_learning_override_sync, subentry_id, attribute, value
@@ -423,7 +429,60 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 attrs = service_data.setdefault("attributes", {})
                 attrs[attribute] = value
                 attrs.setdefault("_confidence", {})[attribute] = CONF_SCORE_OVERRIDE
+                # Recompute any formula-derived attributes that depend on the
+                # attribute that was just overridden.
+                self._recompute_gc_derived_attrs(attrs)
                 self.async_set_updated_data(self.data)
+
+    def _recompute_gc_derived_attrs(self, attrs: dict[str, Any]) -> None:
+        """Recompute common-expenses formula-derived attributes in-place.
+
+        Re-runs the same alias syncs and arithmetic derivations that
+        :func:`attribute_extractor._extract_common_expenses_pdf_attributes`
+        applies after extraction, so that entities reporting calculated values
+        (e.g. ``gc_total = subtotal_departamento + cargo_fijo``) update
+        immediately when a constituent attribute is overridden via the
+        ``set_value`` service.
+
+        Attributes that were themselves explicitly overridden by the user
+        (confidence == CONF_SCORE_OVERRIDE) are never overwritten.
+        """
+        confidence = attrs.setdefault("_confidence", {})
+
+        def _is_overridden(key: str) -> bool:
+            return confidence.get(key, 0) >= CONF_SCORE_OVERRIDE
+
+        # --- Alias pairs: keep both ends in sync ---
+        # fixed_charge ↔ cargo_fijo
+        if "fixed_charge" in attrs and not _is_overridden("cargo_fijo"):
+            attrs["cargo_fijo"] = attrs["fixed_charge"]
+            confidence["cargo_fijo"] = confidence.get("fixed_charge", CONF_SCORE_DERIVED)
+        elif "cargo_fijo" in attrs and not _is_overridden("fixed_charge"):
+            attrs["fixed_charge"] = attrs["cargo_fijo"]
+            confidence["fixed_charge"] = confidence.get("cargo_fijo", CONF_SCORE_DERIVED)
+
+        # subtotal ↔ subtotal_departamento
+        if "subtotal" in attrs and not _is_overridden("subtotal_departamento"):
+            attrs["subtotal_departamento"] = attrs["subtotal"]
+            confidence["subtotal_departamento"] = confidence.get("subtotal", CONF_SCORE_DERIVED)
+        elif "subtotal_departamento" in attrs and not _is_overridden("subtotal"):
+            attrs["subtotal"] = attrs["subtotal_departamento"]
+            confidence["subtotal"] = confidence.get("subtotal_departamento", CONF_SCORE_DERIVED)
+
+        # funds_provision ↔ fondos_amount
+        if "funds_provision" in attrs and not _is_overridden("fondos_amount"):
+            attrs["fondos_amount"] = attrs["funds_provision"]
+            confidence["fondos_amount"] = confidence.get("funds_provision", CONF_SCORE_DERIVED)
+        elif "fondos_amount" in attrs and not _is_overridden("funds_provision"):
+            attrs["funds_provision"] = attrs["fondos_amount"]
+            confidence["funds_provision"] = confidence.get("fondos_amount", CONF_SCORE_DERIVED)
+
+        # --- Formula: gc_total = subtotal_departamento + cargo_fijo ---
+        subtotal_val = attrs.get("subtotal_departamento", 0)
+        cargo_val = attrs.get("cargo_fijo", 0)
+        if subtotal_val and cargo_val and not _is_overridden("gc_total"):
+            attrs["gc_total"] = subtotal_val + cargo_val
+            confidence["gc_total"] = CONF_SCORE_DERIVED
 
     def _apply_learning_overrides(
         self, attrs: dict[str, Any], subentry_id: str

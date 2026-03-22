@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - 2026-03-22
+
+### Changed
+
+- **`set_value` service — single-entity enforcement** (`__init__.py`,
+  `services.yaml`, `strings.json`, `translations/en.json`,
+  `translations/es.json`):
+
+  The `set_value` action now enforces that **exactly one entity** is selected
+  as the target.  If more than one entity is passed (e.g. via YAML automation
+  that lists multiple entity IDs), the service raises a clear error:
+
+  > "The set_value service only supports one entity at a time. Please select
+  > exactly one entity (got N)."
+
+  The service description in the UI and all translation files has been updated
+  to document this restriction.
+
+### Fixed
+
+- **Formula-derived sensors auto-recalculate on override** (`sensor.py`):
+
+  Sensors whose values are computed from other attributes (e.g.
+  `sensor.concierge_gastos_comunes_total`, which equals
+  `subtotal_departamento + cargo_fijo`) were not updated when one of their
+  inputs was overridden via the `set_value` service.  The entity showed the
+  old calculated value until the next email/PDF scan.
+
+  **Fix**: After applying a learning override in-memory, the coordinator now
+  calls a new `_recompute_gc_derived_attrs` method that re-runs all
+  common-expenses alias syncs and arithmetic derivations:
+
+  | Formula / alias | Recomputed when… |
+  |---|---|
+  | `fixed_charge` ↔ `cargo_fijo` | Either end is overridden |
+  | `subtotal` ↔ `subtotal_departamento` | Either end is overridden |
+  | `funds_provision` ↔ `fondos_amount` | Either end is overridden |
+  | `gc_total = subtotal_departamento + cargo_fijo` | Any input changes |
+
+  Attributes that were themselves overridden by the user
+  (`extraction_confidence = 100`) are never overwritten by the recomputation.
+
 ## [0.9.3] - 2026-03-22
 
 ### Fixed

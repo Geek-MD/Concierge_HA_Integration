@@ -24,6 +24,9 @@ set_value:
     automatic extraction produces a wrong value that cannot be corrected by
     re-scanning (e.g. due to font-encoding errors in the PDF).
     The overridden sensor will show extraction_confidence = 100.
+    Formula-derived sensors (e.g. Total = Subtotal + Fixed Charge) are
+    recalculated automatically when any of their inputs change.
+    Only one entity may be selected at a time.
   target:
     entity:
       integration: concierge_ha_integration
