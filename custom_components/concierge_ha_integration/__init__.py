@@ -53,7 +53,8 @@ _SERVICE_FORCE_REFRESH_SCHEMA = vol.Schema(
 
 _SERVICE_SET_VALUE_SCHEMA = vol.Schema(
     {
-        vol.Required(_ATTR_ENTITY_ID): cv.string,
+        # entity_id is passed via the HA target mechanism and merged into data
+        vol.Optional(_ATTR_ENTITY_ID): vol.Any(cv.string, [cv.string]),
         vol.Optional(_ATTR_ATTRIBUTE): cv.string,
         vol.Required(_ATTR_VALUE): vol.Any(vol.Coerce(float), str),
     },
@@ -366,9 +367,11 @@ def _async_register_set_value_service(
 
         Parameters
         ----------
-        entity_id : str
+        entity_id : str | list[str]
             HA entity registry ID of any entity belonging to the target
-            Concierge service subentry.
+            Concierge service subentry.  Provided via the HA service target
+            mechanism, which merges it into ``service_call.data`` under the
+            key ``entity_id``.  May be a single string or a one-element list.
         attribute : str | None
             Internal attribute key to override (e.g. ``fixed_charge``,
             ``gastos_comunes_amount``).  When omitted the key is inferred
@@ -379,7 +382,15 @@ def _async_register_set_value_service(
             whole numbers (e.g. ``9638.0``) are coerced to ``int`` to match
             the type expected by the sensor.
         """
-        entity_id: str = service_call.data[_ATTR_ENTITY_ID]
+        # HA merges target entity_id into service_call.data.
+        entity_id_raw = service_call.data.get(_ATTR_ENTITY_ID)
+        if not entity_id_raw:
+            raise HomeAssistantError(
+                "No entity_id provided. Select a Concierge HA Integration entity as the target."
+            )
+        entity_id: str = (
+            entity_id_raw[0] if isinstance(entity_id_raw, list) else entity_id_raw
+        )
         attribute: str | None = service_call.data.get(_ATTR_ATTRIBUTE)
         raw_value = service_call.data[_ATTR_VALUE]
 
