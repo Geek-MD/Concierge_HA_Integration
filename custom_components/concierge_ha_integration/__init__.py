@@ -388,9 +388,15 @@ def _async_register_set_value_service(
             raise HomeAssistantError(
                 "No entity_id provided. Select a Concierge HA Integration entity as the target."
             )
-        entity_id: str = (
-            entity_id_raw[0] if isinstance(entity_id_raw, list) else entity_id_raw
-        )
+        if isinstance(entity_id_raw, list):
+            if len(entity_id_raw) != 1:
+                raise HomeAssistantError(
+                    "The set_value service only supports one entity at a time. "
+                    f"Please select exactly one entity (got {len(entity_id_raw)})."
+                )
+            entity_id: str = entity_id_raw[0]
+        else:
+            entity_id = entity_id_raw
         attribute: str | None = service_call.data.get(_ATTR_ATTRIBUTE)
         raw_value = service_call.data[_ATTR_VALUE]
 
