@@ -82,7 +82,7 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal before surcharges (`$`) |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
-  **Common Expenses (13 entities — includes Agua Caliente sub-account):**
+  **Common Expenses (13 entities — includes Hot Water sub-account):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -93,15 +93,15 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
   | `sensor.concierge_{id}_total` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
-  | `sensor.concierge_{id}_agua_caliente_consumption` | Sensor | — | Agua Caliente consumption (`m³`) — from OCR |
-  | `sensor.concierge_{id}_agua_caliente_cost_per_unit` | Sensor | — | Agua Caliente cost per m³ (`$/m³`) — from OCR |
-  | `sensor.concierge_{id}_agua_caliente_amount` | Sensor | — | Agua Caliente charge (`$`) — from OCR or derived |
-  | `sensor.concierge_{id}_agua_caliente_prev_reading` | Sensor | — | Agua Caliente previous meter reading (`m³`) — from OCR |
-  | `sensor.concierge_{id}_agua_caliente_curr_reading` | Sensor | — | Agua Caliente current meter reading (`m³`) — from OCR |
+  | `sensor.concierge_{id}_agua_caliente_consumption` | Sensor | — | Hot Water consumption (`m³`) — from OCR |
+  | `sensor.concierge_{id}_agua_caliente_cost_per_unit` | Sensor | — | Hot Water cost per m³ (`$/m³`) — from OCR |
+  | `sensor.concierge_{id}_agua_caliente_amount` | Sensor | — | Hot Water charge (`$`) — from OCR or derived |
+  | `sensor.concierge_{id}_agua_caliente_prev_reading` | Sensor | — | Hot Water previous meter reading (`m³`) — from OCR |
+  | `sensor.concierge_{id}_agua_caliente_curr_reading` | Sensor | — | Hot Water current meter reading (`m³`) — from OCR |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
-  > **Agua Caliente** is a sub-account billed within the Gastos Comunes "Nota de
-  > Cobro" PDF — there is no separate email for it.  Its five sensors are
+  > **Hot Water** is a sub-account billed within the Common Expenses PDF,
+  > there is no separate email for it.  Its five sensors are
   > populated automatically when the OCR Tier-2 pass succeeds (requires
   > `pymupdf`, `pytesseract`, and `tesseract-ocr`).  When OCR is unavailable
   > the sensors exist but report `None` until a manual override is applied via
