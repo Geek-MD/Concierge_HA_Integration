@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.8] - 2026-03-23
+
+### Fixed
+
+- **Hot Water OCR: missing consumo column now handled** (`attribute_extractor.py`):
+
+  The Tesseract OCR pass on the "Nota de Cobro" PDF (PSM 6, middle-section crop)
+  sometimes fails to extract the *Consumo* column of the Agua Caliente table row,
+  producing a line like:
+
+  ```
+  Agua Caliente | 585,396000| 588,379000 7.034,70
+  ```
+
+  instead of the expected four-value row:
+
+  ```
+  Agua Caliente  585,396000  588,379000  2,983000  7.034,70  $20.985
+  ```
+
+  Previously `_GC_OCR_HOT_WATER_ROW_RE` required the consumo group, so the
+  entire `hw_m` match failed — leaving `hot_water_reading_prev`,
+  `hot_water_reading_curr`, `hot_water_consumption`, and `hot_water_cost_per_m3`
+  all unset.  The sensors
+  `sensor.concierge_common_expenses_hot_water_consumption`,
+  `sensor.concierge_common_expenses_hot_water_cost_per_unit`,
+  `sensor.concierge_common_expenses_hot_water_curr_reading`, and
+  `sensor.concierge_common_expenses_hot_water_prev_reading` therefore reported
+  no data.
+
+  **Changes**:
+
+  1. `_GC_OCR_HOT_WATER_ROW_RE` — the *consumo* capture group (group 3) is now
+     wrapped in `(?:...)?` making it optional.  The remaining groups (4 = valor
+     total, 5 = optional monto) retain the same numbers.
+
+  2. Extraction code — when group 3 is `None` (consumo not captured by OCR),
+     `hot_water_consumption` is derived arithmetically:
+     `consumo = lectura_actual − lectura_anterior` (rounded to 6 decimal places).
+
+- **`manifest.json`**: version bumped to `0.9.8`.
+
 ## [0.9.7] - 2026-03-23
 
 ### Changed

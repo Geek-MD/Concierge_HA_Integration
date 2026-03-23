@@ -1230,14 +1230,15 @@ _GC_LAST_PAYMENT_FOLIO_RE = re.compile(
 # Hot-water table row — two variants:
 # a) All on one line: "Agua Caliente  585,396000  588,379000  2,983000  7.034,70  $20.985"
 # b) "Agua Caliente" on preceding line, numbers on next line
+# c) Consumo column absent (OCR may skip it): "Agua Caliente | 585,396000| 588,379000 7.034,70"
 # OCR may render commas as periods and may insert '|' column separators.
 _GC_OCR_HOT_WATER_ROW_RE = re.compile(
     r"agua\s+caliente[\s\S]{0,60}?"
-    r"([\d,.]{6,}\d{3})[\s|]+"   # lectura anterior (e.g. 585,396000 or 585.396000)
-    r"([\d,.]{6,}\d{3})[\s|]+"   # lectura actual   (e.g. 588,379000)
-    r"([\d,.]+)[\s|]+"            # consumo          (e.g. 2,983000)
-    r"([\d.,]+)"                  # valor total       (e.g. 7.034,70)
-    r"(?:[\s\S]{0,20}?\$\s*([\d.,]+))?",  # optional monto (e.g. $20.985)
+    r"([\d,.]{6,}\d{3})[\s|]+"   # group 1: lectura anterior (e.g. 585,396000 or 585.396000)
+    r"([\d,.]{6,}\d{3})[\s|]+"   # group 2: lectura actual   (e.g. 588,379000)
+    r"(?:([\d,.]+)[\s|]+)?"       # group 3: consumo (optional — OCR may omit the column)
+    r"([\d.,]+)"                  # group 4: valor total       (e.g. 7.034,70)
+    r"(?:[\s\S]{0,20}?\$\s*([\d.,]+))?",  # group 5: optional monto (e.g. $20.985)
     re.IGNORECASE,
 )
 # Subtotal Consumo (hot-water subtotal) from OCR — the amount can be on the
@@ -1725,7 +1726,16 @@ def _extract_common_expenses_pdf_attributes(
             if hw_m:
                 attrs["hot_water_reading_prev"] = _parse_meter_reading(hw_m.group(1))
                 attrs["hot_water_reading_curr"] = _parse_meter_reading(hw_m.group(2))
-                attrs["hot_water_consumption"] = _parse_meter_reading(hw_m.group(3))
+                # group 3 (consumo) is optional — OCR sometimes omits the column
+                if hw_m.group(3):
+                    attrs["hot_water_consumption"] = _parse_meter_reading(hw_m.group(3))
+                else:
+                    # Derive consumption from meter readings when the OCR column
+                    # is missing: consumo = lectura_actual − lectura_anterior
+                    prev_r = attrs["hot_water_reading_prev"]
+                    curr_r = attrs["hot_water_reading_curr"]
+                    if prev_r is not None and curr_r is not None:
+                        attrs["hot_water_consumption"] = round(curr_r - prev_r, 6)
                 attrs["hot_water_consumption_unit"] = "m³"
                 attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(
                     hw_m.group(4)
