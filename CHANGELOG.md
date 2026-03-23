@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9] - 2026-03-23
+
+### Fixed
+
+- **Missing OCR requirements cause hot water sensors to always have no data**
+  (`manifest.json`, `attribute_extractor.py`):
+
+  The five `sensor.concierge_common_expenses_hot_water_*` sensors
+  (`consumption`, `cost_per_unit`, `amount`, `curr_reading`, `prev_reading`)
+  always reported no data because their values are extracted via Tesseract OCR
+  on the JPEG-backed "Nota de Cobro" PDF — a step that requires three Python
+  libraries (`PyMuPDF`, `Pillow`, `pytesseract`) that were never listed in
+  `manifest.json`.
+
+  Home Assistant installs only the packages listed in `requirements`; without
+  them, `_try_ocr_pdf` raised an `ImportError` on every call and returned an
+  empty string, so the entire OCR extraction block was silently skipped and all
+  five hot-water attributes remained unset.  Because the failure was logged only
+  at `DEBUG` level it was invisible in the HA log, making the root cause
+  impossible to diagnose.
+
+  **Changes**:
+
+  1. `manifest.json` — added the three missing pip requirements:
+     - `PyMuPDF>=1.24.0` (PDF-to-image rendering)
+     - `Pillow>=10.2.0` (image processing)
+     - `pytesseract>=0.3.13` (Python wrapper for Tesseract OCR)
+
+     With these packages installed HA will run OCR on the "Nota de Cobro" PDF
+     and populate all five hot-water sensors.
+
+     > **Note**: the `tesseract-ocr` system binary must also be present on the
+     > host (e.g. `apt-get install tesseract-ocr tesseract-ocr-spa` on Debian /
+     > Ubuntu).  If only the Python packages are installed the code logs a
+     > `WARNING` and the sensors remain empty until the binary is added.
+
+  2. `attribute_extractor.py` — the `ImportError` log in `_try_ocr_pdf` was
+     upgraded from `DEBUG` to `WARNING` so that any future missing-library
+     scenario is visible in the HA log without needing to enable debug logging.
+
+- **`manifest.json`**: version bumped to `0.9.9`.
+
 ## [0.9.8] - 2026-03-23
 
 ### Fixed

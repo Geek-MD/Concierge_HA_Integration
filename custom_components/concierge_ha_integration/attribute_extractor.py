@@ -1399,10 +1399,11 @@ def _try_ocr_pdf(pdf_path: str) -> str:
         import pytesseract  # type: ignore[import-untyped]
         from PIL import Image  # type: ignore[import-untyped]
     except ImportError as exc:
-        _LOGGER.debug(
+        _LOGGER.warning(
             "OCR unavailable for '%s': missing library (%s). "
-            "Install 'pymupdf', 'pytesseract', and 'Pillow' and ensure "
-            "tesseract-ocr is installed to enable Agua Caliente extraction.",
+            "The integration requires 'PyMuPDF', 'pytesseract', and 'Pillow'; "
+            "also ensure the 'tesseract-ocr' system binary is installed to "
+            "enable Agua Caliente (hot water) sensor extraction.",
             pdf_path,
             exc,
         )
