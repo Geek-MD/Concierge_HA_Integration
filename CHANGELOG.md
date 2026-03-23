@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.7] - 2026-03-23
+
+### Changed
+
+- **All entity and PDF filenames now use English generic service names**
+  (`service_detector.py`, `sensor.py`, `binary_sensor.py`, `button.py`,
+  `__init__.py`):
+
+  Service display names in `SERVICE_PATTERNS` have been translated to English,
+  and `normalize_service_id()` is now applied at runtime so that any subentry
+  whose stored `service_id` still uses a Spanish or company-specific slug is
+  transparently mapped to the canonical English ID when generating entity names
+  and PDF filenames.
+
+  | Old service ID (Spanish / company) | New canonical ID (English) |
+  |---|---|
+  | `aguas_andinas` | `water` |
+  | `agua` | `water` |
+  | `agua_caliente` | `hot_water` |
+  | `electricidad` | `electricity` |
+  | `telecomunicaciones` | `telecom` |
+  | `internet_tv` | `telecom` |
+  | `gastos_comunes` | `common_expenses` |
+
+  Examples of renamed entity IDs:
+
+  | Old entity ID | New entity ID |
+  |---|---|
+  | `sensor.concierge_aguas_andinas_fixed_charge` | `sensor.concierge_water_fixed_charge` |
+  | `sensor.concierge_gastos_comunes_hot_water_consumption` | `sensor.concierge_common_expenses_hot_water_consumption` |
+  | `sensor.concierge_electricidad_bill` | `sensor.concierge_electricity_bill` |
+  | `sensor.concierge_telecomunicaciones_total` | `sensor.concierge_telecom_total` |
+
+  PDF filenames stored in the integration's working directory are also renamed:
+  e.g. `gastos_comunes_2026-01.pdf` → `common_expenses_2026-01.pdf`.
+
+  > **Migration note**: a v1.5 config-entry migration automatically renames all
+  > existing entity registry entries on the next HA restart, preserving entity
+  > history.  No manual changes are needed.
+
+- **`manifest.json`**: version bumped to `0.9.7`.
+
+- **`__init__.py`**: config-entry minor version bumped to `1.5` with a new
+  migration (`_migrate_1_4_to_1_5`) that renames entity IDs in the entity
+  registry from Spanish/legacy slugs to English generic names.
+
 ## [0.9.6] - 2026-03-23
 
 ### Changed
