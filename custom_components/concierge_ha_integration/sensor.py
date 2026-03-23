@@ -139,11 +139,11 @@ _COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
 # These are extracted from the same "Nota de Cobro" PDF via OCR (Tier 2).
 # All five attributes are set by _extract_common_expenses_pdf_attributes.
 _COMMON_EXPENSES_HOT_WATER_SENSORS: list[tuple[str, str, str, str]] = [
-    ("hot_water_consumption",  "Agua Caliente Consumption",  "m³",   "gc_hw_consumption"),
-    ("hot_water_cost_per_m3",  "Agua Caliente Cost Per Unit","$/m³",  "gc_hw_cost_per_m3"),
-    ("hot_water_amount",       "Agua Caliente Amount",       "$",     "gc_hw_amount"),
-    ("hot_water_reading_prev", "Agua Caliente Prev Reading", "m³",    "gc_hw_prev_reading"),
-    ("hot_water_reading_curr", "Agua Caliente Curr Reading", "m³",    "gc_hw_curr_reading"),
+    ("hot_water_consumption",  "Hot Water Consumption",  "m³",   "gc_hw_consumption"),
+    ("hot_water_cost_per_m3",  "Hot Water Cost Per Unit","$/m³",  "gc_hw_cost_per_m3"),
+    ("hot_water_amount",       "Hot Water Amount",       "$",     "gc_hw_amount"),
+    ("hot_water_reading_prev", "Hot Water Prev Reading", "m³",    "gc_hw_prev_reading"),
+    ("hot_water_reading_curr", "Hot Water Curr Reading", "m³",    "gc_hw_curr_reading"),
 ]
 
 # Reverse mapping: unique_id suffix → extracted attribute key.
