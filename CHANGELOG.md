@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.6] - 2026-03-23
+
+### Changed
+
+- **Hot Water sensor entity IDs now use English names** (`sensor.py`, `README.md`):
+
+  The five Hot Water sensor entities on the Gastos Comunes device previously used
+  "Agua Caliente" in their display names, which produced Spanish entity IDs like
+  `sensor.concierge_{id}_agua_caliente_amount`.  All five name suffixes have been
+  updated to English so the generated entity IDs are consistent with the rest of
+  the integration:
+
+  | Old entity suffix | New entity suffix | Attribute key | Unit |
+  |---|---|---|---|
+  | `agua_caliente_consumption` | `hot_water_consumption` | `hot_water_consumption` | m³ |
+  | `agua_caliente_cost_per_unit` | `hot_water_cost_per_unit` | `hot_water_cost_per_m3` | $/m³ |
+  | `agua_caliente_amount` | `hot_water_amount` | `hot_water_amount` | $ |
+  | `agua_caliente_prev_reading` | `hot_water_prev_reading` | `hot_water_reading_prev` | m³ |
+  | `agua_caliente_curr_reading` | `hot_water_curr_reading` | `hot_water_reading_curr` | m³ |
+
+  > **Migration note**: existing installations will need to remove and re-add the
+  > integration (or manually rename the entity IDs in the HA entity registry) to
+  > pick up the new English entity IDs.
+
+- **Hot Water OCR regex made more robust** (`attribute_extractor.py`):
+
+  The `_GC_OCR_HOT_WATER_ROW_RE` pattern that extracts the Agua Caliente table
+  row from the PDF OCR output has been tightened in two ways:
+
+  1. **Period accepted as decimal separator** — the meter-reading capture groups
+     now use `[\d,.]` instead of `[\d,]`, so readings like `585.396000` (period
+     as decimal) produced by some Tesseract configurations are captured correctly.
+  2. **Pipe column separators tolerated** — the inter-column separator changed
+     from `\s+` to `[\s|]+`, allowing OCR output that includes `|` characters
+     between table columns (common when Tesseract renders table borders).
+  3. **Wider gap window** — the non-greedy bridge between "Agua Caliente" and the
+     first reading was widened from `{0,30}` to `{0,60}` characters so multi-line
+     OCR output is handled without truncation.
+
+  As a result, `sensor.concierge_{id}_hot_water_prev_reading`,
+  `sensor.concierge_{id}_hot_water_curr_reading`,
+  `sensor.concierge_{id}_hot_water_consumption`, and
+  `sensor.concierge_{id}_hot_water_cost_per_unit` now receive values from the
+  OCR tier whenever `pymupdf`, `pytesseract`, and `tesseract-ocr` are available.
+
+- **`manifest.json`**: version bumped to `0.9.6`.
+
 ## [0.9.5] - 2026-03-22
 
 ### Added

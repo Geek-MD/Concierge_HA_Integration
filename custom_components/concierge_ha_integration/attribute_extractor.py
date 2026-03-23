@@ -1230,12 +1230,13 @@ _GC_LAST_PAYMENT_FOLIO_RE = re.compile(
 # Hot-water table row — two variants:
 # a) All on one line: "Agua Caliente  585,396000  588,379000  2,983000  7.034,70  $20.985"
 # b) "Agua Caliente" on preceding line, numbers on next line
+# OCR may render commas as periods and may insert '|' column separators.
 _GC_OCR_HOT_WATER_ROW_RE = re.compile(
-    r"agua\s+caliente[\s\S]{0,30}?"
-    r"([\d,]{6,}\d{3})\s+"   # lectura anterior (e.g. 585,396000)
-    r"([\d,]{6,}\d{3})\s+"   # lectura actual   (e.g. 588,379000)
-    r"([\d,]+)\s+"            # consumo          (e.g. 2,983000)
-    r"([\d.,]+)"              # valor total       (e.g. 7.034,70)
+    r"agua\s+caliente[\s\S]{0,60}?"
+    r"([\d,.]{6,}\d{3})[\s|]+"   # lectura anterior (e.g. 585,396000 or 585.396000)
+    r"([\d,.]{6,}\d{3})[\s|]+"   # lectura actual   (e.g. 588,379000)
+    r"([\d,.]+)[\s|]+"            # consumo          (e.g. 2,983000)
+    r"([\d.,]+)"                  # valor total       (e.g. 7.034,70)
     r"(?:[\s\S]{0,20}?\$\s*([\d.,]+))?",  # optional monto (e.g. $20.985)
     re.IGNORECASE,
 )

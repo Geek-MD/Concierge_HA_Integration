@@ -93,11 +93,11 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
   | `sensor.concierge_{id}_total` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
-  | `sensor.concierge_{id}_agua_caliente_consumption` | Sensor | — | Hot Water consumption (`m³`) — from OCR |
-  | `sensor.concierge_{id}_agua_caliente_cost_per_unit` | Sensor | — | Hot Water cost per m³ (`$/m³`) — from OCR |
-  | `sensor.concierge_{id}_agua_caliente_amount` | Sensor | — | Hot Water charge (`$`) — from OCR or derived |
-  | `sensor.concierge_{id}_agua_caliente_prev_reading` | Sensor | — | Hot Water previous meter reading (`m³`) — from OCR |
-  | `sensor.concierge_{id}_agua_caliente_curr_reading` | Sensor | — | Hot Water current meter reading (`m³`) — from OCR |
+  | `sensor.concierge_{id}_hot_water_consumption` | Sensor | — | Hot Water consumption (`m³`) — from OCR |
+  | `sensor.concierge_{id}_hot_water_cost_per_unit` | Sensor | — | Hot Water cost per m³ (`$/m³`) — from OCR |
+  | `sensor.concierge_{id}_hot_water_amount` | Sensor | — | Hot Water charge (`$`) — from OCR or derived |
+  | `sensor.concierge_{id}_hot_water_prev_reading` | Sensor | — | Hot Water previous meter reading (`m³`) — from OCR |
+  | `sensor.concierge_{id}_hot_water_curr_reading` | Sensor | — | Hot Water current meter reading (`m³`) — from OCR |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
 
   > **Hot Water** is a sub-account billed within the Common Expenses PDF,
