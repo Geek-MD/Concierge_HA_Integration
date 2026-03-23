@@ -79,6 +79,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
       old sensor.concierge_services_* entities removed from entity registry.
     - 1.4 (≥ v0.9.1): redundant total_amount sensor removed from common_expenses
       devices (duplicated the gc_total billing-breakdown sensor).
+    - 1.5 (≥ v0.9.7): service IDs renamed from Spanish to English generic names
+      (e.g. gastos_comunes → common_expenses, agua → water); entity registry entries
+      are renamed to match the new English entity IDs.
     """
     _LOGGER.info(
         "Migrating Concierge Services config entry from version %s.%s",
@@ -100,6 +103,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_1_3_to_1_4(hass, entry)
         hass.config_entries.async_update_entry(entry, minor_version=4)  # type: ignore[call-arg]
         _LOGGER.info("Concierge Services migration to version 1.4 completed")
+
+    if entry.version == 1 and entry.minor_version < 5:
+        _migrate_1_4_to_1_5(hass, entry)
+        hass.config_entries.async_update_entry(entry, minor_version=5)  # type: ignore[call-arg]
+        _LOGGER.info("Concierge Services migration to version 1.5 completed")
 
     return True
 
@@ -225,6 +233,63 @@ def _migrate_1_3_to_1_4(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 "subentry %s (entity: %s)",
                 sub_id,
                 entity_id,
+            )
+
+
+# Mapping of Spanish/legacy service IDs → canonical English service IDs.
+# Must stay in sync with service_detector._LEGACY_SERVICE_IDS.
+_SERVICE_ID_RENAMES: dict[str, str] = {
+    "aguas_andinas": "water",
+    "agua_caliente": "hot_water",
+    "agua": "water",
+    "electricidad": "electricity",
+    "telecomunicaciones": "telecom",
+    "internet_tv": "telecom",
+    "gastos_comunes": "common_expenses",
+}
+
+
+@callback
+def _migrate_1_4_to_1_5(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Migrate entity registry from v1.4 (≤ v0.9.6) to v1.5 (≥ v0.9.7).
+
+    Service IDs (and therefore entity IDs) are renamed from Spanish/legacy
+    slugs to canonical English generic names:
+
+    - ``agua`` / ``aguas_andinas``  → ``water``
+    - ``agua_caliente``             → ``hot_water``
+    - ``electricidad``              → ``electricity``
+    - ``telecomunicaciones``        → ``telecom``
+    - ``internet_tv``               → ``telecom``
+    - ``gastos_comunes``            → ``common_expenses``
+
+    Each affected entity registry entry is renamed so that automations and
+    history referencing the old entity_id continue to work transparently.
+    """
+    ent_reg = er.async_get(hass)
+
+    for entity_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        old_entity_id = entity_entry.entity_id
+        new_entity_id = old_entity_id
+        for old_slug, new_slug in _SERVICE_ID_RENAMES.items():
+            segment = f"concierge_{old_slug}_"
+            if segment in old_entity_id:
+                new_entity_id = old_entity_id.replace(segment, f"concierge_{new_slug}_", 1)
+                break
+        if new_entity_id != old_entity_id:
+            # Skip if the target entity_id is already occupied to avoid conflicts.
+            if ent_reg.async_get(new_entity_id) is not None:
+                _LOGGER.warning(
+                    "Cannot rename entity %s → %s: target already exists; skipping",
+                    old_entity_id,
+                    new_entity_id,
+                )
+                continue
+            ent_reg.async_update_entity(old_entity_id, new_entity_id=new_entity_id)
+            _LOGGER.debug(
+                "Renamed entity %s → %s (service ID language migration)",
+                old_entity_id,
+                new_entity_id,
             )
 
 

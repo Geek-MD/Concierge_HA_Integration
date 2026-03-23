@@ -53,38 +53,48 @@ SERVICE_PATTERNS: list[tuple[str, str, str]] = [
     # Hot water (must come before generic water patterns to avoid misclassification)
     (
         r"agua\s+caliente|agua\s+caliente\s+sanitaria|calefacci[oó]n\s+central",
-        "Agua Caliente",
+        "Hot Water",
         SERVICE_TYPE_HOT_WATER,
     ),
     # Water utilities
-    (r"aguas?\s+andinas?", "Agua", SERVICE_TYPE_WATER),
-    (r"essbio|esval|nuevo\s+sur", "Agua", SERVICE_TYPE_WATER),
+    (r"aguas?\s+andinas?", "Water", SERVICE_TYPE_WATER),
+    (r"essbio|esval|nuevo\s+sur", "Water", SERVICE_TYPE_WATER),
     # Electricity utilities
-    (r"enel|chilectra|cge\s+distribuci[oó]n", "Electricidad", SERVICE_TYPE_ELECTRICITY),
+    (r"enel|chilectra|cge\s+distribuci[oó]n", "Electricity", SERVICE_TYPE_ELECTRICITY),
     # Gas utilities
     (r"metrogas|lipigas|gasco", "Gas", SERVICE_TYPE_GAS),
     # Telecom
-    (r"movistar|entel|claro|wom|vtr", "Telecomunicaciones", SERVICE_TYPE_TELECOM),
-    (r"mundo.*pac[íi]fico|gtd|telefonica", "Internet/TV", SERVICE_TYPE_TELECOM),
+    (r"movistar|entel|claro|wom|vtr", "Telecom", SERVICE_TYPE_TELECOM),
+    (r"mundo.*pac[íi]fico|gtd|telefonica", "Telecom", SERVICE_TYPE_TELECOM),
     # Common expenses (building administration — "Gastos Comunes")
     (
         r"gastos?\s+comunes?|nota\s+de\s+cobro|administraci[oó]n\s+edificio|"
         r"administradora\s+(?:de\s+)?edificio|copropietarios?",
-        "Gastos Comunes",
+        "Common Expenses",
         SERVICE_TYPE_COMMON_EXPENSES,
     ),
     # Generic utility fallback (type resolved at runtime from keyword)
-    (r"compa[ñn][íi]a\s+de\s+agua", "Agua", SERVICE_TYPE_WATER),
-    (r"compa[ñn][íi]a\s+de\s+electricidad", "Electricidad", SERVICE_TYPE_ELECTRICITY),
+    (r"compa[ñn][íi]a\s+de\s+agua", "Water", SERVICE_TYPE_WATER),
+    (r"compa[ñn][íi]a\s+de\s+electricidad", "Electricity", SERVICE_TYPE_ELECTRICITY),
     (r"compa[ñn][íi]a\s+de\s+gas", "Gas", SERVICE_TYPE_GAS),
 ]
 
-# Map of historical/legacy service IDs to their current canonical IDs.
+# Map of historical/legacy service IDs to their current canonical (English) IDs.
 # When a pattern's display name changes, the old service_id must be listed here
 # so that subentries configured under the old ID are still recognised as the
-# same service during "already-configured" filtering.
+# same service during "already-configured" filtering, and so that
+# normalize_service_id() can translate stored Spanish IDs to English ones at
+# runtime (used for entity-name generation and PDF filenames).
 _LEGACY_SERVICE_IDS: dict[str, str] = {
-    "aguas_andinas": "agua",  # renamed in v0.7.16
+    # v0.7.16: Aguas Andinas company slug → generic "agua"
+    # v0.9.7: all Spanish generic IDs → English equivalents
+    "aguas_andinas": "water",       # company slug → generic English (was → "agua" in v0.7.16)
+    "agua_caliente": "hot_water",   # Spanish → English (v0.9.7)
+    "agua": "water",                # Spanish → English (v0.9.7)
+    "electricidad": "electricity",  # Spanish → English (v0.9.7)
+    "telecomunicaciones": "telecom",# Spanish → English (v0.9.7)
+    "internet_tv": "telecom",       # old "Internet/TV" slug → English (v0.9.7)
+    "gastos_comunes": "common_expenses",  # Spanish → English (v0.9.7)
 }
 
 

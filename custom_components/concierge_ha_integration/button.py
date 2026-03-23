@@ -17,6 +17,7 @@ from .const import (
     DOMAIN,
 )
 from .sensor import ConciergeServicesCoordinator
+from .service_detector import normalize_service_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class ConciergeServiceForceRefreshButton(ButtonEntity):
         self._coordinator = coordinator
         self._subentry_id = subentry_id
 
-        service_id: str = subentry_data.get(CONF_SERVICE_ID, subentry_id)
+        service_id: str = normalize_service_id(subentry_data.get(CONF_SERVICE_ID, subentry_id))
         service_name: str = subentry_data.get(
             CONF_SERVICE_NAME,
             service_id.replace("_", " ").title(),

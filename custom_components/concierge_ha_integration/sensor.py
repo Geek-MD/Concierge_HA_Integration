@@ -53,7 +53,7 @@ from .attribute_extractor import (
     _strip_html,
 )
 from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
-from .service_detector import classify_service_type
+from .service_detector import classify_service_type, normalize_service_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -706,7 +706,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sample_from = service_data.get(CONF_SAMPLE_FROM, "")
             sample_subject = service_data.get(CONF_SAMPLE_SUBJECT, "")
             service_name = service_data.get(CONF_SERVICE_NAME, "")
-            service_id = service_data.get(CONF_SERVICE_ID, "")
+            service_id_raw = service_data.get(CONF_SERVICE_ID, "")
+            # Normalise to the canonical English slug for filenames and display;
+            # keep the raw stored ID for email-matching (patterns are language-aware).
+            service_id = normalize_service_id(service_id_raw)
             service_type: str = service_data.get(CONF_SERVICE_TYPE) or classify_service_type(
                 sample_from, sample_subject
             )
@@ -730,7 +733,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     body = self._get_email_body(msg)
 
                     if self._matches_service(
-                        service_id, service_name, sample_from, sample_subject,
+                        service_id_raw, service_name, sample_from, sample_subject,
                         from_addr, subject, body,
                     ):
                         if date_header:
@@ -974,7 +977,7 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
         """Initialize the base sensor."""
         super().__init__(coordinator)
         self._subentry_id = subentry_id
-        self._service_id = subentry_data.get(CONF_SERVICE_ID, subentry_id)
+        self._service_id = normalize_service_id(subentry_data.get(CONF_SERVICE_ID, subentry_id))
         # Use service_id (human-readable slug) as fallback, never the raw subentry UUID
         self._service_name = subentry_data.get(
             CONF_SERVICE_NAME,

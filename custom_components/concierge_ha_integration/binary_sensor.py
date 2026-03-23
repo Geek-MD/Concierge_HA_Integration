@@ -30,6 +30,7 @@ from .const import (
     SERVICE_TYPE_WATER,
 )
 from .sensor import ConciergeServicesCoordinator
+from .service_detector import normalize_service_id
 
 # Attributes retained in the status binary sensor for every service type.
 # consumption, consumption_unit, and total_amount are now dedicated sensors.
@@ -138,7 +139,7 @@ class ConciergeServiceStatusBinarySensor(
         """Initialize the status binary sensor."""
         super().__init__(coordinator)
         self._subentry_id = subentry_id
-        self._service_id = subentry_data.get(CONF_SERVICE_ID, subentry_id)
+        self._service_id = normalize_service_id(subentry_data.get(CONF_SERVICE_ID, subentry_id))
         # Use service_id (human-readable slug) as fallback, never the raw subentry UUID
         self._service_name = subentry_data.get(
             CONF_SERVICE_NAME,
