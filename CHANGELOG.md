@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.10] - 2026-03-23
+
+### Fixed
+
+- **`PyMuPDF` fails to install — OCR unavailable** (`manifest.json`,
+  `attribute_extractor.py`):
+
+  `PyMuPDF>=1.24.0` (added in v0.9.9) fails to install on Home Assistant
+  because it requires compilation from source (`setup.py:216`) and the HA
+  container image does not ship the MuPDF development headers needed to build
+  it.  This caused the integration to fail at startup with:
+
+  > `Setup failed for custom integration 'concierge_ha_integration':
+  > Requirements for concierge_ha_integration not found: ['PyMuPDF>=1.24.0']`
+
+  **Changes**:
+
+  1. `manifest.json` — replaced `PyMuPDF>=1.24.0` with `pypdfium2>=4.30.0`.
+     `pypdfium2` ships pre-built binary wheels for all common platforms
+     (Linux x86-64, ARM, macOS, Windows) so no compilation is required and
+     `pip install` succeeds out of the box in any HA environment.
+
+  2. `attribute_extractor.py` — `_try_ocr_pdf` updated to use the
+     `pypdfium2` API instead of `fitz` (PyMuPDF):
+     - `fitz.open(pdf_path)` → `pdfium.PdfDocument(pdf_path)`
+     - `page.rect.height` → `page.get_height()`
+     - `fitz.Matrix` + `page.get_pixmap()` + `Image.frombytes()` →
+       `page.render(scale=...)` + `bitmap.to_pil()`
+     - All `pix.width` references replaced with `img_full.width`
+     - Warning messages and comments updated to reference `pypdfium2`.
+
+- **`manifest.json`**: version bumped to `0.9.10`.
+
 ## [0.9.9] - 2026-03-23
 
 ### Fixed

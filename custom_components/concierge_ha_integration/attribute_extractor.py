@@ -1053,7 +1053,7 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
 # embedded as a JPEG image while only a partial text layer (pdfminer-readable)
 # overlays certain fields.  Two extraction tiers are used:
 #   1. pdfminer text layer  – always available; provides amounts, dates, owner.
-#   2. OCR (optional)       – requires pymupdf + pytesseract + tesseract-ocr
+#   2. OCR (optional)       – requires pypdfium2 + pytesseract + tesseract-ocr
 #                             installed on the host; provides the hot-water
 #                             table (Agua Caliente) that lives only in the image.
 
@@ -1391,17 +1391,17 @@ def _try_ocr_pdf(pdf_path: str) -> str:
        with accurate ``subtotal_recargos`` (e.g. ``$9.638``).
 
     Returns the combined OCR plain text, or an empty string if the required
-    libraries (``pymupdf``, ``pytesseract``, ``PIL``) are not installed or if
+    libraries (``pypdfium2``, ``pytesseract``, ``PIL``) are not installed or if
     any error occurs.  Failures are logged at DEBUG level only.
     """
     try:
-        import fitz  # type: ignore[import-untyped]  # pymupdf
+        import pypdfium2 as pdfium  # type: ignore[import-untyped]
         import pytesseract  # type: ignore[import-untyped]
         from PIL import Image  # type: ignore[import-untyped]
     except ImportError as exc:
         _LOGGER.warning(
             "OCR unavailable for '%s': missing library (%s). "
-            "The integration requires 'PyMuPDF', 'pytesseract', and 'Pillow'; "
+            "The integration requires 'pypdfium2', 'pytesseract', and 'Pillow'; "
             "also ensure the 'tesseract-ocr' system binary is installed to "
             "enable Agua Caliente (hot water) sensor extraction.",
             pdf_path,
@@ -1412,13 +1412,12 @@ def _try_ocr_pdf(pdf_path: str) -> str:
     # moved under Image.Resampling), else fall back to the legacy attribute.
     _lanczos = getattr(Image, "Resampling", Image).LANCZOS
     try:
-        doc = fitz.open(pdf_path)
+        doc = pdfium.PdfDocument(pdf_path)
         page = doc[0]
-        page_height = page.rect.height
-        mat = fitz.Matrix(_OCR_ZOOM_FACTOR, _OCR_ZOOM_FACTOR)
-        pix = page.get_pixmap(matrix=mat)
+        page_height = page.get_height()
+        bitmap = page.render(scale=_OCR_ZOOM_FACTOR)
         doc.close()
-        img_full = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        img_full = bitmap.to_pil()
 
         # Pass 1 — full page, PSM 1
         text_full: str = pytesseract.image_to_string(
@@ -1426,11 +1425,12 @@ def _try_ocr_pdf(pdf_path: str) -> str:
         )
 
         # Pass 2 — agua caliente area crop (≈ 30–55 % from top), PSM 6
+        img_width = img_full.width
         crop2_top = int(page_height * _OCR_CROP2_TOP_RATIO * _OCR_ZOOM_FACTOR)
         crop2_bot = int(page_height * _OCR_CROP2_BOTTOM_RATIO * _OCR_ZOOM_FACTOR)
-        crop2 = img_full.crop((0, crop2_top, pix.width, crop2_bot))
+        crop2 = img_full.crop((0, crop2_top, img_width, crop2_bot))
         crop2 = crop2.resize(
-            (pix.width * _OCR_CROP_RESIZE_FACTOR,
+            (img_width * _OCR_CROP_RESIZE_FACTOR,
              (crop2_bot - crop2_top) * _OCR_CROP_RESIZE_FACTOR),
             _lanczos,
         )
@@ -1466,7 +1466,7 @@ def _extract_common_expenses_pdf_attributes(
     building administrators.  The PDF is JPEG-backed: only a partial text layer
     (pdfminer-readable, but font-encoded) overlays certain fields.  The
     hot-water table lives exclusively in the JPEG background and requires OCR
-    (optional: pymupdf + pytesseract + tesseract-ocr must be installed).
+    (optional: pypdfium2 + pytesseract + tesseract-ocr must be installed).
 
     **Tier 1 – pdfminer text layer** (always attempted):
         ``billing_period_month``, ``billing_period_year``,
@@ -2167,7 +2167,7 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
       ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
       ``subtotal_recargos``, ``total_amount``, ``last_payment_date``,
       ``last_payment_amount``, ``last_payment_folio``.
-      Tier-2 (OCR, requires pymupdf + pytesseract + tesseract-ocr):
+      Tier-2 (OCR, requires pypdfium2 + pytesseract + tesseract-ocr):
       ``hot_water_reading_prev``, ``hot_water_reading_curr``,
       ``hot_water_consumption``, ``hot_water_consumption_unit``,
       ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
