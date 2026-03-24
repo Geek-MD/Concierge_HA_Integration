@@ -48,14 +48,16 @@
           "imap_port": "Puerto IMAP",
           "email": "Correo Electrónico",
           "password": "Contraseña",
-          "friendly_name": "Nombre Descriptivo"
+          "friendly_name": "Nombre Descriptivo",
+          "tesseract_api_url": "URL del add-on Tesseract OCR"
         },
         "data_description": {
           "imap_server": "Ejemplo: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
           "imap_port": "Puerto predeterminado para conexiones IMAP seguras",
           "email": "Ejemplo: usuario@gmail.com",
           "password": "Use una contraseña de aplicación para Gmail y Yahoo",
-          "friendly_name": "Un nombre descriptivo para esta cuenta de correo"
+          "friendly_name": "Un nombre descriptivo para esta cuenta de correo",
+          "tesseract_api_url": "URL base del add-on Tesseract OCR (nombre de host o dirección IP seguida del puerto 8000). Déjelo vacío para usar el binario local tesseract-ocr."
         }
       }
     },
@@ -131,8 +133,8 @@
   },
   "issues": {
     "tesseract_not_found": {
-      "title": "Tesseract OCR no instalado — sensores de Agua Caliente no disponibles",
-      "description": "El binario del sistema `tesseract-ocr` no está instalado. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos hasta que sea instalado.\n\nConsulta el [README]({readme_url}) para instrucciones de instalación paso a paso en Home Assistant OS, Docker y configuraciones Supervisadas.\n\nEste problema se resuelve automáticamente una vez que Tesseract esté instalado y se procese una nueva boleta de Gastos Comunes."
+      "title": "Tesseract OCR no disponible — sensores de Agua Caliente no disponibles",
+      "description": "Tesseract OCR no está disponible. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos hasta que Tesseract sea configurado.\n\n**Recomendado para Home Assistant OS (HAOS):** Instala el add-on **Tesseract OCR API** desde el [repositorio de add-ons de Kosztyk]({addon_repo_url}) y luego configura la **URL del add-on Tesseract OCR** (ej. `{addon_example_url}`) en los ajustes **CONFIGURAR** de la integración.\n\n**Otras instalaciones:** Consulta el [README]({readme_url}) para instrucciones paso a paso en Docker y configuraciones Supervisadas.\n\nEste problema se resuelve automáticamente una vez que Tesseract esté configurado y se procese una nueva boleta de Gastos Comunes."
     }
   }
 }

@@ -36,6 +36,7 @@ from .const import (
     CONF_SERVICE_ID,
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
+    CONF_TESSERACT_API_URL,
     DOMAIN,
     PDF_MAX_AGE_DAYS,
     PDF_SUBDIR,
@@ -565,7 +566,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "readme_url": (
                         "https://github.com/Geek-MD/Concierge_HA_Integration"
                         "#-prerequisites"
-                    )
+                    ),
+                    "addon_repo_url": "https://github.com/Kosztyk/homeassistant-addons",
+                    "addon_example_url": "http://homeassistant.local:8000",
                 },
             )
         elif ocr_state is True:
@@ -785,7 +788,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         # PDF (e.g. consumption for Metrogas).
                                         # PDF values override email-derived values.
                                         pdf_attrs = extract_attributes_from_pdf(
-                                            pdf_path, service_type
+                                            pdf_path,
+                                            service_type,
+                                            self._cfg.get(CONF_TESSERACT_API_URL, ""),
                                         )
                                         latest_attributes.update(pdf_attrs)
                                         # For PDF-only services (common_expenses,

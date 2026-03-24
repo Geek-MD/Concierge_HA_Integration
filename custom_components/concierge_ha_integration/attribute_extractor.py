@@ -1402,8 +1402,122 @@ def _parse_meter_reading(raw: str) -> float:
     return _parse_consumption_to_float(raw)
 
 
-def _try_ocr_pdf(pdf_path: str) -> str:
+def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
+    """Render the first page of *pdf_path* and OCR it via the Tesseract HTTP API.
+
+    Calls the ``/ocr/file`` endpoint of the Tesseract OCR add-on
+    (https://github.com/Kosztyk/homeassistant-addons) with the rendered page
+    images.  Uses three passes (PSM 1, 6, 4) identical to the local-binary
+    path to produce equivalent output.
+
+    The endpoint is expected to accept a multipart/form-data ``file`` field
+    and ``lang`` / ``psm`` query parameters and to return a JSON body of the
+    form ``{"text": "<extracted text>", ...}``.
+
+    Returns the combined OCR plain text, or an empty string on any error.
+    """
+    global _tesseract_available  # noqa: PLW0603
+    import io
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    try:
+        import pypdfium2 as pdfium  # type: ignore[import-untyped]
+        from PIL import Image  # type: ignore[import-untyped]
+    except ImportError as exc:
+        _LOGGER.warning(
+            "OCR unavailable for '%s': missing library (%s). "
+            "The integration requires 'pypdfium2' and 'Pillow' to render PDF pages "
+            "for the Tesseract OCR add-on.",
+            pdf_path,
+            exc,
+        )
+        return ""
+
+    _lanczos = getattr(Image, "Resampling", Image).LANCZOS
+
+    def _png_bytes(img: "Image.Image") -> bytes:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    def _call_api(image_bytes: bytes, lang: str, psm: int) -> str:
+        """POST *image_bytes* to the OCR API and return the extracted text."""
+        boundary = "----ConciergeOCRBoundary"
+        header = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="page.png"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+        ).encode("utf-8")
+        footer = f"\r\n--{boundary}--\r\n".encode("utf-8")
+        body = header + image_bytes + footer
+
+        import urllib.parse
+        params = urllib.parse.urlencode({"lang": lang, "psm": psm})
+        url = f"{api_url.rstrip('/')}/ocr/file?{params}"
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            data = _json.loads(resp.read().decode("utf-8"))
+            return str(data.get("text", ""))
+
+    try:
+        doc = pdfium.PdfDocument(pdf_path)
+        page = doc[0]
+        page_height = page.get_height()
+        bitmap = page.render(scale=_OCR_ZOOM_FACTOR)
+        doc.close()
+        img_full = bitmap.to_pil()
+
+        # Pass 1 — full page, PSM 1
+        text_full = _call_api(_png_bytes(img_full), lang="spa", psm=1)
+
+        # Pass 2 — agua caliente area crop (≈ 30–55 % from top), PSM 6
+        img_width = img_full.width
+        crop2_top = int(page_height * _OCR_CROP2_TOP_RATIO * _OCR_ZOOM_FACTOR)
+        crop2_bot = int(page_height * _OCR_CROP2_BOTTOM_RATIO * _OCR_ZOOM_FACTOR)
+        crop2 = img_full.crop((0, crop2_top, img_width, crop2_bot))
+        crop2 = crop2.resize(
+            (img_width * _OCR_CROP_RESIZE_FACTOR,
+             (crop2_bot - crop2_top) * _OCR_CROP_RESIZE_FACTOR),
+            _lanczos,
+        )
+        text_crop2 = _call_api(_png_bytes(crop2), lang="spa", psm=6)
+
+        # Pass 3 — full page, PSM 4 (single column)
+        text_crop3 = _call_api(_png_bytes(img_full), lang="spa", psm=4)
+
+        _tesseract_available = True
+        return text_full + "\n" + text_crop2 + "\n" + text_crop3
+
+    except urllib.error.URLError as exc:
+        _tesseract_available = False
+        _LOGGER.debug(
+            "Tesseract OCR add-on unreachable for '%s': %s. "
+            "Verify that the add-on is running and the URL '%s' is correct.",
+            pdf_path,
+            exc,
+            api_url,
+        )
+        return ""
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("OCR via API failed for '%s': %s", pdf_path, err)
+        return ""
+
+
+def _try_ocr_pdf(pdf_path: str, tesseract_api_url: str = "") -> str:
     """Render the first page of *pdf_path* and run Tesseract OCR on it.
+
+    When *tesseract_api_url* is provided the OCR is performed by POSTing the
+    rendered page images to the Tesseract OCR add-on HTTP API (e.g. the
+    Kosztyk add-on at ``http://homeassistant.local:8000``).  When the URL is
+    empty the local ``tesseract-ocr`` system binary is used instead (legacy
+    behaviour).
 
     Uses three passes:
     1. Full-page OCR with PSM 1 (auto orientation) — captures header fields.
@@ -1416,6 +1530,9 @@ def _try_ocr_pdf(pdf_path: str) -> str:
     libraries (``pypdfium2``, ``pytesseract``, ``PIL``) are not installed or if
     any error occurs.  Failures are logged at DEBUG level only.
     """
+    if tesseract_api_url:
+        return _try_ocr_pdf_via_api(pdf_path, tesseract_api_url)
+
     global _tesseract_available  # noqa: PLW0603
     try:
         import pypdfium2 as pdfium  # type: ignore[import-untyped]
@@ -1483,7 +1600,7 @@ def _try_ocr_pdf(pdf_path: str) -> str:
 
 
 def _extract_common_expenses_pdf_attributes(
-    text: str, pdf_path: str = ""
+    text: str, pdf_path: str = "", tesseract_api_url: str = ""
 ) -> dict[str, Any]:
     """Extract Gastos Comunes (and optional Agua Caliente) attributes from a PDF.
 
@@ -1745,7 +1862,7 @@ def _extract_common_expenses_pdf_attributes(
     # Tier 2: OCR-based hot-water extraction (optional)
     # ------------------------------------------------------------------
     if pdf_path:
-        ocr_text = _try_ocr_pdf(pdf_path)
+        ocr_text = _try_ocr_pdf(pdf_path, tesseract_api_url)
         if ocr_text:
             # Hot-water row — use meter-reading-aware parser for readings
             hw_m = _GC_OCR_HOT_WATER_ROW_RE.search(ocr_text)
@@ -1961,7 +2078,7 @@ def _extract_type_specific_attributes(text: str, service_type: str) -> dict[str,
 
 
 def _extract_pdf_type_specific_attributes(
-    text: str, service_type: str, pdf_path: str = ""
+    text: str, service_type: str, pdf_path: str = "", tesseract_api_url: str = ""
 ) -> dict[str, Any]:
     """Dispatch to the **PDF** extractor for *service_type* and return its results.
 
@@ -1971,10 +2088,13 @@ def _extract_pdf_type_specific_attributes(
     empty dict (no attributes extracted from the PDF).
 
     Args:
-        text:         Plain text extracted from the PDF via pdfminer.
-        service_type: One of the ``SERVICE_TYPE_*`` constants.
-        pdf_path:     Optional absolute path to the PDF file.  Passed to the
-                      common-expenses extractor to enable optional OCR.
+        text:               Plain text extracted from the PDF via pdfminer.
+        service_type:       One of the ``SERVICE_TYPE_*`` constants.
+        pdf_path:           Optional absolute path to the PDF file.  Passed to the
+                            common-expenses extractor to enable optional OCR.
+        tesseract_api_url:  Optional base URL of the Tesseract OCR add-on API
+                            (e.g. ``http://homeassistant.local:8000``).  When set,
+                            OCR is performed via HTTP instead of the local binary.
     """
     if service_type == SERVICE_TYPE_WATER:
         return _extract_water_pdf_attributes(text)
@@ -1985,7 +2105,7 @@ def _extract_pdf_type_specific_attributes(
     if service_type in (SERVICE_TYPE_COMMON_EXPENSES, SERVICE_TYPE_HOT_WATER):
         # Both devices are fed by the same PDF; the caller can differentiate
         # by service_type when consuming the returned dictionary.
-        return _extract_common_expenses_pdf_attributes(text, pdf_path)
+        return _extract_common_expenses_pdf_attributes(text, pdf_path, tesseract_api_url)
     return {}
 
 
@@ -2152,7 +2272,11 @@ def extract_attributes_from_email(msg: Any) -> dict[str, Any]:
     return extract_attributes_from_email_body(subject, body)
 
 
-def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_UNKNOWN) -> dict[str, Any]:
+def extract_attributes_from_pdf(
+    pdf_path: str,
+    service_type: str = SERVICE_TYPE_UNKNOWN,
+    tesseract_api_url: str = "",
+) -> dict[str, Any]:
     """Extract billing attributes from a downloaded PDF file.
 
     Uses ``pdfminer.six`` to convert the PDF to plain text and then dispatches
@@ -2192,14 +2316,19 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
       ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
       ``subtotal_recargos``, ``total_amount``, ``last_payment_date``,
       ``last_payment_amount``, ``last_payment_folio``.
-      Tier-2 (OCR, requires pypdfium2 + pytesseract + tesseract-ocr):
+      Tier-2 (OCR, requires pypdfium2 + pytesseract + tesseract-ocr OR the
+      Tesseract OCR add-on at *tesseract_api_url*):
       ``hot_water_reading_prev``, ``hot_water_reading_curr``,
       ``hot_water_consumption``, ``hot_water_consumption_unit``,
       ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
 
     Args:
-        pdf_path:     Absolute path to the downloaded PDF file.
-        service_type: One of the ``SERVICE_TYPE_*`` constants.
+        pdf_path:           Absolute path to the downloaded PDF file.
+        service_type:       One of the ``SERVICE_TYPE_*`` constants.
+        tesseract_api_url:  Optional base URL of the Tesseract OCR add-on API
+                            (e.g. ``http://homeassistant.local:8000``).  When set,
+                            OCR is performed via the add-on HTTP API instead of
+                            calling the local ``tesseract-ocr`` system binary.
 
     Returns:
         Dictionary with attributes extracted from the PDF, or an empty dict
@@ -2233,7 +2362,7 @@ def extract_attributes_from_pdf(pdf_path: str, service_type: str = SERVICE_TYPE_
         # Apply the PDF-specific extractor for this service type.
         # Each service type has its own PDF extractor tuned to that issuer's
         # PDF layout (separate from the email extractor).
-        pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type, pdf_path)
+        pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type, pdf_path, tesseract_api_url)
         attrs.update(pdf_attrs)
 
         # Ensure every non-metadata attribute has a confidence score.

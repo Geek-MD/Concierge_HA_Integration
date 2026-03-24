@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.13] - 2026-03-24
+
+### Added
+
+- **Tesseract OCR add-on support for Home Assistant OS (HAOS)**
+  (`attribute_extractor.py`, `sensor.py`, `config_flow.py`, `const.py`,
+  `strings.json`, `translations/en.json`, `translations/es.json`, `README.md`):
+
+  On HAOS the Home Assistant container image is read-only, which means the
+  `tesseract-ocr` system binary cannot be installed persistently — it is wiped
+  on every HA Core update.  Starting with this version the integration supports
+  running OCR via the **Tesseract OCR API** HTTP add-on from the
+  [Kosztyk add-on repository](https://github.com/Kosztyk/homeassistant-addons),
+  which exposes Tesseract as a persistent service at `http://<host>:8000`.
+
+  **How it works:**
+  - `attribute_extractor.py` — new `_try_ocr_pdf_via_api(pdf_path, api_url)`
+    function renders PDF pages to PNG images with `pypdfium2`/`Pillow` and
+    POSTs them to the add-on's `/ocr/file` endpoint (three passes: PSM 1, 6, 4)
+    using `urllib.request` (no new dependency).  The existing
+    `_try_ocr_pdf(pdf_path, tesseract_api_url="")` function now delegates to
+    this helper when an API URL is configured, or falls back to the local
+    `pytesseract` binary path when the URL is empty.  The
+    `_extract_common_expenses_pdf_attributes`, `_extract_pdf_type_specific_attributes`,
+    and `extract_attributes_from_pdf` functions accept the new
+    `tesseract_api_url` parameter and propagate it through the call chain.
+  - `const.py` — added `CONF_TESSERACT_API_URL = "tesseract_api_url"`.
+  - `config_flow.py` — added an optional **Tesseract OCR Add-on URL** field to
+    the `OptionsFlowHandler` (CONFIGURE screen).
+  - `sensor.py` — reads `CONF_TESSERACT_API_URL` from the effective config and
+    passes it to `extract_attributes_from_pdf`.
+  - `strings.json`, `translations/en.json`, `translations/es.json` — added the
+    new field label / description to the options step and updated the
+    `tesseract_not_found` Repair issue description to guide users towards the
+    add-on approach on HAOS.
+
+  **README** — replaced the HAOS section (which instructed users to run
+  `apt-get` inside the container — not persistent) with step-by-step
+  instructions to install the Tesseract OCR API add-on and configure the
+  integration's **Tesseract OCR Add-on URL** setting.  Docker / Supervised
+  instructions are retained (binary path, URL left empty).
+
 ## [0.9.12] - 2026-03-24
 
 ### Added
