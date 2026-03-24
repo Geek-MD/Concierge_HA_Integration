@@ -30,3 +30,8 @@ SERVICE_TYPE_UNKNOWN = "unknown"
 # PDF storage — subdirectory (relative to the HA config dir) and retention
 PDF_SUBDIR = "concierge_ha_integration/pdfs"
 PDF_MAX_AGE_DAYS = 365
+
+# Tesseract OCR API — optional URL for HTTP-based OCR via the Tesseract add-on
+# (e.g. "http://homeassistant.local:8000").  When empty the integration falls
+# back to calling the local ``tesseract-ocr`` system binary via ``pytesseract``.
+CONF_TESSERACT_API_URL = "tesseract_api_url"

@@ -230,34 +230,42 @@ Five sensors under each **Gastos Comunes** device report Agua Caliente (hot wate
 data extracted via OCR from the "Nota de Cobro" PDF:
 `hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
 `hot_water_prev_reading`, `hot_water_curr_reading`.
-Without `tesseract-ocr` these sensors stay empty — **all other sensors work normally**.
+Without Tesseract-OCR these sensors stay empty — **all other sensors work normally**.
 
 > The Python libraries `pypdfium2`, `pytesseract`, and `Pillow` are installed
 > automatically by Home Assistant from the integration's `manifest.json`.
-> Only the **system binary `tesseract-ocr`** must be installed manually — it cannot
-> be distributed as a `pip` package.
+> The **Tesseract-OCR engine** must be provided separately — either via the
+> add-on described below (HAOS) or as a system binary (Docker / Supervised).
 
-If Tesseract is missing after you process your first Gastos Comunes bill, Home
-Assistant will show a **Repair notification** in **Settings → Repairs** linking back
-to this section.
+If Tesseract is not available after you process your first Gastos Comunes bill,
+Home Assistant will show a **Repair notification** in **Settings → Repairs** with
+instructions to configure it.
 
-#### Home Assistant OS (HAOS)
+#### Home Assistant OS (HAOS) — Tesseract OCR Add-on *(recommended)*
 
-1. Install the **Advanced SSH & Web Terminal** add-on from the Add-on Store and
-   disable *Protection mode* in its configuration.
-2. Connect via SSH (or the web terminal) and run:
-   ```bash
-   docker exec -it homeassistant bash
+On HAOS the HA container image is read-only, so you cannot install system
+binaries directly.  The recommended approach is to use the **Tesseract OCR API**
+add-on, which runs Tesseract as a persistent HTTP service that survives HA Core
+updates.
+
+1. Go to **Settings → Add-ons → Add-on Store**.
+2. Click the **⋮ (three dots)** in the top-right → **Repositories** and add:
    ```
-3. Inside the container, install Tesseract and the Spanish language pack:
-   ```bash
-   apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa
-   exit
+   https://github.com/Kosztyk/homeassistant-addons
    ```
-4. Restart Home Assistant from **Settings → System → Restart**.
-
-> ⚠️ **Not persistent on HAOS**: the HA container image is reset on every HA Core
-> update.  You will need to repeat steps 2–4 after each Core update.
+3. Find **Tesseract OCR API** in the store and click **Install**.
+4. Start the add-on and verify it is running (the log should show
+   `Uvicorn running on http://0.0.0.0:8000`).
+5. In Home Assistant go to **Settings → Devices & Services**, find the
+   **Concierge HA Integration** card and click **CONFIGURE**.
+6. In the **Tesseract OCR Add-on URL** field enter:
+   ```
+   http://homeassistant.local:8000
+   ```
+   (or the IP address of your HAOS instance if `homeassistant.local` does not
+   resolve, e.g. `http://192.168.1.100:8000`).
+7. Save.  The integration will now send rendered PDF pages to the add-on API
+   instead of calling a local binary.
 
 #### Docker / Docker Compose (persistent)
 
@@ -271,6 +279,8 @@ RUN apt-get update \
 ```
 
 Point your `docker-compose.yml` to this custom image using `build:` or `image:`.
+Leave the **Tesseract OCR Add-on URL** field empty — the integration will use the
+local binary automatically.
 
 #### Supervised HA on Debian / Ubuntu
 
@@ -280,8 +290,9 @@ apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesse
 exit
 ```
 
-> ⚠️ Same caveat as HAOS: changes are lost when the HA container image is updated.
-> Re-run the commands after each Core update.
+> ⚠️ Same caveat as HAOS (without the add-on): changes are lost when the HA
+> container image is updated.  Re-run the commands after each Core update.
+> Consider using the add-on approach above for a persistent solution.
 
 ---
 
