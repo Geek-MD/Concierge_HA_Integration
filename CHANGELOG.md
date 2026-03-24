@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.12] - 2026-03-24
+
+### Added
+
+- **HA Repair notification when `tesseract-ocr` is not installed**
+  (`sensor.py`, `attribute_extractor.py`, `strings.json`,
+  `translations/en.json`, `translations/es.json`):
+
+  When the first Gastos Comunes bill is processed and the `tesseract-ocr`
+  system binary is absent, the integration now raises a **Repair issue**
+  visible in **Settings → Repairs**.  The issue card explains which five
+  Agua Caliente sensors are affected and links directly to the new
+  Prerequisites section of the README for step-by-step installation
+  instructions.  The issue is dismissed automatically the next time a bill
+  is processed with Tesseract working correctly.
+
+  Implementation details:
+  - `attribute_extractor.py` — added module-level `_tesseract_available`
+    flag (updated by `_try_ocr_pdf` on success/failure) and a public
+    `is_tesseract_available()` accessor.
+  - `sensor.py` — new `_manage_tesseract_repair_issue()` helper called after
+    every regular poll (`_async_update_data`) and every force-refresh
+    (`async_refresh_service`); uses `homeassistant.helpers.issue_registry`
+    (`ir.async_create_issue` / `ir.async_delete_issue`).
+  - `strings.json`, `translations/en.json`, `translations/es.json` — added
+    `issues.tesseract_not_found` with bilingual title and description.
+
+- **README — Prerequisites section** (`README.md`):
+
+  Added a new `## 📋 Prerequisites` section immediately before `## 📦 Installation`
+  with step-by-step instructions for installing `tesseract-ocr` on the three
+  most common HA deployment types:
+  - **Home Assistant OS (HAOS)** — via the *Advanced SSH & Web Terminal*
+    add-on and `docker exec`.
+  - **Docker / Docker Compose** — custom `Dockerfile` extending the official
+    HA image for a persistent installation.
+  - **Supervised HA on Debian / Ubuntu** — same `docker exec` approach.
+
+  Each method includes a caveat about non-persistence across HA Core updates
+  (for HAOS and Supervised).
+
+### Fixed
+
+- **README**: corrected an outdated reference to `pymupdf` (replaced by
+  `pypdfium2` since v0.9.10) in the Hot Water sensor description.
+
+- **`manifest.json`**: version bumped to `0.9.12`.
+
 ## [0.9.11] - 2026-03-24
 
 ### Fixed

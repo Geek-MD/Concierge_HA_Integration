@@ -543,9 +543,33 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from IMAP server."""
         try:
-            return await self.hass.async_add_executor_job(self._fetch_service_data)
+            result = await self.hass.async_add_executor_job(self._fetch_service_data)
         except Exception as err:
             raise UpdateFailed(f"Error communicating with IMAP server: {err}") from err
+        self._manage_tesseract_repair_issue()
+        return result
+
+    def _manage_tesseract_repair_issue(self) -> None:
+        """Create or clear the Tesseract-OCR repair issue based on OCR availability."""
+        ocr_state = is_tesseract_available()
+        if ocr_state is False:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                "tesseract_not_found",
+                is_fixable=False,
+                is_persistent=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="tesseract_not_found",
+                translation_placeholders={
+                    "readme_url": (
+                        "https://github.com/Geek-MD/Concierge_HA_Integration"
+                        "#-prerequisites"
+                    )
+                },
+            )
+        elif ocr_state is True:
+            ir.async_delete_issue(self.hass, DOMAIN, "tesseract_not_found")
 
     async def async_refresh_service(self, subentry_id: str) -> None:
         """Force an immediate email scan and PDF analysis for a single service subentry.
@@ -570,6 +594,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return
 
+        self._manage_tesseract_repair_issue()
         # Merge the fresh result into the current coordinator state and notify
         # all listeners so every entity linked to this device is refreshed.
         current: dict[str, Any] = (
