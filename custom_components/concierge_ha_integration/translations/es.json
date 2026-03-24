@@ -133,8 +133,8 @@
   },
   "issues": {
     "tesseract_not_found": {
-      "title": "Tesseract OCR no disponible — sensores de Agua Caliente no disponibles",
-      "description": "Tesseract OCR no está disponible. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos hasta que Tesseract sea configurado.\n\n**Recomendado para Home Assistant OS (HAOS):** Instala el add-on **Tesseract OCR API** desde el [repositorio de add-ons de Kosztyk]({addon_repo_url}) y luego configura la **URL del add-on Tesseract OCR** (ej. `{addon_example_url}`) en los ajustes **CONFIGURAR** de la integración.\n\n**Otras instalaciones:** Consulta el [README]({readme_url}) para instrucciones paso a paso en Docker y configuraciones Supervisadas.\n\nEste problema se resuelve automáticamente una vez que Tesseract esté configurado y se procese una nueva boleta de Gastos Comunes."
+      "title": "Motor OCR no disponible — sensores de Agua Caliente no disponibles",
+      "description": "El motor OCR (`rapidocr-onnxruntime` o `PyMuPDF`) no pudo cargarse. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos hasta que el problema se resuelva.\n\n**Esto no debería ocurrir en instalaciones normales** — ambos paquetes se instalan automáticamente como dependencias de la integración.\n\nSi ves este problema, revisa los logs de Home Assistant en busca de errores de importación y consulta el [README]({readme_url}) para pasos de solución de problemas.\n\nEste problema se resuelve automáticamente una vez que el motor OCR funcione y se procese una nueva boleta de Gastos Comunes."
     }
   }
 }

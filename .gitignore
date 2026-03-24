@@ -45,3 +45,6 @@ htmlcov/
 # Temporary files
 /tmp/
 *.tmp
+
+# OCR-generated searchable PDF copies (runtime output)
+*_searchable.pdf

@@ -11,8 +11,9 @@
     "pdfminer.six>=20221105",
     "pypdfium2>=4.30.0",
     "Pillow>=10.2.0",
-    "pytesseract>=0.3.13"
+    "rapidocr-onnxruntime>=1.4.0",
+    "PyMuPDF>=1.23.0"
   ],
   "single_config_entry": true,
-  "version": "0.9.13"
+  "version": "0.9.14"
 }

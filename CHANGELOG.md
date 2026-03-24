@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.14] - 2026-03-24
+
+### Added
+
+- **RapidOCR built-in engine — eliminates Tesseract dependency**
+  (`attribute_extractor.py`, `manifest.json`, `sensor.py`,
+  `strings.json`, `translations/en.json`, `translations/es.json`, `README.md`):
+
+  The integration now uses **`rapidocr-onnxruntime`** as its primary OCR engine
+  for extracting Agua Caliente (hot water) sensor data from the Gastos Comunes
+  PDF.  Both `rapidocr-onnxruntime` and `PyMuPDF` are installed automatically by
+  Home Assistant as Python package dependencies — no system binary installation,
+  no HAOS add-on, and no manual configuration is required.
+
+  **What RapidOCR provides over Tesseract:**
+  - Pure-Python implementation using ONNX Runtime; no system binary.
+  - Works on all HA installation types (HAOS, Docker, Supervised, Core) without
+    any extra steps.
+  - Superior accuracy on the "Nota de Cobro" layout: correctly reads
+    `cargo_fijo` ($9.638 vs. pdfminer's font-garbled $9.838) and the building
+    name ("Jose Miguel" vs. "Jon Miguel").
+  - On first use, PP-OCRv4 ONNX models (~20 MB total) are downloaded to the
+    system cache automatically.
+
+  **New functions in `attribute_extractor.py`:**
+  - `_ocr_boxes_to_text(results)` — reconstructs text from RapidOCR bounding
+    boxes by grouping items into rows (±20 px Y-tolerance) and sorting each row
+    left-to-right.
+  - `_try_ocr_pdf_rapidocr(pdf_path)` — renders the PDF with `PyMuPDF`,
+    runs RapidOCR, and returns `(text, raw_results)`.
+  - `_validate_ocr_against_pdfminer(ocr_text, pdfminer_text)` — cross-validates
+    the OCR output against the embedded text layer by checking how many
+    reference tokens (amounts, dates from pdfminer) appear in the OCR text.
+    Returns a score in [0, 1].
+  - `_save_pdf_with_ocr_text_layer(pdf_path, ocr_results, zoom)` — embeds OCR
+    results as an invisible text overlay (PDF render-mode 3) into a copy of the
+    PDF saved as `*_searchable.pdf`.  Future pdfminer reads of this copy find
+    the complete text without needing OCR.
+
+  **Updated `_try_ocr_pdf`** now returns `(ocr_text, raw_results)` and uses
+  the following priority order:
+  1. Tesseract HTTP API (if `tesseract_api_url` is configured — backward compat).
+  2. RapidOCR (default for all new and existing installations).
+
+  **Regex pattern fixes** for RapidOCR output format:
+  - `_GC_OCR_CARGO_FIJO_RE`: `\s+` → `\s*` between "Cargo" and "Fijo"
+    (RapidOCR concatenates them as "CargoFijo").
+  - `_GC_OCR_BUILDING_NAME_RE`: accepts "Pagar" as a separator in addition to
+    "Fecha" (RapidOCR places "Edificio Jose Miguel Pagar Hasta:" on one row).
+
+  **`manifest.json`:** removed `pytesseract>=0.3.13`; added
+  `rapidocr-onnxruntime>=1.4.0` and `PyMuPDF>=1.23.0`.
+
+  **Repair issue** (`tesseract_not_found`): translation text updated to refer
+  to the OCR engine generically rather than Tesseract specifically.  Any
+  previously active `tesseract_not_found` issue is automatically resolved on
+  the first successful RapidOCR run.
+
 ## [0.9.13] - 2026-03-24
 
 ### Added

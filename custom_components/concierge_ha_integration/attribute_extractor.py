@@ -57,24 +57,30 @@ CONF_SCORE_DERIVED: float = 60.0
 CONF_SCORE_OVERRIDE: float = 100.0
 
 # ---------------------------------------------------------------------------
-# Tesseract-OCR availability state
+# OCR engine availability state
 # ---------------------------------------------------------------------------
-# Tracks whether the ``tesseract-ocr`` system binary is available.
+# Tracks whether the OCR engine is available.
 #   None  – not yet determined (no OCR attempt has been made in this process)
-#   True  – a successful OCR run confirmed the binary is present
-#   False – ``TesseractNotFoundError`` was raised; binary is absent
+#   True  – a successful OCR run confirmed the engine is working
+#   False – the OCR engine failed (import error or runtime error)
 #
 # Updated by ``_try_ocr_pdf`` and read by the HA sensor coordinator to manage
-# a persistent Repair issue that guides users through installing Tesseract.
+# a persistent Repair issue that guides users through configuring OCR.
+#
+# Note: the variable is named ``_tesseract_available`` for backward
+# compatibility with ``sensor.py``; it now tracks any OCR engine.
 _tesseract_available: bool | None = None
 
 
 def is_tesseract_available() -> bool | None:
-    """Return the current Tesseract-OCR availability state.
+    """Return the current OCR-engine availability state.
 
     ``None``  – no OCR attempt has been made yet.
-    ``True``  – Tesseract binary found and working.
-    ``False`` – ``TesseractNotFoundError`` raised; binary missing.
+    ``True``  – OCR engine working (RapidOCR or Tesseract API).
+    ``False`` – OCR engine unavailable (import error or runtime failure).
+
+    The function name is kept for backward compatibility; it now covers all
+    supported OCR engines (RapidOCR primary, Tesseract HTTP API fallback).
     """
     return _tesseract_available
 
@@ -1075,9 +1081,9 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
 # embedded as a JPEG image while only a partial text layer (pdfminer-readable)
 # overlays certain fields.  Two extraction tiers are used:
 #   1. pdfminer text layer  – always available; provides amounts, dates, owner.
-#   2. OCR (optional)       – requires pypdfium2 + pytesseract + tesseract-ocr
-#                             installed on the host; provides the hot-water
-#                             table (Agua Caliente) that lives only in the image.
+#   2. OCR (optional)       – uses rapidocr-onnxruntime + PyMuPDF (no system
+#                             binary required); provides the hot-water table
+#                             (Agua Caliente) that lives only in the image.
 
 # "Nota de Cobro Enero 2026" – billing month and year
 _GC_BILLING_PERIOD_RE = re.compile(
@@ -1270,18 +1276,21 @@ _GC_OCR_SUBTOTAL_CONSUMO_RE = re.compile(
     re.IGNORECASE,
 )
 
-# OCR building name: PSM-4 pass renders "Edificio Jose Miguel Fecha Emisión:"
-# on a single line — capture the words between "Edificio" and "Fecha".
+# OCR building name: RapidOCR renders "Edificio Jose Miguel Pagar Hasta:"
+# on a single line (row-grouped); also handles Tesseract's
+# "Edificio Jose Miguel Fecha Emisión:" format.
+# Capture the words between "Edificio" and "Pagar/Fecha".
 _GC_OCR_BUILDING_NAME_RE = re.compile(
-    r"edificio\s+([\w\s]{2,50}?)\s+fecha\s+em",
+    r"edificio\s+([\w\s]{2,50}?)\s+(?:pagar|fecha)\s",
     re.IGNORECASE,
 )
 
-# OCR Cargo Fijo: the fixed-charge row.  PSM modes that preserve columns render
-# "Cargo Fijo   $9.638" (or with a pipe separator) on one line.
+# OCR Cargo Fijo: the fixed-charge row.  RapidOCR may omit the space between
+# words ("CargoFijo") while Tesseract renders "Cargo Fijo $9.638".
+# Use \s* (zero-or-more spaces) to handle both.
 # Use a tight window (≤ 30 chars) to avoid capturing the next-line total.
 _GC_OCR_CARGO_FIJO_RE = re.compile(
-    r"cargo\s+fijo[\s|]{0,30}\$?\s*([\d.,]+)",
+    r"cargo\s*fijo[\s|]{0,30}\$?\s*([\d.,]+)",
     re.IGNORECASE,
 )
 
@@ -1308,15 +1317,34 @@ _METER_7DIGIT_DEC_DIGITS: int = 3
 # OCR rendering constants
 # ---------------------------------------------------------------------------
 # Zoom factor applied when rendering PDF pages for OCR.  3× gives ~216 DPI
-# from a 72-DPI base, which is adequate for Tesseract accuracy.
+# from a 72-DPI base, which is adequate for RapidOCR accuracy.
 _OCR_ZOOM_FACTOR: int = 3
 
-# Upscale factor applied to cropped sections before Tesseract (pass 2).
+# Upscale factor applied to cropped sections before Tesseract API (pass 2).
 _OCR_CROP_RESIZE_FACTOR: int = 2
 
 # Vertical crop ratios (fraction of page height) for the Agua Caliente table.
 _OCR_CROP2_TOP_RATIO: float = 0.30
 _OCR_CROP2_BOTTOM_RATIO: float = 0.55
+
+# Maximum Y-pixel distance between two OCR bounding boxes to be grouped on
+# the same text line during RapidOCR text reconstruction.
+_OCR_ROW_Y_THRESHOLD: int = 20
+
+# Minimum cross-validation score (0–1) required before writing the OCR text
+# layer back into the PDF.  Set to 0.5 so at least half the reference tokens
+# from the pdfminer layer must appear in the OCR output.
+_OCR_VALIDATION_MIN_SCORE: float = 0.5
+
+# Minimum per-box confidence score from RapidOCR for a text block to be
+# included in the invisible PDF text overlay.  Low-confidence boxes (smudges,
+# graphical artefacts) are excluded from the text layer.
+_OCR_BOX_MIN_CONFIDENCE: float = 0.5
+
+# Patterns used for OCR cross-validation — amounts and dates that appear in
+# both the pdfminer embedded text layer and the OCR output.
+_OCR_VAL_AMOUNT_RE = re.compile(r"\$([\d.]+)")
+_OCR_VAL_DATE_RE = re.compile(r"\d{2}[-/]\d{2}[-/]\d{4}")
 
 # Month → number mapping (Spanish)
 _MONTH_NAME_TO_NUM: dict[str, int] = {
@@ -1402,13 +1430,241 @@ def _parse_meter_reading(raw: str) -> float:
     return _parse_consumption_to_float(raw)
 
 
+def _ocr_boxes_to_text(results: list) -> str:
+    """Convert RapidOCR bounding-box results to a plain-text string.
+
+    Groups detected text boxes into rows by vertical proximity (within
+    ``_OCR_ROW_Y_THRESHOLD`` pixels) and sorts each row by the X coordinate
+    of the top-left corner.  Rows are joined with newlines; items within a
+    row are joined with spaces.
+
+    This reconstruction preserves left-to-right reading order within table
+    rows so that existing regex patterns (e.g.
+    ``_GC_OCR_HOT_WATER_ROW_RE``) can match the concatenated text.
+
+    Args:
+        results: Raw output from ``RapidOCR()(image)`` — a list of
+                 ``[bbox, text, score]`` triples where ``bbox`` is a
+                 four-point quadrilateral ``[[x0,y0],[x1,y1],[x2,y2],[x3,y3]]``.
+
+    Returns:
+        Reconstructed text with newlines between rows.
+    """
+    if not results:
+        return ""
+    # Sort all items by Y-position of their top-left corner (ascending).
+    sorted_items = sorted(results, key=lambda x: x[0][0][1])
+    rows: list[list] = []
+    current_row: list = [sorted_items[0]]
+    current_y: float = sorted_items[0][0][0][1]
+    for item in sorted_items[1:]:
+        item_y: float = item[0][0][1]
+        if abs(item_y - current_y) <= _OCR_ROW_Y_THRESHOLD:
+            current_row.append(item)
+        else:
+            rows.append(current_row)
+            current_row = [item]
+            current_y = item_y
+    rows.append(current_row)
+
+    lines: list[str] = []
+    for row in rows:
+        # Sort within each row by X (left to right) before joining.
+        row_sorted = sorted(row, key=lambda x: x[0][0][0])
+        lines.append(" ".join(item[1] for item in row_sorted))
+    return "\n".join(lines)
+
+
+def _try_ocr_pdf_rapidocr(pdf_path: str) -> tuple[str, list]:
+    """OCR the first page of *pdf_path* using RapidOCR + PyMuPDF.
+
+    This is the primary OCR engine — a pure-Python implementation that
+    requires no system-level binaries.  ``rapidocr-onnxruntime`` uses
+    PaddleOCR-compatible PP-OCRv4 models via ONNX Runtime; ``PyMuPDF``
+    (``fitz``) renders the PDF page to a numpy-compatible pixel array.
+
+    On first call the ONNX models (~20 MB total) are downloaded to the
+    system's cache directory automatically.
+
+    Returns:
+        A ``(text, raw_results)`` tuple where ``text`` is the reconstructed
+        plain text (rows sorted by position) and ``raw_results`` is the raw
+        ``[bbox, text, score]`` list for optional PDF text-layer embedding.
+        Both are empty/``[]`` on failure.
+    """
+    try:
+        import fitz  # type: ignore[import-untyped]  # PyMuPDF
+        import numpy as np  # type: ignore[import-untyped]
+        from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-untyped]
+    except ImportError as exc:
+        _LOGGER.warning(
+            "RapidOCR unavailable for '%s': missing library (%s). "
+            "The integration requires 'rapidocr-onnxruntime' and 'PyMuPDF' "
+            "to enable Agua Caliente (hot water) sensor extraction.",
+            pdf_path,
+            exc,
+        )
+        return "", []
+
+    try:
+        doc = fitz.open(pdf_path)
+        page = doc[0]
+        mat = fitz.Matrix(_OCR_ZOOM_FACTOR, _OCR_ZOOM_FACTOR)
+        pix = page.get_pixmap(matrix=mat)
+        doc.close()
+        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, 3
+        )
+        ocr = RapidOCR()
+        raw_results, _ = ocr(img_array)
+        if not raw_results:
+            _LOGGER.debug("RapidOCR returned no results for '%s'", pdf_path)
+            return "", []
+        text = _ocr_boxes_to_text(raw_results)
+        _LOGGER.debug(
+            "RapidOCR extracted %d text blocks from '%s'",
+            len(raw_results),
+            pdf_path,
+        )
+        return text, raw_results
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("RapidOCR failed for '%s': %s", pdf_path, err)
+        return "", []
+
+
+def _validate_ocr_against_pdfminer(ocr_text: str, pdfminer_text: str) -> float:
+    """Cross-validate OCR output against the embedded pdfminer text layer.
+
+    Extracts key tokens (dollar amounts and dates) from *pdfminer_text*
+    (the reference — always available from the embedded text layer) and
+    checks how many of those tokens also appear in *ocr_text*.
+
+    This works because pdfminer reads the pre-existing embedded text layer
+    (created by a prior OCR pass, identifiable by the ``HiddenHorzOCR``
+    font) which contains amounts and dates that the new OCR should reproduce.
+    A high match ratio confirms the OCR is reading the same document content.
+
+    Args:
+        ocr_text:       Text produced by the OCR engine.
+        pdfminer_text:  Reference text from the pdfminer embedded layer.
+
+    Returns:
+        Float in [0.0, 1.0] — fraction of reference tokens found in
+        *ocr_text*.  Returns 1.0 when there are no reference tokens.
+    """
+    ref_amounts = set(_OCR_VAL_AMOUNT_RE.findall(pdfminer_text))
+    ref_dates = set(_OCR_VAL_DATE_RE.findall(pdfminer_text))
+    tokens = ref_amounts | ref_dates
+    if not tokens:
+        return 1.0
+    ocr_lower = ocr_text.lower()
+    matches = sum(1 for t in tokens if t.lower() in ocr_lower)
+    score = matches / len(tokens)
+    _LOGGER.debug(
+        "OCR cross-validation: %d/%d reference tokens matched (%.0f%%)",
+        matches,
+        len(tokens),
+        score * 100,
+    )
+    return score
+
+
+def _save_pdf_with_ocr_text_layer(
+    pdf_path: str,
+    ocr_results: list,
+    zoom: float = float(_OCR_ZOOM_FACTOR),
+) -> str | None:
+    """Embed RapidOCR results as an invisible text layer in the PDF.
+
+    Opens *pdf_path*, adds an invisible text overlay (PDF render-mode 3 —
+    "invisible": character advance, no painting) for each OCR bounding box,
+    and saves the result alongside the original as
+    ``<basename>_searchable.pdf``.  The invisible text makes the PDF fully
+    searchable and ensures that pdfminer can extract ALL fields (including
+    the hot-water table) on subsequent reads without requiring OCR.
+
+    This follows the same technique used by ``ocrmypdf``: the original
+    image is preserved unchanged and a transparent text layer is overlaid
+    at the correct positions.
+
+    Args:
+        pdf_path:    Absolute path to the source PDF.
+        ocr_results: Raw ``[bbox, text, score]`` list from RapidOCR.
+        zoom:        The zoom factor used when rendering the page to pixels
+                     (needed to convert pixel coordinates back to PDF points).
+
+    Returns:
+        Path of the saved searchable PDF, or ``None`` on failure.
+    """
+    try:
+        import fitz  # type: ignore[import-untyped]
+    except ImportError:
+        return None
+
+    if not ocr_results:
+        return None
+
+    # Build output path: replace ".pdf" suffix → "_searchable.pdf"
+    if pdf_path.lower().endswith(".pdf"):
+        out_path = pdf_path[:-4] + "_searchable.pdf"
+    else:
+        out_path = pdf_path + "_searchable.pdf"
+
+    try:
+        import os
+        import tempfile
+
+        doc = fitz.open(pdf_path)
+        page = doc[0]
+
+        for item in ocr_results:
+            bbox_px, text, score = item
+            if score < _OCR_BOX_MIN_CONFIDENCE or not text.strip():
+                continue
+
+            # Convert pixel bounding box to PDF point coordinates.
+            # RapidOCR bbox is [[x0,y0],[x1,y1],[x2,y2],[x3,y3]] (clockwise).
+            # pymupdf coordinate system: (0,0) at top-left, y increases down.
+            x0 = bbox_px[0][0] / zoom
+            y0 = bbox_px[0][1] / zoom   # top of text block
+            y1 = bbox_px[2][1] / zoom   # bottom of text block
+            font_size = max(4.0, (y1 - y0) * 0.8)
+
+            try:
+                # insert_text baseline = bottom-left of the text; use y1.
+                page.insert_text(
+                    fitz.Point(x0, y1),
+                    text,
+                    fontsize=font_size,
+                    render_mode=3,   # invisible — no visual change
+                    color=(0.0, 0.0, 0.0),
+                )
+            except Exception:  # noqa: BLE001
+                pass  # skip individual box on error
+
+        # Save atomically: write to a temp file then rename.
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            suffix=".pdf",
+            dir=os.path.dirname(os.path.abspath(out_path)),
+        )
+        os.close(tmp_fd)
+        doc.save(tmp_path, garbage=4, deflate=True)
+        doc.close()
+        os.replace(tmp_path, out_path)
+
+        _LOGGER.debug("Saved searchable PDF with OCR text layer to '%s'", out_path)
+        return out_path
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Failed to save OCR text-layer PDF for '%s': %s", pdf_path, err)
+        return None
+
+
 def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
     """Render the first page of *pdf_path* and OCR it via the Tesseract HTTP API.
 
     Calls the ``/ocr/file`` endpoint of the Tesseract OCR add-on
     (https://github.com/Kosztyk/homeassistant-addons) with the rendered page
-    images.  Uses three passes (PSM 1, 6, 4) identical to the local-binary
-    path to produce equivalent output.
+    images.  Uses three passes (PSM 1, 6, 4) to produce comprehensive output.
 
     The endpoint is expected to accept a multipart/form-data ``file`` field
     and ``lang`` / ``psm`` query parameters and to return a JSON body of the
@@ -1416,7 +1672,6 @@ def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
 
     Returns the combined OCR plain text, or an empty string on any error.
     """
-    global _tesseract_available  # noqa: PLW0603
     import io
     import json as _json
     import urllib.error
@@ -1492,11 +1747,9 @@ def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
         # Pass 3 — full page, PSM 4 (single column)
         text_crop3 = _call_api(_png_bytes(img_full), lang="spa", psm=4)
 
-        _tesseract_available = True
         return text_full + "\n" + text_crop2 + "\n" + text_crop3
 
     except urllib.error.URLError as exc:
-        _tesseract_available = False
         _LOGGER.debug(
             "Tesseract OCR add-on unreachable for '%s': %s. "
             "Verify that the add-on is running and the URL '%s' is correct.",
@@ -1510,93 +1763,75 @@ def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
         return ""
 
 
-def _try_ocr_pdf(pdf_path: str, tesseract_api_url: str = "") -> str:
-    """Render the first page of *pdf_path* and run Tesseract OCR on it.
+def _try_ocr_pdf(
+    pdf_path: str,
+    tesseract_api_url: str = "",
+    pdfminer_text: str = "",
+) -> tuple[str, list]:
+    """OCR the first page of *pdf_path* and return the extracted text.
 
-    When *tesseract_api_url* is provided the OCR is performed by POSTing the
-    rendered page images to the Tesseract OCR add-on HTTP API (e.g. the
-    Kosztyk add-on at ``http://homeassistant.local:8000``).  When the URL is
-    empty the local ``tesseract-ocr`` system binary is used instead (legacy
-    behaviour).
+    **Strategy (in order of preference):**
 
-    Uses three passes:
-    1. Full-page OCR with PSM 1 (auto orientation) — captures header fields.
-    2. Middle-section crop with PSM 6 (uniform block) — captures the water
-       consumption table (Agua Caliente) which is column-heavy.
-    3. Full-page OCR with PSM 4 (single column) — captures the totals table
-       with accurate ``subtotal_recargos`` (e.g. ``$9.638``).
+    1. **Tesseract HTTP API** — used when *tesseract_api_url* is configured.
+       Kept for backward compatibility with the Kosztyk HA add-on.
+    2. **RapidOCR** (primary) — pure-Python, no system binary required.
+       Uses ``rapidocr-onnxruntime`` + ``PyMuPDF`` to render and OCR the
+       page.  On first use, ONNX models (~20 MB) are downloaded
+       automatically to the system cache.
 
-    Returns the combined OCR plain text, or an empty string if the required
-    libraries (``pypdfium2``, ``pytesseract``, ``PIL``) are not installed or if
-    any error occurs.  Failures are logged at DEBUG level only.
+    When RapidOCR succeeds and *pdfminer_text* is provided, the OCR output
+    is cross-validated against the embedded pdfminer text layer.  If the
+    validation score meets ``_OCR_VALIDATION_MIN_SCORE``, a searchable copy
+    of the PDF is saved alongside the original (``*_searchable.pdf``) so
+    that future pdfminer reads can extract the full text without OCR.
+
+    Args:
+        pdf_path:          Absolute path to the PDF file.
+        tesseract_api_url: Optional Tesseract OCR add-on URL (takes priority
+                           over RapidOCR when set).
+        pdfminer_text:     Optional pdfminer text of the same PDF for
+                           cross-validation and PDF text-layer saving.
+
+    Returns:
+        ``(ocr_text, raw_results)`` where *ocr_text* is the extracted text
+        and *raw_results* is the ``[bbox, text, score]`` list from RapidOCR
+        (empty when the API path was used).  Both are empty on failure.
     """
-    if tesseract_api_url:
-        return _try_ocr_pdf_via_api(pdf_path, tesseract_api_url)
-
     global _tesseract_available  # noqa: PLW0603
-    try:
-        import pypdfium2 as pdfium  # type: ignore[import-untyped]
-        import pytesseract  # type: ignore[import-untyped]
-        from PIL import Image  # type: ignore[import-untyped]
-    except ImportError as exc:
-        _LOGGER.warning(
-            "OCR unavailable for '%s': missing library (%s). "
-            "The integration requires 'pypdfium2', 'pytesseract', and 'Pillow'; "
-            "also ensure the 'tesseract-ocr' system binary is installed to "
-            "enable Agua Caliente (hot water) sensor extraction.",
-            pdf_path,
-            exc,
-        )
-        return ""
-    # Use the modern Resampling API if available (Pillow ≥ 10.0.0, where LANCZOS
-    # moved under Image.Resampling), else fall back to the legacy attribute.
-    _lanczos = getattr(Image, "Resampling", Image).LANCZOS
-    try:
-        doc = pdfium.PdfDocument(pdf_path)
-        page = doc[0]
-        page_height = page.get_height()
-        bitmap = page.render(scale=_OCR_ZOOM_FACTOR)
-        doc.close()
-        img_full = bitmap.to_pil()
 
-        # Pass 1 — full page, PSM 1
-        text_full: str = pytesseract.image_to_string(
-            img_full, lang="spa", config="--psm 1"
-        )
-
-        # Pass 2 — agua caliente area crop (≈ 30–55 % from top), PSM 6
-        img_width = img_full.width
-        crop2_top = int(page_height * _OCR_CROP2_TOP_RATIO * _OCR_ZOOM_FACTOR)
-        crop2_bot = int(page_height * _OCR_CROP2_BOTTOM_RATIO * _OCR_ZOOM_FACTOR)
-        crop2 = img_full.crop((0, crop2_top, img_width, crop2_bot))
-        crop2 = crop2.resize(
-            (img_width * _OCR_CROP_RESIZE_FACTOR,
-             (crop2_bot - crop2_top) * _OCR_CROP_RESIZE_FACTOR),
-            _lanczos,
-        )
-        text_crop2: str = pytesseract.image_to_string(crop2, lang="spa", config="--psm 6")
-
-        # Pass 3 — full page, PSM 4 (single column).
-        # This pass reliably captures the totals table with accurate
-        # ``subtotal_recargos`` (column-separated amounts, e.g. "$9.638").
-        text_crop3: str = pytesseract.image_to_string(
-            img_full, lang="spa", config="--psm 4"
-        )
-
-        _tesseract_available = True
-        return text_full + "\n" + text_crop2 + "\n" + text_crop3
-    except pytesseract.TesseractNotFoundError as exc:
+    # --- Path 1: Tesseract HTTP API (backward-compatible, user-configured) ---
+    if tesseract_api_url:
+        api_text = _try_ocr_pdf_via_api(pdf_path, tesseract_api_url)
+        if api_text:
+            _tesseract_available = True
+            return api_text, []
         _tesseract_available = False
-        _LOGGER.debug(
-            "Tesseract OCR not found for '%s': %s. "
-            "Install tesseract-ocr to enable Agua Caliente extraction.",
-            pdf_path,
-            exc,
-        )
-        return ""
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("OCR failed for '%s': %s", pdf_path, err)
-        return ""
+        return "", []
+
+    # --- Path 2: RapidOCR (primary, no system binary required) ---------------
+    ocr_text, raw_results = _try_ocr_pdf_rapidocr(pdf_path)
+    if not ocr_text:
+        _tesseract_available = False
+        return "", []
+
+    _tesseract_available = True
+
+    # Cross-validate OCR output against the pdfminer embedded text layer.
+    if pdfminer_text:
+        score = _validate_ocr_against_pdfminer(ocr_text, pdfminer_text)
+        # Save a searchable PDF when validation confirms the OCR is correct.
+        if score >= _OCR_VALIDATION_MIN_SCORE:
+            _save_pdf_with_ocr_text_layer(pdf_path, raw_results, _OCR_ZOOM_FACTOR)
+        else:
+            _LOGGER.debug(
+                "OCR cross-validation score %.0f%% below threshold %.0f%% for '%s'; "
+                "skipping searchable PDF save.",
+                score * 100,
+                _OCR_VALIDATION_MIN_SCORE * 100,
+                pdf_path,
+            )
+
+    return ocr_text, raw_results
 
 
 def _extract_common_expenses_pdf_attributes(
@@ -1605,12 +1840,16 @@ def _extract_common_expenses_pdf_attributes(
     """Extract Gastos Comunes (and optional Agua Caliente) attributes from a PDF.
 
     This extractor handles the "Nota de Cobro" document issued by Chilean
-    building administrators.  The PDF is JPEG-backed: only a partial text layer
-    (pdfminer-readable, but font-encoded) overlays certain fields.  The
-    hot-water table lives exclusively in the JPEG background and requires OCR
-    (optional: pypdfium2 + pytesseract + tesseract-ocr must be installed).
+    building administrators.  The PDF uses a "sandwich" layout: a full-page
+    JPEG image as background, plus a partially complete text layer created by
+    a prior OCR pass (identifiable by the ``HiddenHorzOCR`` font embedded in
+    the PDF).  pdfminer reads that embedded text layer directly — no
+    additional OCR step is required for the fields it contains.  However, the
+    hot-water meter table was **not** included in the original OCR pass and
+    lives exclusively in the JPEG background; extracting it requires a second
+    OCR pass via RapidOCR (optional tier-2).
 
-    **Tier 1 – pdfminer text layer** (always attempted):
+    **Tier 1 – embedded pdfminer text layer** (always attempted, no OCR):
         ``billing_period_month``, ``billing_period_year``,
         ``billing_period_start``, ``billing_period_end``,
         ``emission_date``, ``due_date``,
@@ -1621,10 +1860,20 @@ def _extract_common_expenses_pdf_attributes(
         ``subtotal_recargos``, ``total_amount``,
         ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``
 
-    **Tier 2 – OCR on JPEG background** (requires pdf_path + optional libs):
+    **Tier 2 – RapidOCR on JPEG background** (requires pdf_path + optional libs):
         ``hot_water_reading_prev``, ``hot_water_reading_curr``,
         ``hot_water_consumption``, ``hot_water_consumption_unit``,
-        ``hot_water_cost_per_m3``, ``hot_water_amount``
+        ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``
+
+    Tier-2 also *improves* two tier-1 fields that the prior OCR pass
+    misread due to font-glyph garbling:
+
+    * ``building_name`` — pdfminer reads "Jon" instead of "José" (font
+      encoding artefact); RapidOCR corrects this from the JPEG.
+    * ``cargo_fijo`` — pdfminer may read "$9.838" instead of the correct
+      "$9.638" (~$200 difference); RapidOCR reads the JPEG accurately.
+      This error propagates to ``subtotal_consumo`` when it is derived
+      arithmetically (``total − subtotal_depto − cargo_fijo``).
 
     Reference PDF: "Gastos Comunes Enero 2026" (Edificio Jose Miguel, 1 page).
     """
@@ -1859,10 +2108,15 @@ def _extract_common_expenses_pdf_attributes(
         _confidence["last_payment_folio"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
-    # Tier 2: OCR-based hot-water extraction (optional)
+    # Tier 2: RapidOCR-based hot-water extraction (optional)
+    # RapidOCR reads the JPEG image layer directly and extracts the
+    # hot-water table that was not included in the embedded text layer.
+    # The OCR output is also cross-validated against the pdfminer text
+    # and — on success — saved back as an invisible text layer in the PDF
+    # so future pdfminer reads can extract all fields without OCR.
     # ------------------------------------------------------------------
     if pdf_path:
-        ocr_text = _try_ocr_pdf(pdf_path, tesseract_api_url)
+        ocr_text, _ocr_raw = _try_ocr_pdf(pdf_path, tesseract_api_url, text)
         if ocr_text:
             # Hot-water row — use meter-reading-aware parser for readings
             hw_m = _GC_OCR_HOT_WATER_ROW_RE.search(ocr_text)
@@ -2054,6 +2308,66 @@ def _extract_common_expenses_pdf_attributes(
     # Keys starting with "_" are metadata — not exposed as HA state attributes.
     if _confidence:
         attrs["_confidence"] = _confidence
+
+    # ------------------------------------------------------------------
+    # Diagnostic logging — surfaces what each extraction tier contributed.
+    #
+    # This PDF uses a "sandwich" layout: a JPEG image as background plus a
+    # partially complete text layer (font-encoded, created by a prior OCR
+    # pass — identifiable by the HiddenHorzOCR font used in the PDF).
+    # pdfminer reads that embedded text layer directly without any additional
+    # OCR step; Tesseract (tier-2) re-processes the JPEG to recover the
+    # fields that were missed by the original OCR pass.
+    #
+    # Fields available in the embedded text layer (no Tesseract needed):
+    #   billing_period_month/year, billing_period_start/end,
+    #   emission_date, due_date, building_rut, building_name (approx.),
+    #   address, apartment, owner_name, alicuota, building_total_expense,
+    #   fondos_pct, gastos_comunes_amount, fondos_amount,
+    #   subtotal_departamento, subtotal_recargos, total_amount,
+    #   last_payment_date, last_payment_amount, last_payment_folio.
+    #
+    # Fields ONLY available via Tesseract (tier-2) — absent from the
+    # embedded text layer:
+    #   hot_water_reading_prev, hot_water_reading_curr,
+    #   hot_water_consumption, hot_water_consumption_unit,
+    #   hot_water_cost_per_m3, hot_water_amount.
+    #
+    # Fields improved by Tesseract (pdfminer may misread font glyphs):
+    #   building_name  — pdfminer garbles font-encoded chars (e.g. "Jon"
+    #                    instead of "José"); OCR reads the JPEG accurately.
+    #   cargo_fijo     — pdfminer may read "$9.838" instead of "$9.638"
+    #                    (~$200 error); OCR corrects the digit.
+    #   subtotal_consumo — derived without OCR via
+    #                    total − subtotal_depto − cargo_fijo; the ~$200
+    #                    cargo_fijo error propagates here unless OCR corrects
+    #                    cargo_fijo first.
+    # ------------------------------------------------------------------
+    if _confidence:
+        _tier1_keys = sorted(
+            k for k, s in _confidence.items()
+            if s == CONF_SCORE_PDFMINER and not k.startswith("_")
+        )
+        _tier2_keys = sorted(
+            k for k, s in _confidence.items()
+            if s == CONF_SCORE_OCR
+        )
+        _derived_keys = sorted(
+            k for k, s in _confidence.items()
+            if s == CONF_SCORE_DERIVED
+        )
+        _LOGGER.debug(
+            "Common-expenses PDF extraction — "
+            "embedded text layer (%d attrs): [%s]; "
+            "Tesseract OCR tier (%d attrs): [%s]; "
+            "derived (%d attrs): [%s]",
+            len(_tier1_keys),
+            ", ".join(_tier1_keys) if _tier1_keys else "—",
+            len(_tier2_keys),
+            ", ".join(_tier2_keys) if _tier2_keys else "—",
+            len(_derived_keys),
+            ", ".join(_derived_keys) if _derived_keys else "—",
+        )
 
     return attrs
 
@@ -2308,27 +2622,33 @@ def extract_attributes_from_pdf(
       (Chilean building administrator "Nota de Cobro", Jan 2026).
       Both ``SERVICE_TYPE_COMMON_EXPENSES`` and ``SERVICE_TYPE_HOT_WATER`` share
       the same PDF; the full extracted dictionary is returned for both so the
-      caller can select the relevant fields.
-      Tier-1 (pdfminer): ``billing_period_month``, ``billing_period_year``,
-      ``billing_period_start``, ``billing_period_end``, ``emission_date``,
-      ``due_date``, ``building_name``, ``building_rut``, ``address``,
-      ``apartment``, ``owner_name``, ``alicuota``, ``building_total_expense``,
-      ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
-      ``subtotal_recargos``, ``total_amount``, ``last_payment_date``,
-      ``last_payment_amount``, ``last_payment_folio``.
-      Tier-2 (OCR, requires pypdfium2 + pytesseract + tesseract-ocr OR the
-      Tesseract OCR add-on at *tesseract_api_url*):
+      caller can select the relevant fields.  The PDF uses a "sandwich" layout:
+      a full-page JPEG image as background plus a partially complete embedded
+      text layer created by a prior OCR pass (identifiable by the
+      ``HiddenHorzOCR`` font).  pdfminer reads that embedded layer directly.
+      Tier-1 (embedded text layer, no Tesseract needed): ``billing_period_month``,
+      ``billing_period_year``, ``billing_period_start``, ``billing_period_end``,
+      ``emission_date``, ``due_date``, ``building_name``, ``building_rut``,
+      ``address``, ``apartment``, ``owner_name``, ``alicuota``,
+      ``building_total_expense``, ``gastos_comunes_amount``, ``fondos_amount``,
+      ``subtotal_departamento``, ``subtotal_recargos``, ``total_amount``,
+      ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``.
+      Tier-2 (RapidOCR on JPEG — hot-water table absent from embedded text,
+      requires ``rapidocr-onnxruntime`` + ``PyMuPDF``):
       ``hot_water_reading_prev``, ``hot_water_reading_curr``,
       ``hot_water_consumption``, ``hot_water_consumption_unit``,
       ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
+      When RapidOCR succeeds and the cross-validation score is ≥ 50%, a
+      searchable copy of the PDF is saved alongside the original as
+      ``*_searchable.pdf`` with an invisible text overlay.
 
     Args:
         pdf_path:           Absolute path to the downloaded PDF file.
         service_type:       One of the ``SERVICE_TYPE_*`` constants.
         tesseract_api_url:  Optional base URL of the Tesseract OCR add-on API
-                            (e.g. ``http://homeassistant.local:8000``).  When set,
-                            OCR is performed via the add-on HTTP API instead of
-                            calling the local ``tesseract-ocr`` system binary.
+                            (e.g. ``http://homeassistant.local:8000``).  When
+                            set, OCR is performed via the add-on HTTP API
+                            instead of RapidOCR.
 
     Returns:
         Dictionary with attributes extracted from the PDF, or an empty dict
@@ -2352,6 +2672,14 @@ def extract_attributes_from_pdf(
 
     if not pdf_text:
         return {}
+
+    _LOGGER.debug(
+        "pdfminer extracted %d chars from '%s' (service_type=%s). Text layer:\n%s",
+        len(pdf_text),
+        pdf_path,
+        service_type,
+        pdf_text,
+    )
 
     attrs: dict[str, Any] = {}
     try:
