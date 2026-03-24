@@ -2103,30 +2103,31 @@ def _extract_common_expenses_pdf_attributes(
     #                    cargo_fijo error propagates here unless OCR corrects
     #                    cargo_fijo first.
     # ------------------------------------------------------------------
-    _tier1_keys = sorted(
-        k for k, s in _confidence.items()
-        if s == CONF_SCORE_PDFMINER and not k.startswith("_")
-    )
-    _tier2_keys = sorted(
-        k for k, s in _confidence.items()
-        if s == CONF_SCORE_OCR
-    )
-    _derived_keys = sorted(
-        k for k, s in _confidence.items()
-        if s == CONF_SCORE_DERIVED
-    )
-    _LOGGER.debug(
-        "Common-expenses PDF extraction — "
-        "embedded text layer (%d attrs): [%s]; "
-        "Tesseract OCR tier (%d attrs): [%s]; "
-        "derived (%d attrs): [%s]",
-        len(_tier1_keys),
-        ", ".join(_tier1_keys) if _tier1_keys else "—",
-        len(_tier2_keys),
-        ", ".join(_tier2_keys) if _tier2_keys else "— (Tesseract unavailable or not configured)",
-        len(_derived_keys),
-        ", ".join(_derived_keys) if _derived_keys else "—",
-    )
+    if _confidence:
+        _tier1_keys = sorted(
+            k for k, s in _confidence.items()
+            if s == CONF_SCORE_PDFMINER and not k.startswith("_")
+        )
+        _tier2_keys = sorted(
+            k for k, s in _confidence.items()
+            if s == CONF_SCORE_OCR
+        )
+        _derived_keys = sorted(
+            k for k, s in _confidence.items()
+            if s == CONF_SCORE_DERIVED
+        )
+        _LOGGER.debug(
+            "Common-expenses PDF extraction — "
+            "embedded text layer (%d attrs): [%s]; "
+            "Tesseract OCR tier (%d attrs): [%s]; "
+            "derived (%d attrs): [%s]",
+            len(_tier1_keys),
+            ", ".join(_tier1_keys) if _tier1_keys else "—",
+            len(_tier2_keys),
+            ", ".join(_tier2_keys) if _tier2_keys else "—",
+            len(_derived_keys),
+            ", ".join(_derived_keys) if _derived_keys else "—",
+        )
 
     return attrs
 
