@@ -14,5 +14,5 @@
     "pytesseract>=0.3.13"
   ],
   "single_config_entry": true,
-  "version": "0.9.10"
+  "version": "0.9.12"
 }

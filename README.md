@@ -103,7 +103,7 @@
   > **Hot Water** is a sub-account billed within the Common Expenses PDF,
   > there is no separate email for it.  Its five sensors are
   > populated automatically when the OCR Tier-2 pass succeeds (requires
-  > `pymupdf`, `pytesseract`, and `tesseract-ocr`).  When OCR is unavailable
+  > `pypdfium2`, `pytesseract`, and `tesseract-ocr`).  When OCR is unavailable
   > the sensors exist but report `None` until a manual override is applied via
   > the `set_value` service.
 
@@ -219,6 +219,69 @@ target:
 data:
   value: "9638"
 ```
+
+---
+
+## 📋 Prerequisites
+
+### Tesseract-OCR *(optional — required only for Hot Water sensors)*
+
+Five sensors under each **Gastos Comunes** device report Agua Caliente (hot water)
+data extracted via OCR from the "Nota de Cobro" PDF:
+`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
+`hot_water_prev_reading`, `hot_water_curr_reading`.
+Without `tesseract-ocr` these sensors stay empty — **all other sensors work normally**.
+
+> The Python libraries `pypdfium2`, `pytesseract`, and `Pillow` are installed
+> automatically by Home Assistant from the integration's `manifest.json`.
+> Only the **system binary `tesseract-ocr`** must be installed manually — it cannot
+> be distributed as a `pip` package.
+
+If Tesseract is missing after you process your first Gastos Comunes bill, Home
+Assistant will show a **Repair notification** in **Settings → Repairs** linking back
+to this section.
+
+#### Home Assistant OS (HAOS)
+
+1. Install the **Advanced SSH & Web Terminal** add-on from the Add-on Store and
+   disable *Protection mode* in its configuration.
+2. Connect via SSH (or the web terminal) and run:
+   ```bash
+   docker exec -it homeassistant bash
+   ```
+3. Inside the container, install Tesseract and the Spanish language pack:
+   ```bash
+   apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa
+   exit
+   ```
+4. Restart Home Assistant from **Settings → System → Restart**.
+
+> ⚠️ **Not persistent on HAOS**: the HA container image is reset on every HA Core
+> update.  You will need to repeat steps 2–4 after each Core update.
+
+#### Docker / Docker Compose (persistent)
+
+Extend the official image with a custom `Dockerfile`:
+
+```dockerfile
+FROM ghcr.io/home-assistant/home-assistant:stable
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+Point your `docker-compose.yml` to this custom image using `build:` or `image:`.
+
+#### Supervised HA on Debian / Ubuntu
+
+```bash
+sudo docker exec -it homeassistant bash
+apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa
+exit
+```
+
+> ⚠️ Same caveat as HAOS: changes are lost when the HA container image is updated.
+> Re-run the commands after each Core update.
 
 ---
 

@@ -128,5 +128,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "tesseract_not_found": {
+      "title": "Tesseract OCR no instalado — sensores de Agua Caliente no disponibles",
+      "description": "El binario del sistema `tesseract-ocr` no está instalado. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos hasta que sea instalado.\n\nConsulta el [README]({readme_url}) para instrucciones de instalación paso a paso en Home Assistant OS, Docker y configuraciones Supervisadas.\n\nEste problema se resuelve automáticamente una vez que Tesseract esté instalado y se procese una nueva boleta de Gastos Comunes."
+    }
   }
 }
