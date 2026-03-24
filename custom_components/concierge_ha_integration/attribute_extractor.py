@@ -1605,12 +1605,16 @@ def _extract_common_expenses_pdf_attributes(
     """Extract Gastos Comunes (and optional Agua Caliente) attributes from a PDF.
 
     This extractor handles the "Nota de Cobro" document issued by Chilean
-    building administrators.  The PDF is JPEG-backed: only a partial text layer
-    (pdfminer-readable, but font-encoded) overlays certain fields.  The
-    hot-water table lives exclusively in the JPEG background and requires OCR
-    (optional: pypdfium2 + pytesseract + tesseract-ocr must be installed).
+    building administrators.  The PDF uses a "sandwich" layout: a full-page
+    JPEG image as background, plus a partially complete text layer created by
+    a prior OCR pass (identifiable by the ``HiddenHorzOCR`` font embedded in
+    the PDF).  pdfminer reads that embedded text layer directly — no
+    additional OCR step is required for the fields it contains.  However, the
+    hot-water meter table was **not** included in the original OCR pass and
+    lives exclusively in the JPEG background; extracting it requires a second
+    OCR pass via Tesseract (optional tier-2).
 
-    **Tier 1 – pdfminer text layer** (always attempted):
+    **Tier 1 – embedded pdfminer text layer** (always attempted, no Tesseract):
         ``billing_period_month``, ``billing_period_year``,
         ``billing_period_start``, ``billing_period_end``,
         ``emission_date``, ``due_date``,
@@ -1621,10 +1625,20 @@ def _extract_common_expenses_pdf_attributes(
         ``subtotal_recargos``, ``total_amount``,
         ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``
 
-    **Tier 2 – OCR on JPEG background** (requires pdf_path + optional libs):
+    **Tier 2 – Tesseract OCR on JPEG background** (requires pdf_path + optional libs):
         ``hot_water_reading_prev``, ``hot_water_reading_curr``,
         ``hot_water_consumption``, ``hot_water_consumption_unit``,
-        ``hot_water_cost_per_m3``, ``hot_water_amount``
+        ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``
+
+    Tier-2 also *improves* two tier-1 fields that the prior OCR pass
+    misread due to font-glyph garbling:
+
+    * ``building_name`` — pdfminer reads "Jon" instead of "José" (font
+      encoding artefact); Tesseract corrects this from the JPEG.
+    * ``cargo_fijo`` — pdfminer may read "$9.838" instead of the correct
+      "$9.638" (~$200 difference); Tesseract reads the JPEG accurately.
+      This error propagates to ``subtotal_consumo`` when it is derived
+      arithmetically (``total − subtotal_depto − cargo_fijo``).
 
     Reference PDF: "Gastos Comunes Enero 2026" (Edificio Jose Miguel, 1 page).
     """
@@ -2055,6 +2069,65 @@ def _extract_common_expenses_pdf_attributes(
     if _confidence:
         attrs["_confidence"] = _confidence
 
+    # ------------------------------------------------------------------
+    # Diagnostic logging — surfaces what each extraction tier contributed.
+    #
+    # This PDF uses a "sandwich" layout: a JPEG image as background plus a
+    # partially complete text layer (font-encoded, created by a prior OCR
+    # pass — identifiable by the HiddenHorzOCR font used in the PDF).
+    # pdfminer reads that embedded text layer directly without any additional
+    # OCR step; Tesseract (tier-2) re-processes the JPEG to recover the
+    # fields that were missed by the original OCR pass.
+    #
+    # Fields available in the embedded text layer (no Tesseract needed):
+    #   billing_period_month/year, billing_period_start/end,
+    #   emission_date, due_date, building_rut, building_name (approx.),
+    #   address, apartment, owner_name, alicuota, building_total_expense,
+    #   fondos_pct, gastos_comunes_amount, fondos_amount,
+    #   subtotal_departamento, subtotal_recargos, total_amount,
+    #   last_payment_date, last_payment_amount, last_payment_folio.
+    #
+    # Fields ONLY available via Tesseract (tier-2) — absent from the
+    # embedded text layer:
+    #   hot_water_reading_prev, hot_water_reading_curr,
+    #   hot_water_consumption, hot_water_consumption_unit,
+    #   hot_water_cost_per_m3, hot_water_amount.
+    #
+    # Fields improved by Tesseract (pdfminer may misread font glyphs):
+    #   building_name  — pdfminer garbles font-encoded chars (e.g. "Jon"
+    #                    instead of "José"); OCR reads the JPEG accurately.
+    #   cargo_fijo     — pdfminer may read "$9.838" instead of "$9.638"
+    #                    (~$200 error); OCR corrects the digit.
+    #   subtotal_consumo — derived without OCR via
+    #                    total − subtotal_depto − cargo_fijo; the ~$200
+    #                    cargo_fijo error propagates here unless OCR corrects
+    #                    cargo_fijo first.
+    # ------------------------------------------------------------------
+    _tier1_keys = sorted(
+        k for k, s in _confidence.items()
+        if s == CONF_SCORE_PDFMINER and not k.startswith("_")
+    )
+    _tier2_keys = sorted(
+        k for k, s in _confidence.items()
+        if s == CONF_SCORE_OCR
+    )
+    _derived_keys = sorted(
+        k for k, s in _confidence.items()
+        if s == CONF_SCORE_DERIVED
+    )
+    _LOGGER.debug(
+        "Common-expenses PDF extraction — "
+        "embedded text layer (%d attrs): [%s]; "
+        "Tesseract OCR tier (%d attrs): [%s]; "
+        "derived (%d attrs): [%s]",
+        len(_tier1_keys),
+        ", ".join(_tier1_keys) if _tier1_keys else "—",
+        len(_tier2_keys),
+        ", ".join(_tier2_keys) if _tier2_keys else "— (Tesseract unavailable or not configured)",
+        len(_derived_keys),
+        ", ".join(_derived_keys) if _derived_keys else "—",
+    )
+
     return attrs
 
 
@@ -2308,16 +2381,18 @@ def extract_attributes_from_pdf(
       (Chilean building administrator "Nota de Cobro", Jan 2026).
       Both ``SERVICE_TYPE_COMMON_EXPENSES`` and ``SERVICE_TYPE_HOT_WATER`` share
       the same PDF; the full extracted dictionary is returned for both so the
-      caller can select the relevant fields.
-      Tier-1 (pdfminer): ``billing_period_month``, ``billing_period_year``,
-      ``billing_period_start``, ``billing_period_end``, ``emission_date``,
-      ``due_date``, ``building_name``, ``building_rut``, ``address``,
-      ``apartment``, ``owner_name``, ``alicuota``, ``building_total_expense``,
-      ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
-      ``subtotal_recargos``, ``total_amount``, ``last_payment_date``,
-      ``last_payment_amount``, ``last_payment_folio``.
-      Tier-2 (OCR, requires pypdfium2 + pytesseract + tesseract-ocr OR the
-      Tesseract OCR add-on at *tesseract_api_url*):
+      caller can select the relevant fields.  The PDF uses a "sandwich" layout:
+      a full-page JPEG image as background plus a partially complete embedded
+      text layer created by a prior OCR pass (identifiable by the
+      ``HiddenHorzOCR`` font).  pdfminer reads that embedded layer directly.
+      Tier-1 (embedded text layer, no Tesseract needed): ``billing_period_month``,
+      ``billing_period_year``, ``billing_period_start``, ``billing_period_end``,
+      ``emission_date``, ``due_date``, ``building_name``, ``building_rut``,
+      ``address``, ``apartment``, ``owner_name``, ``alicuota``,
+      ``building_total_expense``, ``gastos_comunes_amount``, ``fondos_amount``,
+      ``subtotal_departamento``, ``subtotal_recargos``, ``total_amount``,
+      ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``.
+      Tier-2 (Tesseract OCR on JPEG — hot-water table absent from embedded text):
       ``hot_water_reading_prev``, ``hot_water_reading_curr``,
       ``hot_water_consumption``, ``hot_water_consumption_unit``,
       ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
@@ -2352,6 +2427,14 @@ def extract_attributes_from_pdf(
 
     if not pdf_text:
         return {}
+
+    _LOGGER.debug(
+        "pdfminer extracted %d chars from '%s' (service_type=%s). Text layer:\n%s",
+        len(pdf_text),
+        pdf_path,
+        service_type,
+        pdf_text,
+    )
 
     attrs: dict[str, Any] = {}
     try:
