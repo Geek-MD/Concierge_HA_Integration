@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.15] - 2026-03-24
+
+### Fixed
+
+- **Migrate from `rapidocr-onnxruntime` to `rapidocr` + `onnxruntime`**
+  (`manifest.json`, `attribute_extractor.py`, `sensor.py`,
+  `strings.json`, `translations/en.json`, `translations/es.json`, `README.md`):
+
+  `rapidocr-onnxruntime` declares `Requires-Python: <3.13`, which causes Home
+  Assistant to reject the package on Python 3.13+ environments (and in strict
+  package-manager configurations such as `uv`).  The package is also no longer
+  actively maintained.
+
+  The fix replaces it with the actively maintained **`rapidocr` ≥ 3.0.0**
+  (supports Python 3.6–3.x, no upper-version cap) and a separate
+  **`onnxruntime` ≥ 1.7.0** dependency.  `rapidocr` v3 uses `onnxruntime` as
+  its default inference backend (configured via its bundled `config.yaml`) and
+  returns a `RapidOCROutput` dataclass instead of the legacy `(list, elapsed)`
+  tuple.
+
+  **`manifest.json`:** replaced `rapidocr-onnxruntime>=1.4.0` with
+  `rapidocr>=3.0.0` and added `onnxruntime>=1.7.0`.
+
+  **`attribute_extractor.py`:** updated `_try_ocr_pdf_rapidocr` to import
+  `from rapidocr import RapidOCR` and to convert the `RapidOCROutput` result
+  (`result.boxes`, `result.txts`, `result.scores`) back to the
+  `[bbox, text, score]` list format expected by `_ocr_boxes_to_text` and
+  `_save_pdf_with_ocr_text_layer`.  All docstrings updated accordingly.
+
 ## [0.9.14] - 2026-03-24
 
 ### Added
