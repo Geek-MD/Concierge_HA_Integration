@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.11] - 2026-03-24
+
+### Fixed
+
+- **Spurious `WARNING` log when `tesseract-ocr` is not installed**
+  (`attribute_extractor.py`):
+
+  Every time a Gastos Comunes PDF was processed, `_try_ocr_pdf` logged a
+  `WARNING` if the `tesseract-ocr` system binary was absent:
+
+  > `Tesseract OCR not found for '…/common_expenses_2026-03.pdf':
+  > tesseract is not installed or it's not in your PATH.
+  > Install tesseract-ocr to enable Agua Caliente extraction.`
+
+  Because `tesseract-ocr` is an optional system package that many Home
+  Assistant container environments cannot install, this warning fired on every
+  PDF poll cycle, flooding the HA log without providing actionable information
+  to the user.
+
+  The function docstring already stated *"Failures are logged at DEBUG level
+  only"* — the `TesseractNotFoundError` handler was inconsistent with that
+  contract.
+
+  **Change**: downgraded the `TesseractNotFoundError` log call from
+  `_LOGGER.warning` to `_LOGGER.debug`.  Users who want to diagnose missing
+  Tesseract support can still find the message by enabling debug logging for
+  the integration; it will no longer appear in the default HA log.
+
+- **`manifest.json`**: version bumped to `0.9.11`.
+
 ## [0.9.10] - 2026-03-23
 
 ### Fixed

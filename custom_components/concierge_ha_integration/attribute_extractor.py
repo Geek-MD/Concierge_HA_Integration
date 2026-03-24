@@ -1445,7 +1445,7 @@ def _try_ocr_pdf(pdf_path: str) -> str:
 
         return text_full + "\n" + text_crop2 + "\n" + text_crop3
     except pytesseract.TesseractNotFoundError as exc:
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Tesseract OCR not found for '%s': %s. "
             "Install tesseract-ocr to enable Agua Caliente extraction.",
             pdf_path,
