@@ -241,6 +241,42 @@ If Tesseract is not available after you process your first Gastos Comunes bill,
 Home Assistant will show a **Repair notification** in **Settings → Repairs** with
 instructions to configure it.
 
+#### How the add-on and integration work together
+
+When the **Tesseract OCR Add-on URL** is configured, the integration uses the
+add-on as a remote OCR engine instead of a local `tesseract-ocr` binary.  Here
+is the end-to-end flow for every Gastos Comunes bill that arrives:
+
+1. **Email received** — the coordinator detects a new bill email and downloads
+   the attached PDF ("Nota de Cobro").
+2. **PDF rendered** — using `pypdfium2`, the integration renders the first page
+   into PNG images at high resolution.  Three passes are prepared:
+   - Full-page at default zoom (PSM 1 — auto orientation).
+   - A mid-section crop at 2× zoom targeting the Agua Caliente table (PSM 6).
+   - Full-page again (PSM 4 — single column) for the totals section.
+3. **Images POSTed to the add-on** — each PNG is sent as
+   `multipart/form-data` to `POST /ocr/file?lang=spa&psm=<n>` on the
+   add-on's HTTP API (default port `8000`).
+4. **Tesseract runs inside the add-on** — the add-on executes Tesseract with
+   the requested language (`spa`) and page-segmentation mode, and returns a
+   JSON response `{"text": "…"}`.
+5. **Text combined and parsed** — the integration merges the text from all
+   three passes and extracts the five Hot Water values using its
+   pattern-matching logic.
+6. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
+   `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
+   are written to Home Assistant.
+
+If the **Tesseract OCR Add-on URL** is left empty, steps 3–4 are replaced by a
+direct call to the local `tesseract-ocr` binary — the approach used for Docker
+and Supervised installations.
+
+> **Troubleshooting:** If the add-on is unreachable (wrong URL, add-on stopped,
+> network issue) the integration logs a `DEBUG`-level message and the Hot Water
+> sensors remain empty.  Check **Settings → Add-ons → Tesseract OCR API → Log**
+> to verify the add-on is running, and confirm the URL in
+> **Settings → Devices & Services → Concierge HA Integration → CONFIGURE**.
+
 #### Home Assistant OS (HAOS) — Tesseract OCR Add-on *(recommended)*
 
 On HAOS the HA container image is read-only, so you cannot install system
