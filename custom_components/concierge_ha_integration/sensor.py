@@ -566,7 +566,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "readme_url": (
                         "https://github.com/Geek-MD/Concierge_HA_Integration"
                         "#-prerequisites"
-                    )
+                    ),
+                    "addon_repo_url": "https://github.com/Kosztyk/homeassistant-addons",
+                    "addon_example_url": "http://homeassistant.local:8000",
                 },
             )
         elif ocr_state is True:
