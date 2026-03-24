@@ -56,6 +56,28 @@ CONF_SCORE_OCR: float = 85.0
 CONF_SCORE_DERIVED: float = 60.0
 CONF_SCORE_OVERRIDE: float = 100.0
 
+# ---------------------------------------------------------------------------
+# Tesseract-OCR availability state
+# ---------------------------------------------------------------------------
+# Tracks whether the ``tesseract-ocr`` system binary is available.
+#   None  – not yet determined (no OCR attempt has been made in this process)
+#   True  – a successful OCR run confirmed the binary is present
+#   False – ``TesseractNotFoundError`` was raised; binary is absent
+#
+# Updated by ``_try_ocr_pdf`` and read by the HA sensor coordinator to manage
+# a persistent Repair issue that guides users through installing Tesseract.
+_tesseract_available: bool | None = None
+
+
+def is_tesseract_available() -> bool | None:
+    """Return the current Tesseract-OCR availability state.
+
+    ``None``  – no OCR attempt has been made yet.
+    ``True``  – Tesseract binary found and working.
+    ``False`` – ``TesseractNotFoundError`` raised; binary missing.
+    """
+    return _tesseract_available
+
 
 # Patterns for billing period dates (start and end)
 DATE_PATTERNS = [
@@ -1394,6 +1416,7 @@ def _try_ocr_pdf(pdf_path: str) -> str:
     libraries (``pypdfium2``, ``pytesseract``, ``PIL``) are not installed or if
     any error occurs.  Failures are logged at DEBUG level only.
     """
+    global _tesseract_available  # noqa: PLW0603
     try:
         import pypdfium2 as pdfium  # type: ignore[import-untyped]
         import pytesseract  # type: ignore[import-untyped]
@@ -1443,8 +1466,10 @@ def _try_ocr_pdf(pdf_path: str) -> str:
             img_full, lang="spa", config="--psm 4"
         )
 
+        _tesseract_available = True
         return text_full + "\n" + text_crop2 + "\n" + text_crop3
     except pytesseract.TesseractNotFoundError as exc:
+        _tesseract_available = False
         _LOGGER.debug(
             "Tesseract OCR not found for '%s': %s. "
             "Install tesseract-ocr to enable Agua Caliente extraction.",

@@ -18,6 +18,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -50,6 +51,7 @@ from .attribute_extractor import (
     CONF_SCORE_OVERRIDE,
     extract_attributes_from_email_body,
     extract_attributes_from_pdf,
+    is_tesseract_available,
     _strip_html,
 )
 from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
