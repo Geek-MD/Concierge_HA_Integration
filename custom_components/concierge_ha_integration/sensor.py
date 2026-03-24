@@ -551,7 +551,14 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return result
 
     def _manage_tesseract_repair_issue(self) -> None:
-        """Create or clear the Tesseract-OCR repair issue based on OCR availability."""
+        """Create or clear the OCR-engine repair issue based on availability.
+
+        With RapidOCR (primary engine, no system binary required) this issue
+        should virtually never be raised — it would only appear if the
+        ``rapidocr-onnxruntime`` or ``PyMuPDF`` Python packages failed to
+        import.  Any previously active ``tesseract_not_found`` issue is
+        automatically resolved on the first successful RapidOCR run.
+        """
         ocr_state = is_tesseract_available()
         if ocr_state is False:
             ir.async_create_issue(
