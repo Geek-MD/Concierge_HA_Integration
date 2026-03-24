@@ -555,7 +555,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         With RapidOCR (primary engine, no system binary required) this issue
         should virtually never be raised — it would only appear if the
-        ``rapidocr-onnxruntime`` or ``PyMuPDF`` Python packages failed to
+        ``rapidocr``, ``onnxruntime`` or ``PyMuPDF`` Python packages failed to
         import.  Any previously active ``tesseract_not_found`` issue is
         automatically resolved on the first successful RapidOCR run.
         """

@@ -103,7 +103,7 @@
   > **Hot Water** is a sub-account billed within the Common Expenses PDF,
   > there is no separate email for it.  Its five sensors are
   > populated automatically when the OCR Tier-2 pass succeeds (requires
-  > `rapidocr-onnxruntime` and `PyMuPDF`, both installed automatically).
+  > `rapidocr`, `onnxruntime` and `PyMuPDF`, both installed automatically).
   > When OCR is unavailable the sensors exist but report `None` until a
   > manual override is applied via the `set_value` service.
 
@@ -231,9 +231,9 @@ data extracted via OCR from the "Nota de Cobro" PDF:
 `hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
 `hot_water_prev_reading`, `hot_water_curr_reading`.
 
-Starting with **v0.9.14**, the integration uses **RapidOCR** (`rapidocr-onnxruntime`)
+Starting with **v0.9.15**, the integration uses **RapidOCR** (`rapidocr` + `onnxruntime`)
 as its built-in OCR engine — **no system binary, no add-on, and no additional
-manual configuration required**.  Both `rapidocr-onnxruntime` and `PyMuPDF` are
+manual configuration required**.  `rapidocr`, `onnxruntime` and `PyMuPDF` are
 installed automatically by Home Assistant from the integration's `manifest.json`.
 
 On first use, RapidOCR downloads ~20 MB of ONNX model files to the system cache
@@ -249,7 +249,7 @@ For every Gastos Comunes bill that arrives, the integration:
    billing amounts, dates, and owner data without any additional OCR.
 2. **Renders the PDF page** — `PyMuPDF` renders the full-page JPEG image at
    3× zoom (~216 DPI) to a pixel array.
-3. **RapidOCR scans the image** — `rapidocr-onnxruntime` detects and reads all
+3. **RapidOCR scans the image** — `rapidocr` + `onnxruntime` detects and reads all
    text in the image, including the Agua Caliente (hot water) meter table that
    was missing from the embedded text layer.
 4. **Cross-validation** — the OCR output is compared against the embedded text

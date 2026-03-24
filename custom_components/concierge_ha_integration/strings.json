@@ -134,7 +134,7 @@
   "issues": {
     "tesseract_not_found": {
       "title": "OCR engine not available — Hot Water sensors unavailable",
-      "description": "The OCR engine (`rapidocr-onnxruntime` or `PyMuPDF`) could not be loaded. The five **Agua Caliente** (hot water) sensors (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) will remain empty until the issue is resolved.\n\n**This should not happen in normal installations** — both packages are installed automatically as integration dependencies.\n\nIf you see this issue, please check the Home Assistant logs for import errors and consult the [README]({readme_url}) for troubleshooting steps.\n\nThis issue resolves automatically once the OCR engine is working and a new Gastos Comunes bill is processed."
+      "description": "The OCR engine (`rapidocr`, `onnxruntime` or `PyMuPDF`) could not be loaded. The five **Agua Caliente** (hot water) sensors (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) will remain empty until the issue is resolved.\n\n**This should not happen in normal installations** — both packages are installed automatically as integration dependencies.\n\nIf you see this issue, please check the Home Assistant logs for import errors and consult the [README]({readme_url}) for troubleshooting steps.\n\nThis issue resolves automatically once the OCR engine is working and a new Gastos Comunes bill is processed."
     }
   }
 }

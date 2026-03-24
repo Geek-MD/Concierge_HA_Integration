@@ -1081,7 +1081,7 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
 # embedded as a JPEG image while only a partial text layer (pdfminer-readable)
 # overlays certain fields.  Two extraction tiers are used:
 #   1. pdfminer text layer  – always available; provides amounts, dates, owner.
-#   2. OCR (optional)       – uses rapidocr-onnxruntime + PyMuPDF (no system
+#   2. OCR (optional)       – uses rapidocr + onnxruntime + PyMuPDF (no system
 #                             binary required); provides the hot-water table
 #                             (Agua Caliente) that lives only in the image.
 
@@ -1479,7 +1479,7 @@ def _try_ocr_pdf_rapidocr(pdf_path: str) -> tuple[str, list]:
     """OCR the first page of *pdf_path* using RapidOCR + PyMuPDF.
 
     This is the primary OCR engine — a pure-Python implementation that
-    requires no system-level binaries.  ``rapidocr-onnxruntime`` uses
+    requires no system-level binaries.  ``rapidocr`` (v3+) uses
     PaddleOCR-compatible PP-OCRv4 models via ONNX Runtime; ``PyMuPDF``
     (``fitz``) renders the PDF page to a numpy-compatible pixel array.
 
@@ -1495,11 +1495,11 @@ def _try_ocr_pdf_rapidocr(pdf_path: str) -> tuple[str, list]:
     try:
         import fitz  # type: ignore[import-untyped]  # PyMuPDF
         import numpy as np  # type: ignore[import-untyped]
-        from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-untyped]
+        from rapidocr import RapidOCR  # type: ignore[import-untyped]
     except ImportError as exc:
         _LOGGER.warning(
             "RapidOCR unavailable for '%s': missing library (%s). "
-            "The integration requires 'rapidocr-onnxruntime' and 'PyMuPDF' "
+            "The integration requires 'rapidocr', 'onnxruntime' and 'PyMuPDF' "
             "to enable Agua Caliente (hot water) sensor extraction.",
             pdf_path,
             exc,
@@ -1516,10 +1516,17 @@ def _try_ocr_pdf_rapidocr(pdf_path: str) -> tuple[str, list]:
             pix.height, pix.width, 3
         )
         ocr = RapidOCR()
-        raw_results, _ = ocr(img_array)
-        if not raw_results:
+        result = ocr(img_array)
+        if result is None or not len(result):
             _LOGGER.debug("RapidOCR returned no results for '%s'", pdf_path)
             return "", []
+        # Convert RapidOCROutput (rapidocr v3+) to the [bbox, text, score] list
+        # format expected by _ocr_boxes_to_text and _save_pdf_with_ocr_text_layer.
+        scores = result.scores if result.scores is not None else (1.0,) * len(result)
+        raw_results = [
+            [box.tolist(), txt, float(score)]
+            for box, txt, score in zip(result.boxes, result.txts or [], scores)
+        ]
         text = _ocr_boxes_to_text(raw_results)
         _LOGGER.debug(
             "RapidOCR extracted %d text blocks from '%s'",
@@ -1775,7 +1782,7 @@ def _try_ocr_pdf(
     1. **Tesseract HTTP API** — used when *tesseract_api_url* is configured.
        Kept for backward compatibility with the Kosztyk HA add-on.
     2. **RapidOCR** (primary) — pure-Python, no system binary required.
-       Uses ``rapidocr-onnxruntime`` + ``PyMuPDF`` to render and OCR the
+       Uses ``rapidocr`` + ``onnxruntime`` + ``PyMuPDF`` to render and OCR the
        page.  On first use, ONNX models (~20 MB) are downloaded
        automatically to the system cache.
 
@@ -2634,7 +2641,7 @@ def extract_attributes_from_pdf(
       ``subtotal_departamento``, ``subtotal_recargos``, ``total_amount``,
       ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``.
       Tier-2 (RapidOCR on JPEG — hot-water table absent from embedded text,
-      requires ``rapidocr-onnxruntime`` + ``PyMuPDF``):
+      requires ``rapidocr`` + ``onnxruntime`` + ``PyMuPDF``):
       ``hot_water_reading_prev``, ``hot_water_reading_curr``,
       ``hot_water_consumption``, ``hot_water_consumption_unit``,
       ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
