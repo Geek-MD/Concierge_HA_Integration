@@ -224,20 +224,30 @@ data:
 
 ## 📋 Prerequisites
 
-### OCR for Hot Water sensors *(built-in — no manual setup required)*
+### OCR for Hot Water sensors
 
 Five sensors under each **Gastos Comunes** device report Agua Caliente (hot water)
 data extracted via OCR from the "Nota de Cobro" PDF:
 `hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
 `hot_water_prev_reading`, `hot_water_curr_reading`.
 
-Starting with **v0.9.15**, the integration uses **RapidOCR** (`rapidocr` + `onnxruntime`)
-as its built-in OCR engine — **no system binary, no add-on, and no additional
-manual configuration required**.  `rapidocr`, `onnxruntime` and `PyMuPDF` are
-installed automatically by Home Assistant from the integration's `manifest.json`.
+Starting with **v1.0.0**, `rapidocr`, `onnxruntime` and `PyMuPDF` are **optional** —
+they are no longer hard requirements because `onnxruntime` has no pre-built wheel
+for Home Assistant OS / Alpine / musl libc.
 
-On first use, RapidOCR downloads ~20 MB of ONNX model files to the system cache
-automatically.
+#### OCR priority order
+
+1. **RapidOCR** (primary) — used automatically when `rapidocr`, `onnxruntime` and
+   `PyMuPDF` are installed.  No extra configuration required.  On first use,
+   ~20 MB of ONNX model files are downloaded to the system cache automatically.
+2. **Concierge Add-on REST API** (fallback) — used when RapidOCR is unavailable
+   and a **Concierge Add-on URL** is configured.  Install the
+   [Concierge Add-on](https://github.com/Geek-MD/Concierge_Addon) and set its URL
+   in **Settings → Devices & Services → Concierge HA Integration → CONFIGURE**
+   (**Concierge Add-on URL**, e.g. `http://homeassistant.local:8099`).
+3. **None** — if neither engine is available, the Agua Caliente sensors remain
+   empty.  A warning is logged and a persistent notification plus a Repair issue
+   appear in Home Assistant recommending the Concierge Add-on installation.
 
 #### How the OCR pipeline works
 
@@ -262,18 +272,6 @@ For every Gastos Comunes bill that arrives, the integration:
 6. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
-
-#### Tesseract OCR Add-on *(optional — backward compatible)*
-
-If you previously configured a **Tesseract OCR Add-on URL** (e.g.
-`http://homeassistant.local:8000`), the integration will continue to use
-the add-on API instead of RapidOCR.  You can clear the URL in
-**Settings → Devices & Services → Concierge HA Integration → CONFIGURE**
-to switch to the built-in RapidOCR engine.
-
-> **Upgrading from ≤ 0.9.13?** If you had a `tesseract_not_found` Repair
-> issue active, it will be automatically resolved the first time a Gastos
-> Comunes bill is processed with the new version.
 
 ---
 

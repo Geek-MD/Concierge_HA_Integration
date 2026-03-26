@@ -5,7 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.15] - 2026-03-24
+## [1.0.0] - 2026-03-26
+
+### Added
+
+- **Concierge Add-on REST API as OCR fallback**
+  (`attribute_extractor.py`, `sensor.py`, `config_flow.py`, `const.py`,
+  `strings.json`, `translations/en.json`, `translations/es.json`, `README.md`):
+
+  A new optional **Concierge Add-on URL** (`ocr_api_url`) setting is available
+  in the integration options.  When RapidOCR is unavailable (e.g. on
+  Home Assistant OS / Alpine / musl libc where `onnxruntime` has no pre-built
+  wheel), the integration now falls back to the
+  [Concierge Add-on](https://github.com/Geek-MD/Concierge_Addon) REST API
+  (`POST /ocr/file`, default port **8099**) to perform OCR on the
+  "Nota de Cobro" PDF.
+
+  **OCR priority order:**
+  1. **RapidOCR** (primary) — used when `rapidocr`, `onnxruntime` and `PyMuPDF`
+     are installed.
+  2. **Concierge Add-on REST API** (fallback) — used when RapidOCR is
+     unavailable and `ocr_api_url` is configured.
+  3. **None** — a warning is logged, a persistent notification is raised, and
+     a Repair issue appears recommending the Concierge Add-on installation.
+
+- **Persistent notification and Repair issue when OCR is unavailable**
+  (`sensor.py`, `strings.json`, `translations/en.json`, `translations/es.json`):
+
+  When neither RapidOCR nor the Concierge Add-on is available, Home Assistant
+  displays a persistent notification and a Repair issue (key `ocr_unavailable`)
+  directing the user to install the Concierge Add-on.  Both are automatically
+  dismissed on the first successful OCR run.
+
+### Changed
+
+- **`rapidocr`, `onnxruntime` and `PyMuPDF` are now optional dependencies**
+  (`manifest.json`):
+
+  These packages are no longer listed as hard requirements in `manifest.json`.
+  `onnxruntime` has no pre-built wheel for Home Assistant OS / Alpine / musl
+  libc, causing installation failures.  The libraries are still used when
+  available; when absent, the Concierge Add-on REST API is used as fallback.
+
+### Removed
+
+- **Tesseract OCR add-on support removed**
+  (`attribute_extractor.py`, `sensor.py`, `config_flow.py`, `const.py`,
+  `strings.json`, `translations/en.json`, `translations/es.json`, `README.md`):
+
+  The Tesseract HTTP API path (`CONF_TESSERACT_API_URL` / `tesseract_api_url`)
+  has been removed entirely.  The integration never relied on Tesseract as a
+  designed solution — it was an accidental historical artefact.  All OCR is
+  now handled by **RapidOCR** (primary) or the **Concierge Add-on REST API**
+  (fallback).
+
+  - `CONF_TESSERACT_API_URL` constant removed from `const.py`.
+  - `tesseract_api_url` parameter removed from `extract_attributes_from_pdf`,
+    `_extract_pdf_type_specific_attributes`, `_extract_common_expenses_pdf_attributes`,
+    and `_try_ocr_pdf`.
+  - `tesseract_api_url` field removed from the integration options flow.
+  - `is_tesseract_available()` renamed to `is_ocr_available()`.
+  - Repair issue key renamed from `tesseract_not_found` to `ocr_unavailable`.
+  - Internal method `_manage_tesseract_repair_issue()` renamed to
+    `_manage_ocr_repair_issue()`.
+
+
 
 ### Fixed
 

@@ -10,11 +10,8 @@
   "requirements": [
     "pdfminer.six>=20221105",
     "pypdfium2>=4.30.0",
-    "Pillow>=10.2.0",
-    "rapidocr>=3.0.0",
-    "onnxruntime>=1.7.0",
-    "PyMuPDF>=1.23.0"
+    "Pillow>=10.2.0"
   ],
   "single_config_entry": true,
-  "version": "0.9.15"
+  "version": "1.0.0"
 }

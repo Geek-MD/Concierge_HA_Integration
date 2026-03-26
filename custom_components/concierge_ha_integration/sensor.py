@@ -13,6 +13,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -27,6 +28,7 @@ from homeassistant.helpers.update_coordinator import (
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_CONCIERGE_ADDON_URL,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -36,7 +38,6 @@ from .const import (
     CONF_SERVICE_ID,
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
-    CONF_TESSERACT_API_URL,
     DOMAIN,
     PDF_MAX_AGE_DAYS,
     PDF_SUBDIR,
@@ -52,7 +53,7 @@ from .attribute_extractor import (
     CONF_SCORE_OVERRIDE,
     extract_attributes_from_email_body,
     extract_attributes_from_pdf,
-    is_tesseract_available,
+    is_ocr_available,
     _strip_html,
 )
 from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
@@ -64,6 +65,9 @@ _LOGGER = logging.getLogger(__name__)
 _LEARNING_FILE_SUBDIR = "concierge_ha_integration"
 # File name for the persistent learning-override store.
 _LEARNING_FILE_NAME = "learning.json"
+
+# Notification ID for the persistent OCR-unavailable notification.
+_OCR_NOTIFICATION_ID = "concierge_ocr_unavailable"
 
 # Update interval for checking mail server connection
 SCAN_INTERVAL = timedelta(minutes=30)
@@ -547,39 +551,55 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             result = await self.hass.async_add_executor_job(self._fetch_service_data)
         except Exception as err:
             raise UpdateFailed(f"Error communicating with IMAP server: {err}") from err
-        self._manage_tesseract_repair_issue()
+        self._manage_ocr_repair_issue()
         return result
 
-    def _manage_tesseract_repair_issue(self) -> None:
-        """Create or clear the OCR-engine repair issue based on availability.
+    def _manage_ocr_repair_issue(self) -> None:
+        """Create or clear the OCR-engine repair issue and persistent notification.
 
-        With RapidOCR (primary engine, no system binary required) this issue
-        should virtually never be raised — it would only appear if the
-        ``rapidocr``, ``onnxruntime`` or ``PyMuPDF`` Python packages failed to
-        import.  Any previously active ``tesseract_not_found`` issue is
-        automatically resolved on the first successful RapidOCR run.
+        When OCR is unavailable (RapidOCR import failed and no Concierge Add-on
+        URL is configured) a Repair issue and a persistent notification are
+        raised to inform the user that Agua Caliente sensor values cannot be
+        extracted automatically and must be entered manually, and to recommend
+        installing the Concierge Add-on.
+
+        Both are automatically resolved on the first successful OCR run.
         """
-        ocr_state = is_tesseract_available()
+        ocr_state = is_ocr_available()
         if ocr_state is False:
             ir.async_create_issue(
                 self.hass,
                 DOMAIN,
-                "tesseract_not_found",
+                "ocr_unavailable",
                 is_fixable=False,
                 is_persistent=False,
                 severity=ir.IssueSeverity.WARNING,
-                translation_key="tesseract_not_found",
+                translation_key="ocr_unavailable",
                 translation_placeholders={
-                    "readme_url": (
-                        "https://github.com/Geek-MD/Concierge_HA_Integration"
-                        "#-prerequisites"
-                    ),
-                    "addon_repo_url": "https://github.com/Kosztyk/homeassistant-addons",
-                    "addon_example_url": "http://homeassistant.local:8000",
+                    "addon_url": "https://github.com/Geek-MD/Concierge_Addon",
                 },
             )
+            persistent_notification.async_create(
+                self.hass,
+                message=(
+                    "The OCR engine (**RapidOCR**) could not be loaded and no "
+                    "**Concierge Add-on URL** is configured.\n\n"
+                    "OCR-based tasks cannot run — **Agua Caliente** (hot water) "
+                    "sensor values will need to be entered manually until OCR is "
+                    "restored.\n\n"
+                    "To fix this, install the "
+                    "[Concierge Add-on](https://github.com/Geek-MD/Concierge_Addon) "
+                    "and set its URL in the integration options "
+                    "(**Concierge Add-on URL**, e.g. `http://homeassistant.local:8099`)."
+                ),
+                title="Concierge — OCR engine unavailable",
+                notification_id=_OCR_NOTIFICATION_ID,
+            )
         elif ocr_state is True:
-            ir.async_delete_issue(self.hass, DOMAIN, "tesseract_not_found")
+            ir.async_delete_issue(self.hass, DOMAIN, "ocr_unavailable")
+            persistent_notification.async_dismiss(
+                self.hass, _OCR_NOTIFICATION_ID
+            )
 
     async def async_refresh_service(self, subentry_id: str) -> None:
         """Force an immediate email scan and PDF analysis for a single service subentry.
@@ -604,7 +624,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return
 
-        self._manage_tesseract_repair_issue()
+        self._manage_ocr_repair_issue()
         # Merge the fresh result into the current coordinator state and notify
         # all listeners so every entity linked to this device is refreshed.
         current: dict[str, Any] = (
@@ -797,7 +817,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         pdf_attrs = extract_attributes_from_pdf(
                                             pdf_path,
                                             service_type,
-                                            self._cfg.get(CONF_TESSERACT_API_URL, ""),
+                                            self._cfg.get(CONF_CONCIERGE_ADDON_URL, ""),
                                         )
                                         latest_attributes.update(pdf_attrs)
                                         # For PDF-only services (common_expenses,
@@ -1048,7 +1068,7 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
         The confidence is stored under the ``_confidence`` metadata key in the
         extracted attributes dict.  Values are:
           70  – pdfminer text layer (may have font-encoding errors)
-          85  – OCR (Tesseract) — more accurate for image-backed PDFs
+          85  – OCR (RapidOCR or Concierge Add-on) — more accurate for image-backed PDFs
           60  – derived/calculated from other extracted values
          100  – user-supplied correction (learning override via ``set_value``)
         """
