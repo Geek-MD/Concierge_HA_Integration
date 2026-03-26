@@ -49,7 +49,8 @@
           "email": "Email Address",
           "password": "Password",
           "friendly_name": "Friendly Name",
-          "tesseract_api_url": "Tesseract OCR Add-on URL"
+          "ocr_api_url": "Concierge Add-on URL",
+          "tesseract_api_url": "Tesseract OCR Add-on URL (legacy)"
         },
         "data_description": {
           "imap_server": "Example: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
@@ -57,7 +58,8 @@
           "email": "Example: user@gmail.com",
           "password": "Use an app password for Gmail and Yahoo",
           "friendly_name": "A descriptive name for this email account",
-          "tesseract_api_url": "Base URL of the Tesseract OCR add-on (host name or IP address followed by port 8000). Leave empty to use the local tesseract-ocr binary."
+          "ocr_api_url": "Base URL of the Concierge Add-on OCR service (e.g. http://homeassistant.local:8099). Used as the OCR fallback when RapidOCR is unavailable. Leave empty if RapidOCR works or if you use the legacy Tesseract add-on.",
+          "tesseract_api_url": "Base URL of the legacy Tesseract OCR add-on (port 8000). Leave empty to use RapidOCR or the Concierge Add-on."
         }
       }
     },
@@ -134,7 +136,7 @@
   "issues": {
     "tesseract_not_found": {
       "title": "OCR engine not available — Hot Water sensors unavailable",
-      "description": "The OCR engine (`rapidocr`, `onnxruntime` or `PyMuPDF`) could not be loaded. The five **Agua Caliente** (hot water) sensors (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) will remain empty until the issue is resolved.\n\n**This should not happen in normal installations** — both packages are installed automatically as integration dependencies.\n\nIf you see this issue, please check the Home Assistant logs for import errors and consult the [README]({readme_url}) for troubleshooting steps.\n\nThis issue resolves automatically once the OCR engine is working and a new Gastos Comunes bill is processed."
+      "description": "The OCR engine (**RapidOCR**) could not be loaded and no **Concierge Add-on URL** is configured. The five **Agua Caliente** (hot water) sensors (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) will remain empty and must be entered manually until OCR is restored.\n\n**To fix this**, install the [Concierge Add-on]({addon_url}) and set its URL in the integration options (**Concierge Add-on URL**, e.g. `http://homeassistant.local:8099`).\n\nThis issue resolves automatically once OCR is working and a new Gastos Comunes bill is processed."
     }
   }
 }

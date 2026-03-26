@@ -57,6 +57,30 @@ CONF_SCORE_DERIVED: float = 60.0
 CONF_SCORE_OVERRIDE: float = 100.0
 
 # ---------------------------------------------------------------------------
+# Optional RapidOCR library availability (checked once at module load)
+# ---------------------------------------------------------------------------
+# rapidocr, onnxruntime and PyMuPDF are NOT listed as hard requirements in
+# manifest.json because onnxruntime has no wheel for HA OS / Alpine / musl
+# libc.  We attempt to import them once here so that the per-call import in
+# ``_try_ocr_pdf_rapidocr`` is skipped immediately on platforms where they
+# are absent, and the warning is only logged once per HA restart.
+_RAPIDOCR_AVAILABLE: bool = False
+try:
+    import fitz as _fitz  # type: ignore[import-untyped]
+    import numpy as _np  # type: ignore[import-untyped]
+    from rapidocr import RapidOCR as _RapidOCR  # type: ignore[import-untyped]
+    _RAPIDOCR_AVAILABLE = True
+except ImportError as _ocr_import_exc:
+    _LOGGER.warning(
+        "RapidOCR libraries (rapidocr, onnxruntime, PyMuPDF) could not be loaded: %s. "
+        "OCR-based tasks cannot run — Agua Caliente (hot water) sensor values will "
+        "need to be entered manually. "
+        "Install the Concierge Add-on (https://github.com/Geek-MD/Concierge_Addon) "
+        "and set the 'Concierge Add-on URL' option to restore automatic OCR.",
+        _ocr_import_exc,
+    )
+
+# ---------------------------------------------------------------------------
 # OCR engine availability state
 # ---------------------------------------------------------------------------
 # Tracks whether the OCR engine is available.
@@ -65,7 +89,8 @@ CONF_SCORE_OVERRIDE: float = 100.0
 #   False – the OCR engine failed (import error or runtime error)
 #
 # Updated by ``_try_ocr_pdf`` and read by the HA sensor coordinator to manage
-# a persistent Repair issue that guides users through configuring OCR.
+# a persistent Repair issue and notification that guides users through
+# installing the Concierge Add-on.
 #
 # Note: the variable is named ``_tesseract_available`` for backward
 # compatibility with ``sensor.py``; it now tracks any OCR engine.
@@ -76,11 +101,11 @@ def is_tesseract_available() -> bool | None:
     """Return the current OCR-engine availability state.
 
     ``None``  – no OCR attempt has been made yet.
-    ``True``  – OCR engine working (RapidOCR or Tesseract API).
+    ``True``  – OCR engine working (RapidOCR or Concierge Add-on API).
     ``False`` – OCR engine unavailable (import error or runtime failure).
 
     The function name is kept for backward compatibility; it now covers all
-    supported OCR engines (RapidOCR primary, Tesseract HTTP API fallback).
+    supported OCR engines (RapidOCR primary, Concierge Add-on REST API fallback).
     """
     return _tesseract_available
 
@@ -1492,30 +1517,20 @@ def _try_ocr_pdf_rapidocr(pdf_path: str) -> tuple[str, list]:
         ``[bbox, text, score]`` list for optional PDF text-layer embedding.
         Both are empty/``[]`` on failure.
     """
-    try:
-        import fitz  # type: ignore[import-untyped]  # PyMuPDF
-        import numpy as np  # type: ignore[import-untyped]
-        from rapidocr import RapidOCR  # type: ignore[import-untyped]
-    except ImportError as exc:
-        _LOGGER.warning(
-            "RapidOCR unavailable for '%s': missing library (%s). "
-            "The integration requires 'rapidocr', 'onnxruntime' and 'PyMuPDF' "
-            "to enable Agua Caliente (hot water) sensor extraction.",
-            pdf_path,
-            exc,
-        )
+    if not _RAPIDOCR_AVAILABLE:
+        # Import failure already logged at module load — return silently.
         return "", []
 
     try:
-        doc = fitz.open(pdf_path)
+        doc = _fitz.open(pdf_path)
         page = doc[0]
-        mat = fitz.Matrix(_OCR_ZOOM_FACTOR, _OCR_ZOOM_FACTOR)
+        mat = _fitz.Matrix(_OCR_ZOOM_FACTOR, _OCR_ZOOM_FACTOR)
         pix = page.get_pixmap(matrix=mat)
         doc.close()
-        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+        img_array = _np.frombuffer(pix.samples, dtype=_np.uint8).reshape(
             pix.height, pix.width, 3
         )
-        ocr = RapidOCR()
+        ocr = _RapidOCR()
         result = ocr(img_array)
         if result is None or not len(result):
             _LOGGER.debug("RapidOCR returned no results for '%s'", pdf_path)
@@ -1603,9 +1618,7 @@ def _save_pdf_with_ocr_text_layer(
     Returns:
         Path of the saved searchable PDF, or ``None`` on failure.
     """
-    try:
-        import fitz  # type: ignore[import-untyped]
-    except ImportError:
+    if not _RAPIDOCR_AVAILABLE:
         return None
 
     if not ocr_results:
@@ -1621,7 +1634,7 @@ def _save_pdf_with_ocr_text_layer(
         import os
         import tempfile
 
-        doc = fitz.open(pdf_path)
+        doc = _fitz.open(pdf_path)
         page = doc[0]
 
         for item in ocr_results:
@@ -1640,7 +1653,7 @@ def _save_pdf_with_ocr_text_layer(
             try:
                 # insert_text baseline = bottom-left of the text; use y1.
                 page.insert_text(
-                    fitz.Point(x0, y1),
+                    _fitz.Point(x0, y1),
                     text,
                     fontsize=font_size,
                     render_mode=3,   # invisible — no visual change
@@ -1667,15 +1680,19 @@ def _save_pdf_with_ocr_text_layer(
 
 
 def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
-    """Render the first page of *pdf_path* and OCR it via the Tesseract HTTP API.
+    """Render the first page of *pdf_path* and OCR it via an HTTP OCR API.
 
-    Calls the ``/ocr/file`` endpoint of the Tesseract OCR add-on
-    (https://github.com/Kosztyk/homeassistant-addons) with the rendered page
-    images.  Uses three passes (PSM 1, 6, 4) to produce comprehensive output.
+    Compatible with any service that exposes the ``POST /ocr/file`` endpoint
+    accepting a multipart/form-data ``file`` field plus optional ``lang`` and
+    ``psm`` query parameters and returning ``{"text": "<extracted text>"}``.
 
-    The endpoint is expected to accept a multipart/form-data ``file`` field
-    and ``lang`` / ``psm`` query parameters and to return a JSON body of the
-    form ``{"text": "<extracted text>", ...}``.
+    Supported services:
+    - **Concierge Add-on** (https://github.com/Geek-MD/Concierge_Addon,
+      default port **8099**) — primary fallback when RapidOCR is unavailable.
+    - **Tesseract OCR add-on** (https://github.com/Kosztyk/homeassistant-addons,
+      port 8000) — kept for backward compatibility.
+
+    Uses three rendering passes (PSM 1, 6, 4) to produce comprehensive output.
 
     Returns the combined OCR plain text, or an empty string on any error.
     """
@@ -1691,7 +1708,7 @@ def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
         _LOGGER.warning(
             "OCR unavailable for '%s': missing library (%s). "
             "The integration requires 'pypdfium2' and 'Pillow' to render PDF pages "
-            "for the Tesseract OCR add-on.",
+            "for the HTTP OCR API.",
             pdf_path,
             exc,
         )
@@ -1758,7 +1775,7 @@ def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
 
     except urllib.error.URLError as exc:
         _LOGGER.debug(
-            "Tesseract OCR add-on unreachable for '%s': %s. "
+            "OCR API unreachable for '%s': %s. "
             "Verify that the add-on is running and the URL '%s' is correct.",
             pdf_path,
             exc,
@@ -1774,6 +1791,7 @@ def _try_ocr_pdf(
     pdf_path: str,
     tesseract_api_url: str = "",
     pdfminer_text: str = "",
+    ocr_api_url: str = "",
 ) -> tuple[str, list]:
     """OCR the first page of *pdf_path* and return the extracted text.
 
@@ -1785,6 +1803,10 @@ def _try_ocr_pdf(
        Uses ``rapidocr`` + ``onnxruntime`` + ``PyMuPDF`` to render and OCR the
        page.  On first use, ONNX models (~20 MB) are downloaded
        automatically to the system cache.
+    3. **Concierge Add-on REST API** (fallback) — used when *ocr_api_url* is
+       configured and RapidOCR is unavailable.  Calls the same ``POST /ocr/file``
+       endpoint exposed by the Concierge Add-on
+       (https://github.com/Geek-MD/Concierge_Addon, default port 8099).
 
     When RapidOCR succeeds and *pdfminer_text* is provided, the OCR output
     is cross-validated against the embedded pdfminer text layer.  If the
@@ -1795,9 +1817,12 @@ def _try_ocr_pdf(
     Args:
         pdf_path:          Absolute path to the PDF file.
         tesseract_api_url: Optional Tesseract OCR add-on URL (takes priority
-                           over RapidOCR when set).
+                           over RapidOCR when set).  Kept for backward compat.
         pdfminer_text:     Optional pdfminer text of the same PDF for
                            cross-validation and PDF text-layer saving.
+        ocr_api_url:       Optional Concierge Add-on base URL
+                           (e.g. ``http://homeassistant.local:8099``).
+                           Used as fallback when RapidOCR is unavailable.
 
     Returns:
         ``(ocr_text, raw_results)`` where *ocr_text* is the extracted text
@@ -1817,32 +1842,44 @@ def _try_ocr_pdf(
 
     # --- Path 2: RapidOCR (primary, no system binary required) ---------------
     ocr_text, raw_results = _try_ocr_pdf_rapidocr(pdf_path)
-    if not ocr_text:
-        _tesseract_available = False
-        return "", []
+    if ocr_text:
+        _tesseract_available = True
 
-    _tesseract_available = True
+        # Cross-validate OCR output against the pdfminer embedded text layer.
+        if pdfminer_text:
+            score = _validate_ocr_against_pdfminer(ocr_text, pdfminer_text)
+            # Save a searchable PDF when validation confirms the OCR is correct.
+            if score >= _OCR_VALIDATION_MIN_SCORE:
+                _save_pdf_with_ocr_text_layer(pdf_path, raw_results, _OCR_ZOOM_FACTOR)
+            else:
+                _LOGGER.debug(
+                    "OCR cross-validation score %.0f%% below threshold %.0f%% for '%s'; "
+                    "skipping searchable PDF save.",
+                    score * 100,
+                    _OCR_VALIDATION_MIN_SCORE * 100,
+                    pdf_path,
+                )
 
-    # Cross-validate OCR output against the pdfminer embedded text layer.
-    if pdfminer_text:
-        score = _validate_ocr_against_pdfminer(ocr_text, pdfminer_text)
-        # Save a searchable PDF when validation confirms the OCR is correct.
-        if score >= _OCR_VALIDATION_MIN_SCORE:
-            _save_pdf_with_ocr_text_layer(pdf_path, raw_results, _OCR_ZOOM_FACTOR)
-        else:
-            _LOGGER.debug(
-                "OCR cross-validation score %.0f%% below threshold %.0f%% for '%s'; "
-                "skipping searchable PDF save.",
-                score * 100,
-                _OCR_VALIDATION_MIN_SCORE * 100,
-                pdf_path,
-            )
+        return ocr_text, raw_results
 
-    return ocr_text, raw_results
+    # --- Path 3: Concierge Add-on REST API (fallback when RapidOCR absent) ---
+    if ocr_api_url:
+        addon_text = _try_ocr_pdf_via_api(pdf_path, ocr_api_url)
+        if addon_text:
+            _tesseract_available = True
+            return addon_text, []
+        _LOGGER.debug(
+            "Concierge Add-on OCR returned no text for '%s' (url=%s)",
+            pdf_path,
+            ocr_api_url,
+        )
+
+    _tesseract_available = False
+    return "", []
 
 
 def _extract_common_expenses_pdf_attributes(
-    text: str, pdf_path: str = "", tesseract_api_url: str = ""
+    text: str, pdf_path: str = "", tesseract_api_url: str = "", ocr_api_url: str = ""
 ) -> dict[str, Any]:
     """Extract Gastos Comunes (and optional Agua Caliente) attributes from a PDF.
 
@@ -2123,7 +2160,7 @@ def _extract_common_expenses_pdf_attributes(
     # so future pdfminer reads can extract all fields without OCR.
     # ------------------------------------------------------------------
     if pdf_path:
-        ocr_text, _ocr_raw = _try_ocr_pdf(pdf_path, tesseract_api_url, text)
+        ocr_text, _ocr_raw = _try_ocr_pdf(pdf_path, tesseract_api_url, text, ocr_api_url)
         if ocr_text:
             # Hot-water row — use meter-reading-aware parser for readings
             hw_m = _GC_OCR_HOT_WATER_ROW_RE.search(ocr_text)
@@ -2399,7 +2436,7 @@ def _extract_type_specific_attributes(text: str, service_type: str) -> dict[str,
 
 
 def _extract_pdf_type_specific_attributes(
-    text: str, service_type: str, pdf_path: str = "", tesseract_api_url: str = ""
+    text: str, service_type: str, pdf_path: str = "", tesseract_api_url: str = "", ocr_api_url: str = ""
 ) -> dict[str, Any]:
     """Dispatch to the **PDF** extractor for *service_type* and return its results.
 
@@ -2414,8 +2451,9 @@ def _extract_pdf_type_specific_attributes(
         pdf_path:           Optional absolute path to the PDF file.  Passed to the
                             common-expenses extractor to enable optional OCR.
         tesseract_api_url:  Optional base URL of the Tesseract OCR add-on API
-                            (e.g. ``http://homeassistant.local:8000``).  When set,
-                            OCR is performed via HTTP instead of the local binary.
+                            (backward compat, takes priority over ocr_api_url).
+        ocr_api_url:        Optional base URL of the Concierge Add-on OCR service
+                            (e.g. ``http://homeassistant.local:8099``).
     """
     if service_type == SERVICE_TYPE_WATER:
         return _extract_water_pdf_attributes(text)
@@ -2426,7 +2464,7 @@ def _extract_pdf_type_specific_attributes(
     if service_type in (SERVICE_TYPE_COMMON_EXPENSES, SERVICE_TYPE_HOT_WATER):
         # Both devices are fed by the same PDF; the caller can differentiate
         # by service_type when consuming the returned dictionary.
-        return _extract_common_expenses_pdf_attributes(text, pdf_path, tesseract_api_url)
+        return _extract_common_expenses_pdf_attributes(text, pdf_path, tesseract_api_url, ocr_api_url)
     return {}
 
 
@@ -2597,6 +2635,7 @@ def extract_attributes_from_pdf(
     pdf_path: str,
     service_type: str = SERVICE_TYPE_UNKNOWN,
     tesseract_api_url: str = "",
+    ocr_api_url: str = "",
 ) -> dict[str, Any]:
     """Extract billing attributes from a downloaded PDF file.
 
@@ -2633,15 +2672,16 @@ def extract_attributes_from_pdf(
       a full-page JPEG image as background plus a partially complete embedded
       text layer created by a prior OCR pass (identifiable by the
       ``HiddenHorzOCR`` font).  pdfminer reads that embedded layer directly.
-      Tier-1 (embedded text layer, no Tesseract needed): ``billing_period_month``,
+      Tier-1 (embedded text layer, no OCR needed): ``billing_period_month``,
       ``billing_period_year``, ``billing_period_start``, ``billing_period_end``,
       ``emission_date``, ``due_date``, ``building_name``, ``building_rut``,
       ``address``, ``apartment``, ``owner_name``, ``alicuota``,
       ``building_total_expense``, ``gastos_comunes_amount``, ``fondos_amount``,
       ``subtotal_departamento``, ``subtotal_recargos``, ``total_amount``,
       ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``.
-      Tier-2 (RapidOCR on JPEG — hot-water table absent from embedded text,
-      requires ``rapidocr`` + ``onnxruntime`` + ``PyMuPDF``):
+      Tier-2 (OCR on JPEG — hot-water table absent from embedded text):
+      uses RapidOCR when available, otherwise falls back to the Concierge
+      Add-on REST API when *ocr_api_url* is configured.
       ``hot_water_reading_prev``, ``hot_water_reading_curr``,
       ``hot_water_consumption``, ``hot_water_consumption_unit``,
       ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
@@ -2653,9 +2693,10 @@ def extract_attributes_from_pdf(
         pdf_path:           Absolute path to the downloaded PDF file.
         service_type:       One of the ``SERVICE_TYPE_*`` constants.
         tesseract_api_url:  Optional base URL of the Tesseract OCR add-on API
-                            (e.g. ``http://homeassistant.local:8000``).  When
-                            set, OCR is performed via the add-on HTTP API
-                            instead of RapidOCR.
+                            (backward compat; takes priority over ocr_api_url).
+        ocr_api_url:        Optional base URL of the Concierge Add-on OCR service
+                            (e.g. ``http://homeassistant.local:8099``).  Used as
+                            the OCR fallback when RapidOCR is unavailable.
 
     Returns:
         Dictionary with attributes extracted from the PDF, or an empty dict
@@ -2697,7 +2738,7 @@ def extract_attributes_from_pdf(
         # Apply the PDF-specific extractor for this service type.
         # Each service type has its own PDF extractor tuned to that issuer's
         # PDF layout (separate from the email extractor).
-        pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type, pdf_path, tesseract_api_url)
+        pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type, pdf_path, tesseract_api_url, ocr_api_url)
         attrs.update(pdf_attrs)
 
         # Ensure every non-metadata attribute has a confidence score.

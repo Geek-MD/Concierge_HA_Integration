@@ -14,6 +14,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
+    CONF_CONCIERGE_ADDON_URL,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -197,6 +198,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(
                     "friendly_name",
                     default=current.get("friendly_name", current.get(CONF_EMAIL, "")),
+                ): str,
+                vol.Optional(
+                    CONF_CONCIERGE_ADDON_URL,
+                    default=current.get(CONF_CONCIERGE_ADDON_URL, ""),
                 ): str,
                 vol.Optional(
                     CONF_TESSERACT_API_URL,
