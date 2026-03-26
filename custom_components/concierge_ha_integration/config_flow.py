@@ -24,7 +24,6 @@ from .const import (
     CONF_SERVICE_ID,
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
-    CONF_TESSERACT_API_URL,
     DEFAULT_IMAP_PORT,
     DOMAIN,
 )
@@ -202,10 +201,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_CONCIERGE_ADDON_URL,
                     default=current.get(CONF_CONCIERGE_ADDON_URL, ""),
-                ): str,
-                vol.Optional(
-                    CONF_TESSERACT_API_URL,
-                    default=current.get(CONF_TESSERACT_API_URL, ""),
                 ): str,
             }
         )

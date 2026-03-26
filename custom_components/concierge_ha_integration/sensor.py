@@ -38,7 +38,6 @@ from .const import (
     CONF_SERVICE_ID,
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
-    CONF_TESSERACT_API_URL,
     DOMAIN,
     PDF_MAX_AGE_DAYS,
     PDF_SUBDIR,
@@ -54,7 +53,7 @@ from .attribute_extractor import (
     CONF_SCORE_OVERRIDE,
     extract_attributes_from_email_body,
     extract_attributes_from_pdf,
-    is_tesseract_available,
+    is_ocr_available,
     _strip_html,
 )
 from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
@@ -552,10 +551,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             result = await self.hass.async_add_executor_job(self._fetch_service_data)
         except Exception as err:
             raise UpdateFailed(f"Error communicating with IMAP server: {err}") from err
-        self._manage_tesseract_repair_issue()
+        self._manage_ocr_repair_issue()
         return result
 
-    def _manage_tesseract_repair_issue(self) -> None:
+    def _manage_ocr_repair_issue(self) -> None:
         """Create or clear the OCR-engine repair issue and persistent notification.
 
         When OCR is unavailable (RapidOCR import failed and no Concierge Add-on
@@ -566,21 +565,17 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Both are automatically resolved on the first successful OCR run.
         """
-        ocr_state = is_tesseract_available()
+        ocr_state = is_ocr_available()
         if ocr_state is False:
             ir.async_create_issue(
                 self.hass,
                 DOMAIN,
-                "tesseract_not_found",
+                "ocr_unavailable",
                 is_fixable=False,
                 is_persistent=False,
                 severity=ir.IssueSeverity.WARNING,
-                translation_key="tesseract_not_found",
+                translation_key="ocr_unavailable",
                 translation_placeholders={
-                    "readme_url": (
-                        "https://github.com/Geek-MD/Concierge_HA_Integration"
-                        "#-prerequisites"
-                    ),
                     "addon_url": "https://github.com/Geek-MD/Concierge_Addon",
                 },
             )
@@ -601,7 +596,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 notification_id=_OCR_NOTIFICATION_ID,
             )
         elif ocr_state is True:
-            ir.async_delete_issue(self.hass, DOMAIN, "tesseract_not_found")
+            ir.async_delete_issue(self.hass, DOMAIN, "ocr_unavailable")
             persistent_notification.async_dismiss(
                 self.hass, _OCR_NOTIFICATION_ID
             )
@@ -629,7 +624,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return
 
-        self._manage_tesseract_repair_issue()
+        self._manage_ocr_repair_issue()
         # Merge the fresh result into the current coordinator state and notify
         # all listeners so every entity linked to this device is refreshed.
         current: dict[str, Any] = (
@@ -822,7 +817,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         pdf_attrs = extract_attributes_from_pdf(
                                             pdf_path,
                                             service_type,
-                                            self._cfg.get(CONF_TESSERACT_API_URL, ""),
                                             self._cfg.get(CONF_CONCIERGE_ADDON_URL, ""),
                                         )
                                         latest_attributes.update(pdf_attrs)
@@ -1074,7 +1068,7 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
         The confidence is stored under the ``_confidence`` metadata key in the
         extracted attributes dict.  Values are:
           70  – pdfminer text layer (may have font-encoding errors)
-          85  – OCR (Tesseract) — more accurate for image-backed PDFs
+          85  – OCR (RapidOCR or Concierge Add-on) — more accurate for image-backed PDFs
           60  – derived/calculated from other extracted values
          100  – user-supplied correction (learning override via ``set_value``)
         """

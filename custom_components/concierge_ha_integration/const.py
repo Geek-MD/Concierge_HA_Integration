@@ -31,10 +31,6 @@ SERVICE_TYPE_UNKNOWN = "unknown"
 PDF_SUBDIR = "concierge_ha_integration/pdfs"
 PDF_MAX_AGE_DAYS = 365
 
-# Tesseract OCR API — optional URL for HTTP-based OCR via the Tesseract add-on
-# (e.g. "http://homeassistant.local:8000").  Kept for backward compatibility.
-CONF_TESSERACT_API_URL = "tesseract_api_url"
-
 # Concierge Addon REST API — optional URL for the Concierge Add-on OCR service
 # (https://github.com/Geek-MD/Concierge_Addon, default port 8099).
 # Used as the primary OCR fallback when rapidocr/onnxruntime are unavailable.
