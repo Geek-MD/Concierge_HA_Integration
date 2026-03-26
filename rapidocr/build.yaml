@@ -1,0 +1,13 @@
+build_from:
+  amd64: "ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.23"
+  aarch64: "ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.23"
+labels:
+  io.hass.name: "Concierge Add-on"
+  io.hass.description: "Multi-purpose add-on — currently provides RapidOCR + ONNX Runtime OCR service"
+  io.hass.arch: "{arch}"
+  io.hass.type: "addon"
+  io.hass.version: "1.0.3"
+  org.opencontainers.image.title: "Concierge Add-on"
+  org.opencontainers.image.description: "Multi-purpose Home Assistant add-on — RapidOCR HTTP API server"
+  org.opencontainers.image.source: "https://github.com/Geek-MD/Concierge_HA_Integration"
+  org.opencontainers.image.licenses: "MIT"

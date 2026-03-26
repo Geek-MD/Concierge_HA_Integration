@@ -1,0 +1,24 @@
+name: Concierge Add-on
+description: >
+  A multi-purpose Home Assistant add-on. Currently provides an OCR service
+  powered by RapidOCR + ONNX Runtime, exposing a REST API compatible with the
+  Concierge HA Integration. Additional features will be incorporated over time
+  as development requirements evolve.
+version: "1.0.3"
+slug: rapidocr
+init: false
+arch:
+  - amd64
+  - aarch64
+startup: services
+ports:
+  8099/tcp: null
+ports_description:
+  8099/tcp: RapidOCR HTTP API (set to match the configured port option)
+options:
+  log_level: "info"
+  port: 8099
+schema:
+  log_level: "list(debug|info|warning|error|critical)"
+  port: "int(1024,65535)"
+image: ghcr.io/geek-md/concierge_addon/rapidocr-{arch}
