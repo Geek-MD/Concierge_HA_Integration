@@ -68,7 +68,7 @@ _RAPIDOCR_AVAILABLE: bool = False
 try:
     import fitz as _fitz  # type: ignore[import-untyped]
     import numpy as _np  # type: ignore[import-untyped]
-    from rapidocr import RapidOCR as _RapidOCR  # type: ignore[import-untyped]
+    from rapidocr import RapidOCR as _RapidOCR  # type: ignore[import-untyped, attr-defined]
     _RAPIDOCR_AVAILABLE = True
 except ImportError as _ocr_import_exc:
     _LOGGER.warning(
