@@ -103,7 +103,7 @@
   > **Hot Water** is a sub-account billed within the Common Expenses PDF,
   > there is no separate email for it.  Its five sensors are
   > populated automatically when the OCR Tier-2 pass succeeds (requires
-  > `rapidocr`, `onnxruntime` and `PyMuPDF`, both installed automatically).
+  > a configured **OCR.space API key** — see [Prerequisites](#-prerequisites)).
   > When OCR is unavailable the sensors exist but report `None` until a
   > manual override is applied via the `set_value` service.
 
@@ -224,30 +224,29 @@ data:
 
 ## 📋 Prerequisites
 
-### OCR for Hot Water sensors
+### OCR.space API key — required for Hot Water sensors
 
 Five sensors under each **Gastos Comunes** device report Agua Caliente (hot water)
 data extracted via OCR from the "Nota de Cobro" PDF:
 `hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
 `hot_water_prev_reading`, `hot_water_curr_reading`.
 
-Starting with **v1.0.0**, `rapidocr`, `onnxruntime` and `PyMuPDF` are **optional** —
-they are no longer hard requirements because `onnxruntime` has no pre-built wheel
-for Home Assistant OS / Alpine / musl libc.
+To populate these sensors automatically, you need a free **OCR.space** API key:
 
-#### OCR priority order
+1. Visit <https://ocr.space/OCRAPI> and register for a free account.
+2. Copy your API key (e.g. `K81234567890abcd`).
+3. Enter it in the integration during setup (**Finalize Configuration** step →
+   **OCR.space API Key**) or later via **Settings → Devices & Services →
+   Concierge HA Integration → CONFIGURE** (**OCR.space API Key**).
 
-1. **RapidOCR** (primary) — used automatically when `rapidocr`, `onnxruntime` and
-   `PyMuPDF` are installed.  No extra configuration required.  On first use,
-   ~20 MB of ONNX model files are downloaded to the system cache automatically.
-2. **Concierge Add-on REST API** (fallback) — used when RapidOCR is unavailable
-   and a **Concierge Add-on URL** is configured.  Install the
-   [Concierge Add-on](https://github.com/Geek-MD/Concierge_Addon) and set its URL
-   in **Settings → Devices & Services → Concierge HA Integration → CONFIGURE**
-   (**Concierge Add-on URL**, e.g. `http://homeassistant.local:8099`).
-3. **None** — if neither engine is available, the Agua Caliente sensors remain
-   empty.  A warning is logged and a persistent notification plus a Repair issue
-   appear in Home Assistant recommending the Concierge Add-on installation.
+> **Free tier limits** — The free plan allows up to 500 requests/month and
+> 25 000 requests/month with the enhanced `helloworld` demo key (rate-limited).
+> Registering for a free personal key at ocr.space gives a higher quota.
+> Each Gastos Comunes bill uses 2 API calls (full page + crop).
+
+If no key is configured the Agua Caliente sensors remain empty.  A Repair issue
+and a persistent notification appear in Home Assistant recommending that you add
+a key.
 
 #### How the OCR pipeline works
 
@@ -257,25 +256,32 @@ For every Gastos Comunes bill that arrives, the integration:
    layer (created by the building's original OCR pass, identifiable by the
    `HiddenHorzOCR` font).  `pdfminer` reads this directly and provides all the
    billing amounts, dates, and owner data without any additional OCR.
-2. **Renders the PDF page** — `PyMuPDF` renders the full-page JPEG image at
-   3× zoom (~216 DPI) to a pixel array.
-3. **RapidOCR scans the image** — `rapidocr` + `onnxruntime` detects and reads all
-   text in the image, including the Agua Caliente (hot water) meter table that
-   was missing from the embedded text layer.
-4. **Cross-validation** — the OCR output is compared against the embedded text
-   layer.  If ≥ 50 % of the reference tokens (amounts, dates) match, OCR is
-   considered correct.
-5. **Searchable PDF saved** — a copy of the PDF with an invisible OCR text
-   overlay is saved alongside the original as `*_searchable.pdf`.  On
-   subsequent reads, `pdfminer` can extract all fields from this copy
-   without OCR.
-6. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
+2. **Renders the PDF page** — `pypdfium2` renders the full-page JPEG image at
+   3× zoom (~216 DPI) to a PNG in memory.
+3. **OCR.space scans the image** — two API calls are made:
+   - Pass 1: full page (Spanish, OCR Engine 2).
+   - Pass 2: Agua Caliente table crop (30–55 % from top, upscaled 2×,
+     OCR Engine 2) for improved hot-water meter table recognition.
+4. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
 
 ---
 
 ## 📦 Installation
+
+### Before you install — get a free OCR.space API key
+
+The integration uses [OCR.space](https://ocr.space/OCRAPI) to extract hot-water
+meter data from Gastos Comunes PDFs.  Register for a **free API key** before or
+during setup:
+
+1. Go to <https://ocr.space/OCRAPI>
+2. Fill in the registration form and submit
+3. Copy the API key from the confirmation email (e.g. `K81234567890abcd`)
+
+You will be asked to enter this key in the **Finalize Configuration** step.
+You can also add or change it later via the **CONFIGURE** button.
 
 ### Option 1: HACS (Recommended)
 
@@ -319,6 +325,8 @@ All configuration is done through the user interface:
 
 After validating credentials, configure:
 - **Friendly Name**: A descriptive name for this integration (e.g., "Home Bills", "Casa Principal")
+- **OCR.space API Key**: Your free key from [ocr.space/OCRAPI](https://ocr.space/OCRAPI).
+  Required for Agua Caliente (Hot Water) sensor extraction.  Can be left empty and added later.
 
 ### Step 3: Add Service Devices
 
@@ -431,6 +439,7 @@ with five entities:
 - ✅ `force_refresh` service (v0.8.4): forces immediate email scan + PDF analysis for a single device; device picker is filtered to Concierge HA Integration only
 - ✅ Per-device *Force Refresh* button entity (v0.8.4): `button.concierge_{id}_force_refresh` appears in the device Configuration panel; pressing it triggers the same targeted refresh as the service
 - ✅ Agua Caliente sensors on the Gastos Comunes device (v0.9.5): five dedicated sensor entities (`consumption`, `cost_per_unit`, `amount`, `prev_reading`, `curr_reading`) are automatically created for every Gastos Comunes service and populated from the same "Nota de Cobro" PDF via OCR — no separate "Agua Caliente" service device is required or supported, since the hot-water data lives exclusively inside the Gastos Comunes email/PDF
+- ✅ **OCR.space cloud API as sole OCR engine (v1.0.2)**: removed RapidOCR (onnxruntime unavailable on HA OS) and Concierge Add-on fallback; users register for a free key at [ocr.space/OCRAPI](https://ocr.space/OCRAPI) and enter it during setup or via CONFIGURE
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services
