@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-03-27
+
+### Added
+
+- **OCR.space cloud API as the OCR engine for Agua Caliente (Hot Water) extraction**
+  (`attribute_extractor.py`, `sensor.py`, `config_flow.py`, `const.py`,
+  `strings.json`, `translations/en.json`, `translations/es.json`, `README.md`):
+
+  The [OCR.space](https://ocr.space/OCRAPI) free REST API is now the sole OCR
+  engine used to extract hot-water meter data from the Gastos Comunes "Nota de
+  Cobro" PDF.  Users must obtain a free API key at <https://ocr.space/OCRAPI>
+  before installation (or add it later via **CONFIGURE**).
+
+  OCR pipeline (two passes per bill):
+  1. Full-page render at 3× zoom (Spanish, OCR Engine 2).
+  2. Agua Caliente table crop (30–55 % from top, upscaled 2×, OCR Engine 2).
+
+  The key is stored in Home Assistant configuration and exposed as the
+  **OCR.space API Key** field in both the initial **Finalize Configuration**
+  step and the **CONFIGURE** (options) reconfiguration form.
+
+### Removed
+
+- **RapidOCR / onnxruntime / PyMuPDF engine** — removed entirely.
+  `onnxruntime` has no pre-built wheel for Home Assistant OS / Alpine / musl
+  libc, making it impossible to install in the standard HA environment.
+  Functions removed: `_try_ocr_pdf_rapidocr`, `_ocr_boxes_to_text`,
+  `_validate_ocr_against_pdfminer`, `_save_pdf_with_ocr_text_layer`.
+
+- **Concierge Add-on REST API fallback** — removed entirely.
+  Functions removed: `_try_ocr_pdf_via_api`.
+  Configuration field `ocr_api_url` / `CONF_CONCIERGE_ADDON_URL` removed from
+  `const.py`, `config_flow.py`, `sensor.py`, and all translation files.
+
 ## [1.0.1] - 2026-03-26
 
 ### Fixed
