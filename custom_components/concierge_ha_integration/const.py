@@ -36,3 +36,10 @@ PDF_MAX_AGE_DAYS = 365
 # Used as the primary OCR fallback when rapidocr/onnxruntime are unavailable.
 # Example: "http://homeassistant.local:8099"
 CONF_CONCIERGE_ADDON_URL = "ocr_api_url"
+
+# OCR.space API — optional free API key for the OCR.space cloud OCR service
+# (https://ocr.space/OCRAPI). Used as the secondary OCR fallback when both
+# RapidOCR and the Concierge Add-on are unavailable. The free tier key is
+# "helloworld" (rate-limited); register at https://ocr.space/OCRAPI for a
+# higher-quota free key.
+CONF_OCRSPACE_API_KEY = "ocrspace_api_key"

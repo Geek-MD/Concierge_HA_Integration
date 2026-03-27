@@ -1775,10 +1775,127 @@ def _try_ocr_pdf_via_api(pdf_path: str, api_url: str) -> str:
         return ""
 
 
+def _try_ocr_pdf_via_ocrspace(pdf_path: str, api_key: str) -> str:
+    """Render the first page of *pdf_path* and OCR it via the OCR.space cloud API.
+
+    Uses the free `OCR.space <https://ocr.space/OCRAPI>`_ REST API
+    (``POST https://api.ocr.space/parse/image``).  Two passes are performed:
+
+    * **Pass 1** — full rendered page (Spanish, engine 2).
+    * **Pass 2** — agua-caliente crop (≈ 30–55 % from top, enlarged 2×,
+      engine 2) for improved hot-water table recognition.
+
+    The free public API key is ``"helloworld"``; users can obtain a higher-
+    quota key by registering at https://ocr.space/OCRAPI.
+
+    Args:
+        pdf_path: Absolute path to the PDF file.
+        api_key:  OCR.space API key (``"helloworld"`` for the free demo tier).
+
+    Returns:
+        Combined OCR plain text from both passes, or an empty string on error.
+    """
+    import base64
+    import io
+    import json as _json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    try:
+        import pypdfium2 as pdfium  # type: ignore[import-untyped]
+        from PIL import Image  # type: ignore[import-untyped]
+    except ImportError as exc:
+        _LOGGER.warning(
+            "OCR.space unavailable for '%s': missing library (%s). "
+            "The integration requires 'pypdfium2' and 'Pillow' to render PDF pages.",
+            pdf_path,
+            exc,
+        )
+        return ""
+
+    _lanczos = getattr(Image, "Resampling", Image).LANCZOS
+    _OCRSPACE_URL = "https://api.ocr.space/parse/image"  # noqa: N806
+
+    def _png_b64(img: "Image.Image") -> str:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    def _call_ocrspace(img: "Image.Image") -> str:
+        """POST *img* to OCR.space and return the extracted text."""
+        payload = urllib.parse.urlencode(
+            {
+                "apikey": api_key,
+                "base64Image": f"data:image/png;base64,{_png_b64(img)}",
+                "language": "spa",
+                "OCREngine": "2",
+                "isOverlayRequired": "false",
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            _OCRSPACE_URL,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            data = _json.loads(resp.read().decode("utf-8"))
+        if data.get("IsErroredOnProcessing"):
+            _LOGGER.debug(
+                "OCR.space error for '%s': %s",
+                pdf_path,
+                data.get("ErrorMessage"),
+            )
+            return ""
+        results = data.get("ParsedResults") or []
+        return "\n".join(r.get("ParsedText", "") for r in results)
+
+    try:
+        doc = pdfium.PdfDocument(pdf_path)
+        page = doc[0]
+        page_height = page.get_height()
+        bitmap = page.render(scale=_OCR_ZOOM_FACTOR)
+        doc.close()
+        img_full = bitmap.to_pil()
+
+        # Pass 1 — full page
+        text_full = _call_ocrspace(img_full)
+
+        # Pass 2 — agua caliente area crop (≈ 30–55 % from top), enlarged 2×
+        img_width = img_full.width
+        crop2_top = int(page_height * _OCR_CROP2_TOP_RATIO * _OCR_ZOOM_FACTOR)
+        crop2_bot = int(page_height * _OCR_CROP2_BOTTOM_RATIO * _OCR_ZOOM_FACTOR)
+        crop2 = img_full.crop((0, crop2_top, img_width, crop2_bot))
+        crop2 = crop2.resize(
+            (
+                img_width * _OCR_CROP_RESIZE_FACTOR,
+                (crop2_bot - crop2_top) * _OCR_CROP_RESIZE_FACTOR,
+            ),
+            _lanczos,
+        )
+        text_crop2 = _call_ocrspace(crop2)
+
+        return text_full + "\n" + text_crop2
+
+    except urllib.error.URLError as exc:
+        _LOGGER.debug(
+            "OCR.space API unreachable for '%s': %s. "
+            "Check your internet connection or verify the API key.",
+            pdf_path,
+            exc,
+        )
+        return ""
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("OCR.space failed for '%s': %s", pdf_path, err)
+        return ""
+
+
 def _try_ocr_pdf(
     pdf_path: str,
     pdfminer_text: str = "",
     ocr_api_url: str = "",
+    ocrspace_api_key: str = "",
 ) -> tuple[str, list]:
     """OCR the first page of *pdf_path* and return the extracted text.
 
@@ -1792,6 +1909,11 @@ def _try_ocr_pdf(
        configured and RapidOCR is unavailable.  Calls the ``POST /ocr/file``
        endpoint exposed by the Concierge Add-on
        (https://github.com/Geek-MD/Concierge_Addon, default port 8099).
+    3. **OCR.space cloud API** (second fallback) — used when *ocrspace_api_key*
+       is configured and both RapidOCR and the Concierge Add-on are
+       unavailable.  Calls ``POST https://api.ocr.space/parse/image``
+       (free tier key: ``"helloworld"``; register at https://ocr.space/OCRAPI
+       for a higher-quota free key).
 
     When RapidOCR succeeds and *pdfminer_text* is provided, the OCR output
     is cross-validated against the embedded pdfminer text layer.  If the
@@ -1800,12 +1922,17 @@ def _try_ocr_pdf(
     that future pdfminer reads can extract the full text without OCR.
 
     Args:
-        pdf_path:      Absolute path to the PDF file.
-        pdfminer_text: Optional pdfminer text of the same PDF for
-                       cross-validation and PDF text-layer saving.
-        ocr_api_url:   Optional Concierge Add-on base URL
-                       (e.g. ``http://homeassistant.local:8099``).
-                       Used as fallback when RapidOCR is unavailable.
+        pdf_path:         Absolute path to the PDF file.
+        pdfminer_text:    Optional pdfminer text of the same PDF for
+                          cross-validation and PDF text-layer saving.
+        ocr_api_url:      Optional Concierge Add-on base URL
+                          (e.g. ``http://homeassistant.local:8099``).
+                          Used as the first fallback when RapidOCR is
+                          unavailable.
+        ocrspace_api_key: Optional OCR.space API key
+                          (``"helloworld"`` for the free demo tier).
+                          Used as the second fallback when both RapidOCR
+                          and the Concierge Add-on are unavailable.
 
     Returns:
         ``(ocr_text, raw_results)`` where *ocr_text* is the extracted text
@@ -1848,12 +1975,23 @@ def _try_ocr_pdf(
             ocr_api_url,
         )
 
+    # --- Path 3: OCR.space cloud API (second fallback) -----------------------
+    if ocrspace_api_key:
+        space_text = _try_ocr_pdf_via_ocrspace(pdf_path, ocrspace_api_key)
+        if space_text:
+            _ocr_available = True
+            return space_text, []
+        _LOGGER.debug(
+            "OCR.space returned no text for '%s'",
+            pdf_path,
+        )
+
     _ocr_available = False
     return "", []
 
 
 def _extract_common_expenses_pdf_attributes(
-    text: str, pdf_path: str = "", ocr_api_url: str = ""
+    text: str, pdf_path: str = "", ocr_api_url: str = "", ocrspace_api_key: str = ""
 ) -> dict[str, Any]:
     """Extract Gastos Comunes (and optional Agua Caliente) attributes from a PDF.
 
@@ -1865,7 +2003,7 @@ def _extract_common_expenses_pdf_attributes(
     additional OCR step is required for the fields it contains.  However, the
     hot-water meter table was **not** included in the original OCR pass and
     lives exclusively in the JPEG background; extracting it requires a second
-    OCR pass via RapidOCR (optional tier-2).
+    OCR pass (optional tier-2).
 
     **Tier 1 – embedded pdfminer text layer** (always attempted, no OCR):
         ``billing_period_month``, ``billing_period_year``,
@@ -1878,7 +2016,8 @@ def _extract_common_expenses_pdf_attributes(
         ``subtotal_recargos``, ``total_amount``,
         ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``
 
-    **Tier 2 – RapidOCR on JPEG background** (requires pdf_path + optional libs):
+    **Tier 2 – OCR on JPEG background** (requires pdf_path; uses the first
+    available engine: RapidOCR → Concierge Add-on API → OCR.space API):
         ``hot_water_reading_prev``, ``hot_water_reading_curr``,
         ``hot_water_consumption``, ``hot_water_consumption_unit``,
         ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``
@@ -1887,9 +2026,9 @@ def _extract_common_expenses_pdf_attributes(
     misread due to font-glyph garbling:
 
     * ``building_name`` — pdfminer reads "Jon" instead of "José" (font
-      encoding artefact); RapidOCR corrects this from the JPEG.
+      encoding artefact); OCR corrects this from the JPEG.
     * ``cargo_fijo`` — pdfminer may read "$9.838" instead of the correct
-      "$9.638" (~$200 difference); RapidOCR reads the JPEG accurately.
+      "$9.638" (~$200 difference); OCR reads the JPEG accurately.
       This error propagates to ``subtotal_consumo`` when it is derived
       arithmetically (``total − subtotal_depto − cargo_fijo``).
 
@@ -2126,15 +2265,15 @@ def _extract_common_expenses_pdf_attributes(
         _confidence["last_payment_folio"] = CONF_SCORE_PDFMINER
 
     # ------------------------------------------------------------------
-    # Tier 2: RapidOCR-based hot-water extraction (optional)
-    # RapidOCR reads the JPEG image layer directly and extracts the
+    # Tier 2: OCR-based hot-water extraction (optional)
+    # The OCR engine reads the JPEG image layer directly and extracts the
     # hot-water table that was not included in the embedded text layer.
     # The OCR output is also cross-validated against the pdfminer text
     # and — on success — saved back as an invisible text layer in the PDF
     # so future pdfminer reads can extract all fields without OCR.
     # ------------------------------------------------------------------
     if pdf_path:
-        ocr_text, _ocr_raw = _try_ocr_pdf(pdf_path, text, ocr_api_url)
+        ocr_text, _ocr_raw = _try_ocr_pdf(pdf_path, text, ocr_api_url, ocrspace_api_key)
         if ocr_text:
             # Hot-water row — use meter-reading-aware parser for readings
             hw_m = _GC_OCR_HOT_WATER_ROW_RE.search(ocr_text)
@@ -2410,7 +2549,7 @@ def _extract_type_specific_attributes(text: str, service_type: str) -> dict[str,
 
 
 def _extract_pdf_type_specific_attributes(
-    text: str, service_type: str, pdf_path: str = "", ocr_api_url: str = ""
+    text: str, service_type: str, pdf_path: str = "", ocr_api_url: str = "", ocrspace_api_key: str = ""
 ) -> dict[str, Any]:
     """Dispatch to the **PDF** extractor for *service_type* and return its results.
 
@@ -2420,12 +2559,14 @@ def _extract_pdf_type_specific_attributes(
     empty dict (no attributes extracted from the PDF).
 
     Args:
-        text:         Plain text extracted from the PDF via pdfminer.
-        service_type: One of the ``SERVICE_TYPE_*`` constants.
-        pdf_path:     Optional absolute path to the PDF file.  Passed to the
-                      common-expenses extractor to enable optional OCR.
-        ocr_api_url:  Optional base URL of the Concierge Add-on OCR service
-                      (e.g. ``http://homeassistant.local:8099``).
+        text:             Plain text extracted from the PDF via pdfminer.
+        service_type:     One of the ``SERVICE_TYPE_*`` constants.
+        pdf_path:         Optional absolute path to the PDF file.  Passed to the
+                          common-expenses extractor to enable optional OCR.
+        ocr_api_url:      Optional base URL of the Concierge Add-on OCR service
+                          (e.g. ``http://homeassistant.local:8099``).
+        ocrspace_api_key: Optional OCR.space API key used as secondary OCR
+                          fallback when RapidOCR and the Add-on are unavailable.
     """
     if service_type == SERVICE_TYPE_WATER:
         return _extract_water_pdf_attributes(text)
@@ -2436,7 +2577,7 @@ def _extract_pdf_type_specific_attributes(
     if service_type in (SERVICE_TYPE_COMMON_EXPENSES, SERVICE_TYPE_HOT_WATER):
         # Both devices are fed by the same PDF; the caller can differentiate
         # by service_type when consuming the returned dictionary.
-        return _extract_common_expenses_pdf_attributes(text, pdf_path, ocr_api_url)
+        return _extract_common_expenses_pdf_attributes(text, pdf_path, ocr_api_url, ocrspace_api_key)
     return {}
 
 
@@ -2607,6 +2748,7 @@ def extract_attributes_from_pdf(
     pdf_path: str,
     service_type: str = SERVICE_TYPE_UNKNOWN,
     ocr_api_url: str = "",
+    ocrspace_api_key: str = "",
 ) -> dict[str, Any]:
     """Extract billing attributes from a downloaded PDF file.
 
@@ -2651,8 +2793,9 @@ def extract_attributes_from_pdf(
       ``subtotal_departamento``, ``subtotal_recargos``, ``total_amount``,
       ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``.
       Tier-2 (OCR on JPEG — hot-water table absent from embedded text):
-      uses RapidOCR when available, otherwise falls back to the Concierge
-      Add-on REST API when *ocr_api_url* is configured.
+      uses RapidOCR when available, then falls back to the Concierge Add-on
+      REST API (*ocr_api_url*), and finally to the OCR.space cloud API
+      (*ocrspace_api_key*).
       ``hot_water_reading_prev``, ``hot_water_reading_curr``,
       ``hot_water_consumption``, ``hot_water_consumption_unit``,
       ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
@@ -2661,11 +2804,16 @@ def extract_attributes_from_pdf(
       ``*_searchable.pdf`` with an invisible text overlay.
 
     Args:
-        pdf_path:     Absolute path to the downloaded PDF file.
-        service_type: One of the ``SERVICE_TYPE_*`` constants.
-        ocr_api_url:  Optional base URL of the Concierge Add-on OCR service
-                      (e.g. ``http://homeassistant.local:8099``).  Used as
-                      the OCR fallback when RapidOCR is unavailable.
+        pdf_path:         Absolute path to the downloaded PDF file.
+        service_type:     One of the ``SERVICE_TYPE_*`` constants.
+        ocr_api_url:      Optional base URL of the Concierge Add-on OCR service
+                          (e.g. ``http://homeassistant.local:8099``).  Used as
+                          the first OCR fallback when RapidOCR is unavailable.
+        ocrspace_api_key: Optional OCR.space API key (``"helloworld"`` for the
+                          free demo tier; register at https://ocr.space/OCRAPI
+                          for a higher-quota free key).  Used as the second OCR
+                          fallback when both RapidOCR and the Add-on are
+                          unavailable.
 
     Returns:
         Dictionary with attributes extracted from the PDF, or an empty dict
@@ -2707,7 +2855,9 @@ def extract_attributes_from_pdf(
         # Apply the PDF-specific extractor for this service type.
         # Each service type has its own PDF extractor tuned to that issuer's
         # PDF layout (separate from the email extractor).
-        pdf_attrs = _extract_pdf_type_specific_attributes(pdf_text, service_type, pdf_path, ocr_api_url)
+        pdf_attrs = _extract_pdf_type_specific_attributes(
+            pdf_text, service_type, pdf_path, ocr_api_url, ocrspace_api_key
+        )
         attrs.update(pdf_attrs)
 
         # Ensure every non-metadata attribute has a confidence score.
