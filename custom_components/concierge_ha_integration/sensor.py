@@ -32,6 +32,7 @@ from .const import (
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
+    CONF_OCRSPACE_API_KEY,
     CONF_PASSWORD,
     CONF_SAMPLE_FROM,
     CONF_SAMPLE_SUBJECT,
@@ -818,6 +819,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             pdf_path,
                                             service_type,
                                             self._cfg.get(CONF_CONCIERGE_ADDON_URL, ""),
+                                            self._cfg.get(CONF_OCRSPACE_API_KEY, ""),
                                         )
                                         latest_attributes.update(pdf_attrs)
                                         # For PDF-only services (common_expenses,

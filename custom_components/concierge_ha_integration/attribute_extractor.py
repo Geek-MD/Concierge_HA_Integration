@@ -45,8 +45,8 @@ _LOGGER = logging.getLogger(__name__)
 # Score meanings:
 #   PDFMINER  (70) – extracted from the PDF text layer; pdfminer can
 #                    misread font-encoded glyphs (e.g. "6" → "8").
-#   OCR       (85) – extracted via RapidOCR or Concierge Add-on API; more
-#                    accurate for image-backed PDFs but still fallible.
+#   OCR       (85) – extracted via OCR.space cloud API; more accurate
+#                    for image-backed PDFs but still fallible.
 #   DERIVED   (60) – calculated from other extracted values (e.g.
 #                    subtotal_consumo = total − subtotal_depto − cargo_fijo).
 #   OVERRIDE (100) – user-supplied correction stored by the ``set_value``
@@ -57,40 +57,16 @@ CONF_SCORE_DERIVED: float = 60.0
 CONF_SCORE_OVERRIDE: float = 100.0
 
 # ---------------------------------------------------------------------------
-# Optional RapidOCR library availability (checked once at module load)
-# ---------------------------------------------------------------------------
-# rapidocr, onnxruntime and PyMuPDF are NOT listed as hard requirements in
-# manifest.json because onnxruntime has no wheel for HA OS / Alpine / musl
-# libc.  We attempt to import them once here so that the per-call import in
-# ``_try_ocr_pdf_rapidocr`` is skipped immediately on platforms where they
-# are absent, and the warning is only logged once per HA restart.
-_RAPIDOCR_AVAILABLE: bool = False
-try:
-    import fitz as _fitz  # type: ignore[import-untyped]
-    import numpy as _np  # type: ignore[import-untyped]
-    from rapidocr import RapidOCR as _RapidOCR  # type: ignore[import-untyped]
-    _RAPIDOCR_AVAILABLE = True
-except ImportError as _ocr_import_exc:
-    _LOGGER.warning(
-        "RapidOCR libraries (rapidocr, onnxruntime, PyMuPDF) could not be loaded: %s. "
-        "OCR-based tasks cannot run — Agua Caliente (hot water) sensor values will "
-        "need to be entered manually. "
-        "Install the Concierge Add-on (https://github.com/Geek-MD/Concierge_Addon) "
-        "and set the 'Concierge Add-on URL' option to restore automatic OCR.",
-        _ocr_import_exc,
-    )
-
-# ---------------------------------------------------------------------------
 # OCR engine availability state
 # ---------------------------------------------------------------------------
 # Tracks whether the OCR engine is available.
 #   None  – not yet determined (no OCR attempt has been made in this process)
 #   True  – a successful OCR run confirmed the engine is working
-#   False – the OCR engine failed (import error or runtime error)
+#   False – the OCR engine failed (no API key configured or runtime error)
 #
 # Updated by ``_try_ocr_pdf`` and read by the HA sensor coordinator to manage
-# a persistent Repair issue and notification that guides users through
-# installing the Concierge Add-on.
+# a persistent Repair issue and notification that guides users to configure
+# an OCR.space API key.
 _ocr_available: bool | None = None
 
 
@@ -98,8 +74,8 @@ def is_ocr_available() -> bool | None:
     """Return the current OCR-engine availability state.
 
     ``None``  – no OCR attempt has been made yet.
-    ``True``  – OCR engine working (RapidOCR or Concierge Add-on API).
-    ``False`` – OCR engine unavailable (import error or runtime failure).
+    ``True``  – OCR engine working (OCR.space API).
+    ``False`` – OCR engine unavailable (no API key or runtime failure).
     """
     return _ocr_available
 
@@ -1100,8 +1076,7 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
 # embedded as a JPEG image while only a partial text layer (pdfminer-readable)
 # overlays certain fields.  Two extraction tiers are used:
 #   1. pdfminer text layer  – always available; provides amounts, dates, owner.
-#   2. OCR (optional)       – uses rapidocr + onnxruntime + PyMuPDF (no system
-#                             binary required); provides the hot-water table
+#   2. OCR.space cloud API  – requires an API key; provides the hot-water table
 #                             (Agua Caliente) that lives only in the image.
 
 # "Nota de Cobro Enero 2026" – billing month and year

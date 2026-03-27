@@ -18,6 +18,7 @@ from .const import (
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
+    CONF_OCRSPACE_API_KEY,
     CONF_PASSWORD,
     CONF_SAMPLE_FROM,
     CONF_SAMPLE_SUBJECT,
@@ -131,12 +132,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
     async def async_step_finalize(  # type: ignore[override]
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Ask for a friendly name and create the config entry."""
+        """Ask for a friendly name and OCR.space API key, then create the config entry."""
         if user_input is not None:
             friendly_name = user_input.get("friendly_name") or self._imap_data[CONF_EMAIL]
             return self.async_create_entry(  # type: ignore[return-value]
                 title=friendly_name,
-                data={**self._imap_data, "friendly_name": friendly_name},
+                data={
+                    **self._imap_data,
+                    "friendly_name": friendly_name,
+                    CONF_OCRSPACE_API_KEY: user_input.get(CONF_OCRSPACE_API_KEY, ""),
+                },
             )
 
         finalize_schema = vol.Schema(
@@ -144,6 +149,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
                 vol.Optional(
                     "friendly_name",
                     default=self._imap_data[CONF_EMAIL],
+                ): str,
+                vol.Optional(
+                    CONF_OCRSPACE_API_KEY,
+                    default="",
                 ): str,
             }
         )
@@ -201,6 +210,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_CONCIERGE_ADDON_URL,
                     default=current.get(CONF_CONCIERGE_ADDON_URL, ""),
+                ): str,
+                vol.Optional(
+                    CONF_OCRSPACE_API_KEY,
+                    default=current.get(CONF_OCRSPACE_API_KEY, ""),
                 ): str,
             }
         )
