@@ -136,7 +136,7 @@
   "issues": {
     "ocr_unavailable": {
       "title": "Clave API de OCR.space no configurada — sensores de Agua Caliente no disponibles",
-      "description": "No se ha configurado ninguna **clave API de OCR.space**. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos hasta que se configure una clave.\n\n**Para solucionarlo**, regístrate para obtener una clave gratuita en [ocr.space/OCRAPI](https://ocr.space/OCRAPI) e ingrésala en las opciones de la integración (**Clave API de OCR.space**).\n\nEste problema se resuelve automáticamente una vez que el OCR funcione y se procese una nueva boleta de Gastos Comunes."
+      "description": "No se ha configurado ninguna **clave API de OCR.space**. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos hasta que se configure una clave.\n\n**Para solucionarlo**, regístrate para obtener una clave gratuita en [ocr.space/OCRAPI]({ocrspace_url}) e ingrésala en las opciones de la integración (**Clave API de OCR.space**).\n\nEste problema se resuelve automáticamente una vez que el OCR funcione y se procese una nueva boleta de Gastos Comunes."
     }
   }
 }

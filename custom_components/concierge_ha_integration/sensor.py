@@ -574,6 +574,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 is_persistent=False,
                 severity=ir.IssueSeverity.WARNING,
                 translation_key="ocr_unavailable",
+                translation_placeholders={
+                    "ocrspace_url": "https://ocr.space/OCRAPI",
+                },
             )
             persistent_notification.async_create(
                 self.hass,
