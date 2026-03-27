@@ -28,7 +28,6 @@ from homeassistant.helpers.update_coordinator import (
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_CONCIERGE_ADDON_URL,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -558,11 +557,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _manage_ocr_repair_issue(self) -> None:
         """Create or clear the OCR-engine repair issue and persistent notification.
 
-        When OCR is unavailable (RapidOCR import failed and no Concierge Add-on
-        URL is configured) a Repair issue and a persistent notification are
-        raised to inform the user that Agua Caliente sensor values cannot be
-        extracted automatically and must be entered manually, and to recommend
-        installing the Concierge Add-on.
+        When OCR is unavailable (no OCR.space API key configured) a Repair
+        issue and a persistent notification are raised to inform the user that
+        Agua Caliente sensor values cannot be extracted automatically and must
+        be entered manually.
 
         Both are automatically resolved on the first successful OCR run.
         """
@@ -576,22 +574,17 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 is_persistent=False,
                 severity=ir.IssueSeverity.WARNING,
                 translation_key="ocr_unavailable",
-                translation_placeholders={
-                    "addon_url": "https://github.com/Geek-MD/Concierge_Addon",
-                },
             )
             persistent_notification.async_create(
                 self.hass,
                 message=(
-                    "The OCR engine (**RapidOCR**) could not be loaded and no "
-                    "**Concierge Add-on URL** is configured.\n\n"
+                    "No **OCR.space API key** is configured.\n\n"
                     "OCR-based tasks cannot run — **Agua Caliente** (hot water) "
-                    "sensor values will need to be entered manually until OCR is "
-                    "restored.\n\n"
-                    "To fix this, install the "
-                    "[Concierge Add-on](https://github.com/Geek-MD/Concierge_Addon) "
-                    "and set its URL in the integration options "
-                    "(**Concierge Add-on URL**, e.g. `http://homeassistant.local:8099`)."
+                    "sensor values will need to be entered manually until an API "
+                    "key is set.\n\n"
+                    "To fix this, register for a free key at "
+                    "[ocr.space/OCRAPI](https://ocr.space/OCRAPI) and enter it "
+                    "in the integration options (**OCR.space API Key**)."
                 ),
                 title="Concierge — OCR engine unavailable",
                 notification_id=_OCR_NOTIFICATION_ID,
@@ -818,7 +811,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         pdf_attrs = extract_attributes_from_pdf(
                                             pdf_path,
                                             service_type,
-                                            self._cfg.get(CONF_CONCIERGE_ADDON_URL, ""),
                                             self._cfg.get(CONF_OCRSPACE_API_KEY, ""),
                                         )
                                         latest_attributes.update(pdf_attrs)
@@ -1070,7 +1062,7 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
         The confidence is stored under the ``_confidence`` metadata key in the
         extracted attributes dict.  Values are:
           70  – pdfminer text layer (may have font-encoding errors)
-          85  – OCR (RapidOCR or Concierge Add-on) — more accurate for image-backed PDFs
+          85  – OCR (OCR.space cloud API) — more accurate for image-backed PDFs
           60  – derived/calculated from other extracted values
          100  – user-supplied correction (learning override via ``set_value``)
         """

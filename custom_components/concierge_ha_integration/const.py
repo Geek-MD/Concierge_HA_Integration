@@ -31,15 +31,7 @@ SERVICE_TYPE_UNKNOWN = "unknown"
 PDF_SUBDIR = "concierge_ha_integration/pdfs"
 PDF_MAX_AGE_DAYS = 365
 
-# Concierge Addon REST API — optional URL for the Concierge Add-on OCR service
-# (https://github.com/Geek-MD/Concierge_Addon, default port 8099).
-# Used as the primary OCR fallback when rapidocr/onnxruntime are unavailable.
-# Example: "http://homeassistant.local:8099"
-CONF_CONCIERGE_ADDON_URL = "ocr_api_url"
-
 # OCR.space API — optional free API key for the OCR.space cloud OCR service
-# (https://ocr.space/OCRAPI). Used as the secondary OCR fallback when both
-# RapidOCR and the Concierge Add-on are unavailable. The free tier key is
-# "helloworld" (rate-limited); register at https://ocr.space/OCRAPI for a
-# higher-quota free key.
+# (https://ocr.space/OCRAPI). The free tier key is "helloworld" (rate-limited);
+# register at https://ocr.space/OCRAPI for a higher-quota free key.
 CONF_OCRSPACE_API_KEY = "ocrspace_api_key"

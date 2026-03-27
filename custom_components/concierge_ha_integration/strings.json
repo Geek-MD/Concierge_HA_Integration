@@ -21,10 +21,12 @@
         "title": "Finalize Configuration",
         "description": "Set a friendly name for this email account ({email})",
         "data": {
-          "friendly_name": "Friendly Name"
+          "friendly_name": "Friendly Name",
+          "ocrspace_api_key": "OCR.space API Key"
         },
         "data_description": {
-          "friendly_name": "A descriptive name for this email account"
+          "friendly_name": "A descriptive name for this email account",
+          "ocrspace_api_key": "Free API key from ocr.space/OCRAPI. Used for hot water (Agua Caliente) OCR extraction. Leave empty to skip OCR."
         }
       }
     },
@@ -49,7 +51,7 @@
           "email": "Email Address",
           "password": "Password",
           "friendly_name": "Friendly Name",
-          "ocr_api_url": "Concierge Add-on URL"
+          "ocrspace_api_key": "OCR.space API Key"
         },
         "data_description": {
           "imap_server": "Example: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
@@ -57,7 +59,7 @@
           "email": "Example: user@gmail.com",
           "password": "Use an app password for Gmail and Yahoo",
           "friendly_name": "A descriptive name for this email account",
-          "ocr_api_url": "Base URL of the Concierge Add-on OCR service. Used as OCR fallback when RapidOCR is unavailable. Leave empty if RapidOCR works."
+          "ocrspace_api_key": "Free API key from ocr.space/OCRAPI. Used for hot water (Agua Caliente) OCR extraction. Leave empty to skip OCR."
         }
       }
     },
@@ -133,8 +135,8 @@
   },
   "issues": {
     "ocr_unavailable": {
-      "title": "OCR engine not available — Hot Water sensors unavailable",
-      "description": "The OCR engine (**RapidOCR**) could not be loaded and no **Concierge Add-on URL** is configured. The five **Agua Caliente** (hot water) sensors (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) will remain empty and must be entered manually until OCR is restored.\n\n**To fix this**, install the [Concierge Add-on]({addon_url}) and set its URL in the integration options (**Concierge Add-on URL**).\n\nThis issue resolves automatically once OCR is working and a new Gastos Comunes bill is processed."
+      "title": "OCR.space API key not configured — Hot Water sensors unavailable",
+      "description": "No **OCR.space API key** is configured. The five **Agua Caliente** (hot water) sensors (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) will remain empty until a key is set.\n\n**To fix this**, register for a free key at [ocr.space/OCRAPI](https://ocr.space/OCRAPI) and enter it in the integration options (**OCR.space API Key**).\n\nThis issue resolves automatically once OCR is working and a new Gastos Comunes bill is processed."
     }
   }
 }

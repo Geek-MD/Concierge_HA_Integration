@@ -21,10 +21,12 @@
         "title": "Finalizar Configuración",
         "description": "Establezca un nombre descriptivo para esta cuenta de correo ({email})",
         "data": {
-          "friendly_name": "Nombre Descriptivo"
+          "friendly_name": "Nombre Descriptivo",
+          "ocrspace_api_key": "Clave API de OCR.space"
         },
         "data_description": {
-          "friendly_name": "Un nombre descriptivo para esta cuenta de correo"
+          "friendly_name": "Un nombre descriptivo para esta cuenta de correo",
+          "ocrspace_api_key": "Clave API gratuita de ocr.space/OCRAPI. Se usa para la extracción OCR de Agua Caliente. Déjela vacía para omitir el OCR."
         }
       }
     },
@@ -49,7 +51,7 @@
           "email": "Correo Electrónico",
           "password": "Contraseña",
           "friendly_name": "Nombre Descriptivo",
-          "ocr_api_url": "URL del Concierge Add-on"
+          "ocrspace_api_key": "Clave API de OCR.space"
         },
         "data_description": {
           "imap_server": "Ejemplo: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
@@ -57,7 +59,7 @@
           "email": "Ejemplo: usuario@gmail.com",
           "password": "Use una contraseña de aplicación para Gmail y Yahoo",
           "friendly_name": "Un nombre descriptivo para esta cuenta de correo",
-          "ocr_api_url": "URL base del servicio OCR del Concierge Add-on (p.ej. http://homeassistant.local:8099). Se usa como alternativa OCR cuando RapidOCR no está disponible. Déjelo vacío si RapidOCR funciona."
+          "ocrspace_api_key": "Clave API gratuita de ocr.space/OCRAPI. Se usa para la extracción OCR de Agua Caliente. Déjela vacía para omitir el OCR."
         }
       }
     },
@@ -133,8 +135,8 @@
   },
   "issues": {
     "ocr_unavailable": {
-      "title": "Motor OCR no disponible — sensores de Agua Caliente no disponibles",
-      "description": "El motor OCR (**RapidOCR**) no pudo cargarse y no se ha configurado ninguna **URL del Concierge Add-on**. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos y deberán ingresarse manualmente hasta que se restaure el OCR.\n\n**Para solucionarlo**, instala el [Concierge Add-on]({addon_url}) y configura su URL en las opciones de la integración (**URL del Concierge Add-on**, p.ej. `http://homeassistant.local:8099`).\n\nEste problema se resuelve automáticamente una vez que el OCR funcione y se procese una nueva boleta de Gastos Comunes."
+      "title": "Clave API de OCR.space no configurada — sensores de Agua Caliente no disponibles",
+      "description": "No se ha configurado ninguna **clave API de OCR.space**. Los cinco sensores de **Agua Caliente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerán vacíos hasta que se configure una clave.\n\n**Para solucionarlo**, regístrate para obtener una clave gratuita en [ocr.space/OCRAPI](https://ocr.space/OCRAPI) e ingrésala en las opciones de la integración (**Clave API de OCR.space**).\n\nEste problema se resuelve automáticamente una vez que el OCR funcione y se procese una nueva boleta de Gastos Comunes."
     }
   }
 }
