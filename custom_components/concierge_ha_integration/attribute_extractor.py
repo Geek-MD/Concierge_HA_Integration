@@ -1540,14 +1540,19 @@ def _try_ocr_pdf(
     """
     global _ocr_available  # noqa: PLW0603
 
-    if ocrspace_api_key:
-        space_text = _try_ocr_pdf_via_ocrspace(pdf_path, ocrspace_api_key)
-        if space_text:
-            _ocr_available = True
-            return space_text, []
-        _LOGGER.debug("OCR.space returned no text for '%s'", pdf_path)
+    if not ocrspace_api_key:
+        # No key configured at all — OCR is unavailable.
+        _ocr_available = False
+        return "", []
 
-    _ocr_available = False
+    # A key IS configured: mark OCR as available regardless of whether this
+    # specific PDF yields any text (transient API errors or PDFs without
+    # hot-water content must not trigger the "key not configured" notification).
+    _ocr_available = True
+    space_text = _try_ocr_pdf_via_ocrspace(pdf_path, ocrspace_api_key)
+    if space_text:
+        return space_text, []
+    _LOGGER.debug("OCR.space returned no text for '%s'", pdf_path)
     return "", []
 
 
