@@ -12,7 +12,7 @@ from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
@@ -1113,6 +1113,7 @@ class ConciergeServiceConsumptionSensor(_ConciergeServiceBaseSensor):
     """Sensor reporting the consumption value extracted from the latest bill."""
 
     _attr_icon = "mdi:gauge"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
         self,
@@ -1152,6 +1153,7 @@ class ConciergeServiceCostPerUnitSensor(_ConciergeServiceBaseSensor):
     """Sensor reporting the cost per consumption unit extracted from the latest bill."""
 
     _attr_icon = "mdi:currency-usd"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
         self,
@@ -1190,6 +1192,7 @@ class ConciergeServiceTotalAmountSensor(_ConciergeServiceBaseSensor):
 
     _attr_icon = "mdi:cash"
     _attr_native_unit_of_measurement = "$"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
         self,
@@ -1231,6 +1234,7 @@ class ConciergeServiceBillingBreakdownSensor(_ConciergeServiceBaseSensor):
     """
 
     _attr_icon = "mdi:currency-usd"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
         self,

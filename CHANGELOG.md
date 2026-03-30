@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-03-30
+
+### Fixed
+
+- **False "OCR key not configured" notification when key is present**
+  (`attribute_extractor.py`):
+
+  `_try_ocr_pdf()` previously set `_ocr_available = False` whenever the
+  OCR.space call returned empty text — even when an API key *was* configured.
+  This happened because the function fell through to the "no key" code path
+  any time OCR returned nothing (e.g. a PDF without hot-water content, a
+  transient API error, or a rate-limit response).  As a result, HA raised a
+  persistent Repair issue and notification claiming *"No OCR.space API key is
+  configured"* while the key was clearly visible in the CONFIGURE dialog.
+
+  The flag now correctly reflects whether the key is **configured**, not
+  whether OCR extracted text from a specific PDF:
+
+  - `_ocr_available = False` — no key provided (genuinely unconfigured).
+  - `_ocr_available = True`  — key is present; extraction result for any
+    individual PDF does not affect the flag.
+
+### Added
+
+- **Long-term statistics for all numeric billing sensors** (`sensor.py`):
+
+  Added `state_class = SensorStateClass.MEASUREMENT` to all numeric sensor
+  classes:
+  - `ConciergeServiceConsumptionSensor`
+  - `ConciergeServiceCostPerUnitSensor`
+  - `ConciergeServiceTotalAmountSensor`
+  - `ConciergeServiceBillingBreakdownSensor`
+
+  Without `state_class`, Home Assistant's recorder only kept the short-term
+  state history (last few days).  With `MEASUREMENT` set, every bill value is
+  also recorded in the long-term statistics tables, enabling historical charts
+  spanning months or years from the HA Statistics / History cards.
+
 ## [1.0.2] - 2026-03-27
 
 ### Added
