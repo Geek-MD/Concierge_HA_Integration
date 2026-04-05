@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-04-05
+
+### Fixed
+
+- **Gastos Comunes PDF: extraction patterns were tuned exclusively to the
+  reference building, producing wrong values for any second building**
+  (`attribute_extractor.py`):
+
+  The pdfminer-tier regex patterns contained hard-coded assumptions about a
+  single building's bill layout.  Any "Nota de Cobro" PDF from a different
+  building caused nearly all extracted values to be incorrect.
+
+  - **`_GC_AMOUNT_RE`** — alícuota pattern required the fractional digits to
+    start with `9` (i.e. `[O0]\s*9\d{4}\s*%`), restricting matches to
+    alícuotas ≥ 0.9 %.  Buildings with lower alícuotas (e.g. 0.325 %) were
+    silently skipped.
+    **Fix:** changed to `[O0]\s*\d{4,6}\s*%` — accepts any sub-1 % alícuota
+    whose decimal part is 4–6 digits.
+
+  - **`_GC_FONDOS_AMOUNT_RE`** — fondos pattern matched only the 5 % case
+    (garbled by pdfminer as `500 %` or `5,0 %`).  Buildings that provision
+    10 %, 7 %, etc. produced no fondos amount match.
+    **Fix:** changed `5[0,]` to `\d{1,2}[0,]` — accepts any 1–2 digit
+    integer fondos percentage (5 %, 10 %, 7 %, etc.).
+
+  - **`_GC_BUILDING_TOTAL_RE` fallback** — the fallback pattern required the
+    formatted building total to start with `1x` (`1\d[\d.]{6,}`), restricting
+    matches to totals ≥ $10,000,000.  Smaller buildings whose total is in the
+    low millions were never matched by the fallback.
+    **Fix:** changed to `\d[\d.]{8,}` — accepts any formatted CLP amount
+    whose string representation is ≥ 9 characters, corresponding to amounts
+    ≥ $1,000,000.
+
+  - **`_GC_THREE_AMOUNTS_RE` fallback (positional)** — the three-consecutive-
+    amounts fallback (used when individual patterns fail) searched the entire
+    document text with no label context.  If any other section of the PDF
+    happened to contain three consecutive `$` amounts before the breakdown
+    table, those unrelated values were picked up instead of the correct
+    GC / fondos / subtotal figures.
+    **Fix:** the search is now scoped to a window starting at the earliest
+    `alícuota` / `fondos X%` / `Gasto Común` anchor and ending just after the
+    first `Cargo Fijo` or `Subtotal Recargos` label, preventing false-positive
+    matches from other document sections.
+
 ## [1.0.3] - 2026-03-30
 
 ### Fixed

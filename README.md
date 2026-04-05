@@ -440,6 +440,7 @@ with five entities:
 - ✅ Per-device *Force Refresh* button entity (v0.8.4): `button.concierge_{id}_force_refresh` appears in the device Configuration panel; pressing it triggers the same targeted refresh as the service
 - ✅ Agua Caliente sensors on the Gastos Comunes device (v0.9.5): five dedicated sensor entities (`consumption`, `cost_per_unit`, `amount`, `prev_reading`, `curr_reading`) are automatically created for every Gastos Comunes service and populated from the same "Nota de Cobro" PDF via OCR — no separate "Agua Caliente" service device is required or supported, since the hot-water data lives exclusively inside the Gastos Comunes email/PDF
 - ✅ **OCR.space cloud API as sole OCR engine (v1.0.2)**: removed RapidOCR (onnxruntime unavailable on HA OS) and Concierge Add-on fallback; users register for a free key at [ocr.space/OCRAPI](https://ocr.space/OCRAPI) and enter it during setup or via CONFIGURE
+- ✅ **Gastos Comunes PDF extraction generalised for any building (v1.1.0)**: alícuota, fondos, and building-total patterns were previously hard-coded to the reference building's values; they now match any building's Nota de Cobro regardless of alícuota magnitude, fondos percentage, or total size; the three-amounts fallback is scoped to the breakdown section to prevent false matches
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services
