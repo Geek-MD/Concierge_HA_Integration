@@ -1154,17 +1154,25 @@ _GC_ALICUOTA_RE = re.compile(
 
 # Building total expense: "$14.083.315" — 8-digit+ amounts appearing after the
 # "Gasto Común" / "Prorratur" / garbled label line.
-# Fallback: any large amount starting with "14" or "1x" followed by 7+ digits.
+# Fallback: any amount whose formatted representation is ≥ 9 characters, which
+# corresponds to CLP amounts ≥ $1,000,000 ("1.000.000").  The previous pattern
+# required the amount to start with "1" (i.e., ≥ $10,000,000), which excluded
+# smaller buildings whose total common expense is in the low millions.
 _GC_BUILDING_TOTAL_RE = re.compile(
     r"(?:gasto\s+com[uú]n|outo\s+c:om[oó]n|prorratu?r)[^\n]*\n[^\n]*\$\s*([\d.]+)"
-    r"|\$\s*(1\d[\d.]{6,})",           # fallback: ≥ 8-digit amount
+    r"|\$\s*(\d[\d.]{8,})",            # fallback: formatted amount ≥ 9 chars (≥ $1,000,000)
     re.IGNORECASE,
 )
 
-# Gastos comunes apartment portion (alícuota %) → amount
+# Gastos comunes apartment portion (alícuota %) → amount.
 # Text shows: "O 95110 % " on one line, "$133.946 " on the next.
+# The alícuota is always a sub-1% fraction rendered as "0,XXXXX %" where the
+# leading "0," is font-garbled to "O " by pdfminer.  The fractional digits are
+# 4–6 characters (e.g. "95110", "32500", "08750").  The previous pattern
+# hardcoded the leading digit as "9", restricting matches to alícuotas ≥ 0.9%.
+# Changing \d{4,6} accepts any alícuota (e.g. 0.3xxxx%, 0.08xxx%).
 _GC_AMOUNT_RE = re.compile(
-    r"[O0]\s*9\d{4}\s*%\s*[\s\n]*\$\s*([\d.,]+)",
+    r"[O0]\s*\d{4,6}\s*%\s*[\s\n]*\$\s*([\d.,]+)",
     re.IGNORECASE,
 )
 
@@ -1176,9 +1184,16 @@ _GC_FONDOS_PCT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Fondos 5% → amount (text shows "500% " then "$ 6.697 ")
+# Fondos provision amount: the percentage line precedes the $ amount.
+# pdfminer renders "5,0 %" as "500 %" (comma becomes 0, no space before %).
+# General garbling rule: "X,0 %" → "X00 %" where X is the integer percentage.
+# This works for any whole-number fondos percentage (5%, 10%, 7%, …):
+#   5%  → "500 %" or "5,0 %"
+#   10% → "1000 %" or "10,0 %"
+# Pattern: 1–2 integer digits, then the separator char (0 or ,), then "0 %".
+# The previous pattern hardcoded the leading digit as "5" (fondos = 5% only).
 _GC_FONDOS_AMOUNT_RE = re.compile(
-    r"5[0,]\s*0\s*%\s*[\s\n]*\$\s*([\d.,]+)",
+    r"\d{1,2}[0,]\s*0\s*%\s*[\s\n]*\$\s*([\d.,]+)",
     re.IGNORECASE,
 )
 
@@ -1762,13 +1777,41 @@ def _extract_common_expenses_pdf_attributes(
         attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_m.group(1))
         _confidence["subtotal_departamento"] = CONF_SCORE_PDFMINER
 
-    # Fallback: three-consecutive-amounts block (GC / fondos / subtotal)
+    # Fallback: three-consecutive-amounts block (GC / fondos / subtotal).
+    # Scope the search to the breakdown section — the slice of text from the
+    # first alícuota / fondos / "Gastos Comunes" anchor up to the "Subtotal
+    # Recargos" or "Cargo Fijo" label — to avoid accidentally matching a
+    # different group of three consecutive amounts elsewhere in the document
+    # (e.g. amounts in the last-payment section or the building summary).
     if not (
         attrs.get("gastos_comunes_amount")
         and attrs.get("fondos_amount")
         and attrs.get("subtotal_departamento")
     ):
-        three_m = _GC_THREE_AMOUNTS_RE.search(text)
+        # Determine the search window: start at the earliest contextual anchor
+        # that precedes the breakdown amounts, end just after "Cargo Fijo" /
+        # "Subtotal Recargos" (whichever comes first).
+        _breakdown_start = len(text)
+        for _anchor in (
+            r"al[íif]cuota",
+            r"fondos\s+\d+\s*%",
+            r"gasto\s+com[uú]n",
+        ):
+            _am = re.search(_anchor, text, re.IGNORECASE)
+            if _am and _am.start() < _breakdown_start:
+                _breakdown_start = _am.start()
+        if _breakdown_start == len(text):
+            _breakdown_start = 0  # no anchor found — search full text
+
+        _breakdown_end = len(text)
+        for _end_anchor in (r"cargo\s+fijo", r"subtotal\s+recargos"):
+            _em = re.search(_end_anchor, text[_breakdown_start:], re.IGNORECASE)
+            if _em:
+                _candidate_end = _breakdown_start + _em.end() + 60
+                if _candidate_end < _breakdown_end:
+                    _breakdown_end = _candidate_end
+
+        three_m = _GC_THREE_AMOUNTS_RE.search(text[_breakdown_start:_breakdown_end])
         if three_m:
             a1 = _parse_amount_to_int(three_m.group(1))
             a2 = _parse_amount_to_int(three_m.group(2))
