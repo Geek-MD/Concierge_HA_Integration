@@ -1301,6 +1301,72 @@ _GC_OCR_CARGO_FIJO_RE = re.compile(
     re.IGNORECASE,
 )
 
+# OCR Emission date: OCR reads the label accurately as "Fecha Emisión:"
+# (pdfminer produces a garbled form such as "Fecha Eml11ón:").
+# The date may appear on the same OCR line as the label or immediately after.
+_GC_OCR_EMISSION_DATE_RE = re.compile(
+    r"fecha\s+emis[^\n:]{0,15}[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})",
+    re.IGNORECASE,
+)
+
+# OCR Due date: "Pagar Hasta: 01-03-2026"
+_GC_OCR_DUE_DATE_RE = re.compile(
+    r"pagar\s+hasta[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})",
+    re.IGNORECASE,
+)
+
+# OCR Alícuota: reads "0,95110 %" or "0.95110 %" without font garbling.
+# Group 1 is the fractional digit string only (same convention as
+# _GC_ALICUOTA_RE), so the "0." prefix construction can be reused.
+_GC_OCR_ALICUOTA_RE = re.compile(
+    r"(?:al[íi]cuota\s+total\s*)?0[,.](\d{4,6})\s*%",
+    re.IGNORECASE,
+)
+
+# OCR GC amount: the apartment GC portion follows the alícuota percentage on
+# the same line or the next ("0,95110 %  $133.946").  Up to 20 whitespace /
+# pipe characters are allowed between the percent sign and the dollar sign
+# to handle both inline and multi-line OCR layouts.
+_GC_OCR_GC_AMOUNT_RE = re.compile(
+    r"0[,.]\d{4,6}\s*%[\s|]{0,20}\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# OCR Fondos provision amount: "FONDOS 5% DEL GASTO MENSUAL … $6.697"
+# The label and its dollar amount may be separated by up to 60 characters
+# (description text + whitespace).
+_GC_OCR_FONDOS_AMOUNT_RE = re.compile(
+    r"fondos\s+\d+\s*%[\s\S]{0,60}?\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# OCR Subtotal departamento (GC + fondos provision subtotal)
+_GC_OCR_SUBTOTAL_DEPTO_RE = re.compile(
+    r"subtotal\s+departamento[\s|]{0,30}\$?\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# OCR Grand total: "Total del mes  $171.266" or "Total a pagar  $171.266"
+_GC_OCR_TOTAL_AMOUNT_RE = re.compile(
+    r"total\s+(?:del\s+mes|a\s+pagar)[\s|]{0,20}\$?\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+
+# OCR Last-payment section: labels are readable ("Último" not garbled).
+# [uú] with IGNORECASE covers both "ultimo" (garbled) and "Último" (clean).
+_GC_OCR_LAST_PAYMENT_DATE_RE = re.compile(
+    r"fecha\s+[uú]ltim[ao]\s+pago[\s\S]{0,100}?(\d{2}[/-]\d{2}[/-]\d{4})",
+    re.IGNORECASE,
+)
+_GC_OCR_LAST_PAYMENT_AMOUNT_RE = re.compile(
+    r"monto\s+[uú]ltim[ao]\s+pago[\s\S]{0,100}?\$\s*([\d.,]+)",
+    re.IGNORECASE,
+)
+_GC_OCR_LAST_PAYMENT_FOLIO_RE = re.compile(
+    r"folio\s+[uú]ltim[\s\S]{0,100}?(\d{5,6})",
+    re.IGNORECASE,
+)
+
 # Maximum allowable year drift due to pdfminer font-encoding garbling.
 # Years garbled by more than this threshold are left unchanged.
 _GC_MAX_YEAR_DRIFT = 4
@@ -1599,19 +1665,25 @@ def _extract_common_expenses_pdf_attributes(
 
     **Tier 2 – OCR.space on JPEG background** (requires pdf_path and
     a configured OCR.space API key):
+
+    *Exclusive to Tier 2* (absent from the embedded text layer):
         ``hot_water_reading_prev``, ``hot_water_reading_curr``,
         ``hot_water_consumption``, ``hot_water_consumption_unit``,
         ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``
 
-    Tier-2 also *improves* two tier-1 fields that the prior OCR pass
-    misread due to font-glyph garbling:
-
-    * ``building_name`` — pdfminer reads "Jon" instead of "José" (font
-      encoding artefact); OCR corrects this from the JPEG.
-    * ``cargo_fijo`` — pdfminer may read "$9.838" instead of the correct
-      "$9.638" (~$200 difference); OCR reads the JPEG accurately.
-      This error propagates to ``subtotal_consumo`` when it is derived
-      arithmetically (``total − subtotal_depto − cargo_fijo``).
+    *Re-extracted from the JPEG* to override any pdfminer value with the
+    higher-confidence OCR score (85 vs 70).  OCR reads the printed image
+    directly; pdfminer may misread font-encoded glyphs (e.g. "6"→"8",
+    "Ú"→"l1", accented characters →  garbled ASCII):
+        ``billing_period_month``, ``billing_period_year``,
+        ``billing_period_start``, ``billing_period_end``,
+        ``emission_date``, ``due_date``,
+        ``building_name``, ``building_rut``, ``address``,
+        ``apartment``, ``owner_name``, ``alicuota``,
+        ``building_total_expense``, ``fondos_pct``,
+        ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
+        ``subtotal_recargos``, ``cargo_fijo``, ``total_amount``,
+        ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``
 
     Reference PDF: "Gastos Comunes Enero 2026" (Edificio Jose Miguel, 1 page).
     """
@@ -1956,6 +2028,164 @@ def _extract_common_expenses_pdf_attributes(
                     attrs["cargo_fijo"] = candidate
                     _confidence["cargo_fijo"] = CONF_SCORE_OCR
 
+            # ----------------------------------------------------------
+            # Full-document re-extraction from the JPEG image layer.
+            # All tier-1 fields are re-read from the JPEG via OCR so
+            # that the higher-confidence OCR score (85) overrides the
+            # pdfminer value (70) wherever OCR succeeds.  OCR reads the
+            # printed glyphs directly and avoids font-encoding artefacts.
+            # ----------------------------------------------------------
+
+            # Billing period (OCR reads the heading "Nota de Cobro Mes YYYY")
+            period_ocr_m = _GC_BILLING_PERIOD_RE.search(ocr_text)
+            if period_ocr_m:
+                _month_ocr = period_ocr_m.group(1).lower()
+                _year_ocr = period_ocr_m.group(2)
+                attrs["billing_period_month"] = period_ocr_m.group(1).capitalize()
+                attrs["billing_period_year"] = _year_ocr
+                _mnum_ocr = _MONTH_NAME_TO_NUM.get(_month_ocr[:3], 0)
+                if _mnum_ocr:
+                    attrs["billing_period_start"] = f"01-{_mnum_ocr:02d}-{_year_ocr}"
+                    _lday_ocr = calendar.monthrange(int(_year_ocr), _mnum_ocr)[1]
+                    attrs["billing_period_end"] = f"{_lday_ocr:02d}-{_mnum_ocr:02d}-{_year_ocr}"
+                for _k in (
+                    "billing_period_month", "billing_period_year",
+                    "billing_period_start", "billing_period_end",
+                ):
+                    if _k in attrs:
+                        _confidence[_k] = CONF_SCORE_OCR
+
+            # Emission date ("Fecha Emisión: 18-02-2026")
+            emdate_ocr_m = _GC_OCR_EMISSION_DATE_RE.search(ocr_text)
+            if emdate_ocr_m:
+                attrs["emission_date"] = emdate_ocr_m.group(1).replace("/", "-")
+                _confidence["emission_date"] = CONF_SCORE_OCR
+
+            # Due date ("Pagar Hasta: 01-03-2026")
+            duedate_ocr_m = _GC_OCR_DUE_DATE_RE.search(ocr_text)
+            if duedate_ocr_m:
+                _raw_due_ocr = duedate_ocr_m.group(1).replace("/", "-")
+                _yr_fix = attrs.get("billing_period_year", "")
+                attrs["due_date"] = (
+                    _gc_fix_year(_raw_due_ocr, _yr_fix) if _yr_fix else _raw_due_ocr
+                )
+                _confidence["due_date"] = CONF_SCORE_OCR
+
+            # Building RUT
+            rut_ocr_m = _GC_RUT_RE.search(ocr_text)
+            if rut_ocr_m:
+                attrs["building_rut"] = rut_ocr_m.group(1)
+                _confidence["building_rut"] = CONF_SCORE_OCR
+
+            # Street address (line immediately after the RUT line)
+            addr_ocr_m = _GC_ADDRESS_RE.search(ocr_text)
+            if addr_ocr_m:
+                attrs["address"] = addr_ocr_m.group(1).strip()
+                _confidence["address"] = CONF_SCORE_OCR
+
+            # Apartment number
+            apt_ocr_m = _GC_APARTMENT_RE.search(ocr_text)
+            if apt_ocr_m:
+                attrs["apartment"] = apt_ocr_m.group(1)
+                _confidence["apartment"] = CONF_SCORE_OCR
+
+            # Owner name (consecutive ALL-CAPS words, 2–4 words)
+            _ocr_owner_excl = {
+                "SANTIAGO", "RUT", "FONDOS", "MENSUAL", "ADMINISTRACIONES",
+            }
+            for _ocr_cand in _GC_OWNER_RE.findall(ocr_text):
+                _ocr_words = _ocr_cand.split()
+                if len(_ocr_words) >= 2 and not _ocr_owner_excl.issuperset(_ocr_words):
+                    attrs["owner_name"] = _ocr_cand.strip()
+                    _confidence["owner_name"] = CONF_SCORE_OCR
+                    break
+
+            # Alícuota percentage (OCR reads "0,95110 %" without font garbling)
+            alicuota_ocr_m = _GC_OCR_ALICUOTA_RE.search(ocr_text)
+            if alicuota_ocr_m:
+                try:
+                    _raw_ali_ocr = "0." + (alicuota_ocr_m.group(1).lstrip("0") or "0")
+                    attrs["alicuota"] = round(float(_raw_ali_ocr), 4)
+                    _confidence["alicuota"] = CONF_SCORE_OCR
+                except ValueError:
+                    pass
+
+            # Building total expense (large CLP amount from the building summary)
+            bldg_total_ocr_m = _GC_BUILDING_TOTAL_RE.search(ocr_text)
+            if bldg_total_ocr_m:
+                _raw_bt_ocr = (
+                    bldg_total_ocr_m.group(1) or bldg_total_ocr_m.group(2) or ""
+                ).replace(".", "")
+                if _raw_bt_ocr.isdigit():
+                    attrs["building_total_expense"] = int(_raw_bt_ocr)
+                    _confidence["building_total_expense"] = CONF_SCORE_OCR
+
+            # Fondos provision percentage
+            fondos_pct_ocr_m = _GC_FONDOS_PCT_RE.search(ocr_text)
+            if fondos_pct_ocr_m:
+                try:
+                    attrs["fondos_pct"] = int(fondos_pct_ocr_m.group(1))
+                    _confidence["fondos_pct"] = CONF_SCORE_OCR
+                except ValueError:
+                    pass
+
+            # GC apartment-portion amount (directly after alícuota line)
+            gc_ocr_m = _GC_OCR_GC_AMOUNT_RE.search(ocr_text)
+            if gc_ocr_m:
+                _cand_gc = _parse_amount_to_int(gc_ocr_m.group(1))
+                if _cand_gc:
+                    attrs["gastos_comunes_amount"] = _cand_gc
+                    _confidence["gastos_comunes_amount"] = CONF_SCORE_OCR
+
+            # Fondos provision amount
+            fondos_amt_ocr_m = _GC_OCR_FONDOS_AMOUNT_RE.search(ocr_text)
+            if fondos_amt_ocr_m:
+                _cand_fondos = _parse_amount_to_int(fondos_amt_ocr_m.group(1))
+                if _cand_fondos:
+                    attrs["fondos_amount"] = _cand_fondos
+                    _confidence["fondos_amount"] = CONF_SCORE_OCR
+
+            # Subtotal departamento (GC + fondos)
+            sub_depto_ocr_m = _GC_OCR_SUBTOTAL_DEPTO_RE.search(ocr_text)
+            if sub_depto_ocr_m:
+                _cand_sd = _parse_amount_to_int(sub_depto_ocr_m.group(1))
+                if _cand_sd:
+                    attrs["subtotal_departamento"] = _cand_sd
+                    _confidence["subtotal_departamento"] = CONF_SCORE_OCR
+
+            # Grand total — sanity: must be ≥ subtotal_departamento
+            total_ocr_m = _GC_OCR_TOTAL_AMOUNT_RE.search(ocr_text)
+            if total_ocr_m:
+                _cand_total = _parse_amount_to_int(total_ocr_m.group(1))
+                _floor = attrs.get("subtotal_departamento") or 0
+                if _cand_total and _cand_total >= _floor:
+                    attrs["total_amount"] = _cand_total
+                    _confidence["total_amount"] = CONF_SCORE_OCR
+
+            # Last payment date
+            lp_date_ocr_m = _GC_OCR_LAST_PAYMENT_DATE_RE.search(ocr_text)
+            if lp_date_ocr_m:
+                _raw_lpd = lp_date_ocr_m.group(1).replace("/", "-")
+                _yr_fix2 = attrs.get("billing_period_year", "")
+                attrs["last_payment_date"] = (
+                    _gc_fix_year(_raw_lpd, _yr_fix2) if _yr_fix2 else _raw_lpd
+                )
+                _confidence["last_payment_date"] = CONF_SCORE_OCR
+
+            # Last payment amount
+            lp_amount_ocr_m = _GC_OCR_LAST_PAYMENT_AMOUNT_RE.search(ocr_text)
+            if lp_amount_ocr_m:
+                attrs["last_payment_amount"] = _parse_amount_to_int(
+                    lp_amount_ocr_m.group(1)
+                )
+                _confidence["last_payment_amount"] = CONF_SCORE_OCR
+
+            # Last payment folio
+            lp_folio_ocr_m = _GC_OCR_LAST_PAYMENT_FOLIO_RE.search(ocr_text)
+            if lp_folio_ocr_m:
+                attrs["last_payment_folio"] = lp_folio_ocr_m.group(1)
+                _confidence["last_payment_folio"] = CONF_SCORE_OCR
+
     # ------------------------------------------------------------------
     # Combined address for binary-sensor display
     # Format: "<building_name>, <street> Depto.<apt>, <city>"
@@ -2081,33 +2311,19 @@ def _extract_common_expenses_pdf_attributes(
     # This PDF uses a "sandwich" layout: a JPEG image as background plus a
     # partially complete text layer (font-encoded, created by a prior OCR
     # pass — identifiable by the HiddenHorzOCR font used in the PDF).
-    # pdfminer reads that embedded text layer directly without any additional
-    # OCR step; the OCR tier-2 re-processes the JPEG to recover the
-    # fields that were missed by the original OCR pass.
+    # pdfminer reads that embedded text layer directly (Tier 1); OCR
+    # tier-2 re-processes the JPEG to recover fields absent from the
+    # embedded layer AND to override tier-1 fields with a more accurate
+    # reading of the printed image.
     #
-    # Fields available in the embedded text layer (no OCR needed):
-    #   billing_period_month/year, billing_period_start/end,
-    #   emission_date, due_date, building_rut, building_name (approx.),
-    #   address, apartment, owner_name, alicuota, building_total_expense,
-    #   fondos_pct, gastos_comunes_amount, fondos_amount,
-    #   subtotal_departamento, subtotal_recargos, total_amount,
-    #   last_payment_date, last_payment_amount, last_payment_folio.
-    #
-    # Fields ONLY available via OCR tier-2 — absent from the
-    # embedded text layer:
+    # Fields exclusive to OCR tier-2 (absent from embedded text layer):
     #   hot_water_reading_prev, hot_water_reading_curr,
     #   hot_water_consumption, hot_water_consumption_unit,
     #   hot_water_cost_per_m3, hot_water_amount.
     #
-    # Fields improved by OCR (pdfminer may misread font glyphs):
-    #   building_name  — pdfminer garbles font-encoded chars (e.g. "Jon"
-    #                    instead of "José"); OCR reads the JPEG accurately.
-    #   cargo_fijo     — pdfminer may read "$9.838" instead of "$9.638"
-    #                    (~$200 error); OCR corrects the digit.
-    #   subtotal_consumo — derived without OCR via
-    #                    total − subtotal_depto − cargo_fijo; the ~$200
-    #                    cargo_fijo error propagates here unless OCR corrects
-    #                    cargo_fijo first.
+    # All other tier-1 fields are re-read via OCR to raise their
+    # confidence score from 70 (pdfminer) to 85 (OCR).  The OCR value
+    # wins whenever the pattern matches successfully.
     # ------------------------------------------------------------------
     if _confidence:
         _tier1_keys = sorted(
