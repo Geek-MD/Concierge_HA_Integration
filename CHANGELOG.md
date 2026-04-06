@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-06
+
+### Added
+
+- **Full OCR Space analysis of the Gastos Comunes PDF** (`attribute_extractor.py`):
+
+  Previously, the OCR.space tier-2 pass only extracted the hot-water meter
+  table (fields absent from the embedded text layer) plus two override fields
+  (`building_name`, `cargo_fijo`).  All remaining fields extracted by pdfminer
+  were left at confidence score 70 even when OCR could read them more
+  accurately from the JPEG image.
+
+  All tier-1 fields are now re-read from the JPEG via OCR.space and, when a
+  match is found, the pdfminer value is overridden and the confidence score is
+  raised from 70 (pdfminer) to 85 (OCR):
+
+  - `billing_period_month`, `billing_period_year`, `billing_period_start`,
+    `billing_period_end`
+  - `emission_date`, `due_date`
+  - `building_rut`, `address`, `apartment`, `owner_name`
+  - `alicuota`, `building_total_expense`, `fondos_pct`
+  - `gastos_comunes_amount`, `fondos_amount`, `subtotal_departamento`
+  - `subtotal_recargos`, `total_amount`
+  - `last_payment_date`, `last_payment_amount`, `last_payment_folio`
+
+  New OCR-specific regex patterns added:
+  - `_GC_OCR_EMISSION_DATE_RE` — matches "Fecha Emisión: DD-MM-YYYY"
+  - `_GC_OCR_DUE_DATE_RE` — matches "Pagar Hasta: DD-MM-YYYY"
+  - `_GC_OCR_ALICUOTA_RE` — matches "0,XXXXX %" without font garbling
+  - `_GC_OCR_GC_AMOUNT_RE` — matches GC apartment amount after alícuota line
+  - `_GC_OCR_FONDOS_AMOUNT_RE` — matches fondos amount after "FONDOS N%"
+  - `_GC_OCR_SUBTOTAL_DEPTO_RE` — matches "Subtotal Departamento $X"
+  - `_GC_OCR_TOTAL_AMOUNT_RE` — matches "Total del mes / Total a pagar $X"
+  - `_GC_OCR_LAST_PAYMENT_DATE_RE` — matches "Fecha Último Pago … DD-MM-YYYY"
+  - `_GC_OCR_LAST_PAYMENT_AMOUNT_RE` — matches "Monto Último Pago … $X"
+  - `_GC_OCR_LAST_PAYMENT_FOLIO_RE` — matches "Folio Último … NNNNN"
+
+## [1.1.0] - 2026-04-05
+
+### Fixed
+
+- **Gastos Comunes PDF: extraction patterns were tuned exclusively to the
+  reference building, producing wrong values for any second building**
+  (`attribute_extractor.py`):
+
+  The pdfminer-tier regex patterns contained hard-coded assumptions about a
+  single building's bill layout.  Any "Nota de Cobro" PDF from a different
+  building caused nearly all extracted values to be incorrect.
+
+  - **`_GC_AMOUNT_RE`** — alícuota pattern required the fractional digits to
+    start with `9` (i.e. `[O0]\s*9\d{4}\s*%`), restricting matches to
+    alícuotas ≥ 0.9 %.  Buildings with lower alícuotas (e.g. 0.325 %) were
+    silently skipped.
+    **Fix:** changed to `[O0]\s*\d{4,6}\s*%` — accepts any sub-1 % alícuota
+    whose decimal part is 4–6 digits.
+
+  - **`_GC_FONDOS_AMOUNT_RE`** — fondos pattern matched only the 5 % case
+    (garbled by pdfminer as `500 %` or `5,0 %`).  Buildings that provision
+    10 %, 7 %, etc. produced no fondos amount match.
+    **Fix:** changed `5[0,]` to `\d{1,2}[0,]` — accepts any 1–2 digit
+    integer fondos percentage (5 %, 10 %, 7 %, etc.).
+
+  - **`_GC_BUILDING_TOTAL_RE` fallback** — the fallback pattern required the
+    formatted building total to start with `1x` (`1\d[\d.]{6,}`), restricting
+    matches to totals ≥ $10,000,000.  Smaller buildings whose total is in the
+    low millions were never matched by the fallback.
+    **Fix:** changed to `\d[\d.]{8,}` — accepts any formatted CLP amount
+    whose string representation is ≥ 9 characters, corresponding to amounts
+    ≥ $1,000,000.
+
+  - **`_GC_THREE_AMOUNTS_RE` fallback (positional)** — the three-consecutive-
+    amounts fallback (used when individual patterns fail) searched the entire
+    document text with no label context.  If any other section of the PDF
+    happened to contain three consecutive `$` amounts before the breakdown
+    table, those unrelated values were picked up instead of the correct
+    GC / fondos / subtotal figures.
+    **Fix:** the search is now scoped to a window starting at the earliest
+    `alícuota` / `fondos X%` / `Gasto Común` anchor and ending just after the
+    first `Cargo Fijo` or `Subtotal Recargos` label, preventing false-positive
+    matches from other document sections.
+
 ## [1.0.3] - 2026-03-30
 
 ### Fixed
