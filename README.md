@@ -36,7 +36,7 @@
 - 📡 **Per-Service Entity Architecture** (v0.7.0+): Each configured service device
   exposes entities based on service type:
 
-  **Gas (6 entities):**
+  **Gas (7 entities):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -45,9 +45,10 @@
   | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
   | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ |
   | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
-  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
+  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device; recomputes derived sensors as its final step |
+  | `button.concierge_{id}_recalculate` | Button | Configuration | Recomputes formula-derived sensors from already-stored values (no email scan) |
 
-  **Electricity (10 entities):**
+  **Electricity (11 entities):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -60,9 +61,10 @@
   | `sensor.concierge_{id}_electricity_transport` | Sensor | — | Electricity transport charge (`$`) |
   | `sensor.concierge_{id}_stabilization_fund` | Sensor | — | Stabilisation fund charge (`$`) |
   | `sensor.concierge_{id}_electricity_consumption` | Sensor | — | Cost of consumed electricity (`$`) |
-  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
+  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device; recomputes derived sensors as its final step |
+  | `button.concierge_{id}_recalculate` | Button | Configuration | Recomputes formula-derived sensors from already-stored values (no email scan) |
 
-  **Water (15 entities — `cost_per_unit` is replaced by granular sensors):**
+  **Water (16 entities — `cost_per_unit` is replaced by granular sensors):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -80,9 +82,10 @@
   | `sensor.concierge_{id}_wastewater_recolection` | Sensor | — | Wastewater collection charge (`$`) |
   | `sensor.concierge_{id}_wastewater_treatment` | Sensor | — | Wastewater treatment charge (`$`) |
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal before surcharges (`$`) |
-  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
+  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device; recomputes derived sensors as its final step |
+  | `button.concierge_{id}_recalculate` | Button | Configuration | Recomputes formula-derived sensors from already-stored values (no email scan) |
 
-  **Common Expenses (13 entities — includes Hot Water sub-account):**
+  **Common Expenses (14 entities — includes Hot Water sub-account):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
@@ -98,7 +101,8 @@
   | `sensor.concierge_{id}_hot_water_amount` | Sensor | — | Hot Water charge (`$`) — from OCR or derived |
   | `sensor.concierge_{id}_hot_water_prev_reading` | Sensor | — | Hot Water previous meter reading (`m³`) — from OCR |
   | `sensor.concierge_{id}_hot_water_curr_reading` | Sensor | — | Hot Water current meter reading (`m³`) — from OCR |
-  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device |
+  | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device; recomputes derived sensors as its final step |
+  | `button.concierge_{id}_recalculate` | Button | Configuration | Recomputes formula-derived sensors from already-stored values (no email scan) |
 
   > **Hot Water** is a sub-account billed within the Common Expenses PDF,
   > there is no separate email for it.  Its five sensors are
@@ -175,7 +179,50 @@ data:
 Each service device also exposes a `button.concierge_{service_id}_force_refresh` entity
 (category: **Configuration**).  Pressing the button from the device detail page
 (**Settings → Devices & Services → *device name***) triggers the same targeted refresh
-without any scripting or service call.
+without any scripting or service call.  Its final step automatically calls the
+*Recalculate* logic — see below.
+
+---
+
+### `concierge_ha_integration.recalculate`
+
+Recomputes all formula-derived sensors for a Concierge service device using the
+values **already stored** in the coordinator — without opening an IMAP connection
+or downloading any PDF.
+
+Useful after a manual `set_value` correction: instead of waiting for the next
+polling cycle or pressing *Force Refresh*, pressing *Recalculate* immediately
+propagates the corrected input value into all formula sensors (e.g. updating
+`cargo_fijo` instantly recalculates `gc_total = subtotal_departamento + cargo_fijo`).
+
+| Field | Required | Selector | Description |
+|---|---|---|---|
+| `device_id` | ✅ | `device` (integration filter) | The Concierge service device to recalculate. Only devices from this integration are shown. |
+
+> **UI filter** — the device picker automatically filters to show **only** devices that
+> belong to `concierge_ha_integration`.
+
+#### Usage examples
+
+**Developer Tools → Actions:**
+```yaml
+action: concierge_ha_integration.recalculate
+data:
+  device_id: "abc123def456abc123def456"   # HA device registry ID
+```
+
+**Automation / Script:**
+```yaml
+action: concierge_ha_integration.recalculate
+data:
+  device_id: "{{ device_id('sensor.concierge_common_expenses_total') }}"
+```
+
+#### Per-device button entity
+
+Each service device exposes a `button.concierge_{service_id}_recalculate` entity
+(category: **Configuration**).  Pressing it from the device detail page triggers
+the recomputation immediately without any scripting or service call.
 
 ---
 

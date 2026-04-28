@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] - 2026-04-28
+
+### Added
+
+- **`Recalculate` button per service device** (`button.py`, `sensor.py`,
+  `__init__.py`, `strings.json`, `services.yaml`):
+
+  Each service device now exposes a second **Configuration** button entity —
+  `button.concierge_{id}_recalculate` — alongside the existing *Force Refresh*
+  button.
+
+  Pressing *Recalculate* calls the new
+  `ConciergeServicesCoordinator.async_recompute_derived()` method, which:
+
+  1. Reads the attribute values already stored in the coordinator for that
+     service device.
+  2. Re-runs all alias syncs and arithmetic formulas (e.g.
+     `gc_total = subtotal_departamento + cargo_fijo`).
+  3. Logs every changed value at `INFO` level (unchanged recomputation at
+     `DEBUG`).
+  4. Pushes the updated state to all listening entities via
+     `async_set_updated_data`.
+
+  Unlike *Force Refresh*, this button **does not** open an IMAP connection or
+  download any PDF — it only recomputes derived values from data already in
+  memory.  Typical use case: after a manual `set_value` learning override, press
+  *Recalculate* to immediately propagate the corrected input into all formula
+  sensors without waiting for the next polling cycle or triggering a full
+  refresh.
+
+  The same logic is also exposed as a new HA service
+  `concierge_ha_integration.recalculate` (device-picker selector, same
+  interface as `force_refresh`).
+
+- **`force_refresh` now delegates recomputation to `async_recompute_derived`**
+  (`sensor.py`):
+
+  The inline `_recompute_gc_derived_attrs` call that was embedded in
+  `async_refresh_service` has been replaced with
+  `await self.async_recompute_derived(subentry_id)` as the **final step**,
+  after the fresh email/PDF data has already been pushed to the coordinator.
+  This keeps the recomputation logic in one place (the new public method) and
+  means *Force Refresh* always ends with an explicit *Recalculate* pass.
+
 ## [1.2.4] - 2026-04-28
 
 ### Fixed

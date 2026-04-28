@@ -2,13 +2,34 @@ force_refresh:
   name: "Force Refresh"
   description: >
     Forces an immediate email reading and PDF analysis for a single Concierge
-    service device, bypassing the regular polling interval.
+    service device, bypassing the regular polling interval. As its final step
+    it automatically recomputes all formula-derived sensors (equivalent to
+    calling Recalculate afterwards).
   fields:
     device_id:
       name: "Device"
       description: >
         The Concierge service device to refresh. Only devices belonging to the
         Concierge HA Integration are shown.
+      required: true
+      selector:
+        device:
+          integration: concierge_ha_integration
+
+recalculate:
+  name: "Recalculate"
+  description: >
+    Recomputes all formula-derived sensors (e.g. Total = Subtotal + Fixed
+    Charge) for a Concierge service device using the values already stored in
+    the coordinator. Does NOT scan the mailbox or download any PDF. Useful
+    after a manual set_value override to immediately propagate the corrected
+    input value into all formula sensors.
+  fields:
+    device_id:
+      name: "Device"
+      description: >
+        The Concierge service device to recalculate. Only devices belonging to
+        the Concierge HA Integration are shown.
       required: true
       selector:
         device:

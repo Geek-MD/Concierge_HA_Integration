@@ -110,11 +110,21 @@
   "services": {
     "force_refresh": {
       "name": "Force Refresh",
-      "description": "Forces an immediate email reading and PDF analysis for a single Concierge service device, bypassing the regular polling interval.",
+      "description": "Forces an immediate email reading and PDF analysis for a single Concierge service device, bypassing the regular polling interval. As its final step it automatically recomputes all formula-derived sensors.",
       "fields": {
         "device_id": {
           "name": "Device",
           "description": "The Concierge service device to refresh. Only devices from the Concierge HA Integration are shown."
+        }
+      }
+    },
+    "recalculate": {
+      "name": "Recalculate",
+      "description": "Recomputes all formula-derived sensors (e.g. Total = Subtotal + Fixed Charge) for a Concierge service device using the values already stored in the coordinator — without scanning the mailbox or downloading any PDF.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Concierge service device to recalculate. Only devices from the Concierge HA Integration are shown."
         }
       }
     },

@@ -523,6 +523,76 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             attrs["gc_total"] = subtotal_val + cargo_val
             confidence["gc_total"] = CONF_SCORE_DERIVED
 
+    async def async_recompute_derived(self, subentry_id: str) -> None:
+        """Recompute all formula-derived attributes for a single service subentry.
+
+        Reads the current coordinator data for *subentry_id*, runs
+        :meth:`_recompute_gc_derived_attrs` on the extracted attributes in-place,
+        and pushes the updated state to all listening entities via
+        :meth:`async_set_updated_data`.
+
+        This method is the single authoritative place for derived-attribute
+        recomputation.  It is called:
+
+        - As the **final step** of :meth:`async_refresh_service` after the fresh
+          email/PDF data has already been stored in the coordinator — ensuring
+          formula sensors (e.g. ``gc_total = subtotal_departamento + cargo_fijo``)
+          always reflect the latest extracted values.
+        - Directly by the per-device **Recalculate** button entity, so users can
+          trigger a recomputation without a full email re-scan (e.g. after a
+          manual ``set_value`` override or when they suspect a derived sensor is
+          stale).
+
+        All changes are logged at ``INFO`` level; an unchanged recomputation is
+        logged at ``DEBUG`` level.
+        """
+        if self.data is None:
+            _LOGGER.warning(
+                "Concierge Services: recompute_derived called but coordinator "
+                "data is None — subentry=%s — skipping",
+                subentry_id,
+            )
+            return
+
+        service_data = self.data.get("services", {}).get(subentry_id)
+        if service_data is None:
+            _LOGGER.warning(
+                "Concierge Services: recompute_derived called but no data "
+                "found for subentry=%s — skipping",
+                subentry_id,
+            )
+            return
+
+        attrs = service_data.get("attributes", {})
+
+        # Snapshot current non-metadata values so we can log only what changed.
+        before = {k: attrs[k] for k in attrs if not k.startswith("_")}
+
+        self._recompute_gc_derived_attrs(attrs)
+
+        changed = {
+            k: attrs[k]
+            for k in attrs
+            if not k.startswith("_")
+            and (k not in before or before[k] != attrs[k])
+        }
+
+        if changed:
+            _LOGGER.info(
+                "Concierge Services: derived attributes recomputed — "
+                "subentry=%s, changes: %s",
+                subentry_id,
+                ", ".join(f"{k}={v!r}" for k, v in changed.items()),
+            )
+        else:
+            _LOGGER.debug(
+                "Concierge Services: derived attributes recomputed — "
+                "subentry=%s, no changes",
+                subentry_id,
+            )
+
+        self.async_set_updated_data(self.data)
+
     def _apply_learning_overrides(
         self, attrs: dict[str, Any], subentry_id: str
     ) -> None:
@@ -719,38 +789,25 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ", ".join(f"{k}={extracted_attrs[k]!r}" for k in attr_keys) if attr_keys else "(none)",
         )
 
-        # ------------------------------------------------------------------
-        # Step 4 — Recompute formula-derived attributes (e.g. gc_total).
-        #
-        # Learning overrides are applied during extraction (inside
-        # _fetch_single_service_data → _apply_learning_overrides), but
-        # _recompute_gc_derived_attrs is NOT called there.  Running it here
-        # ensures that calculated fields (e.g. gc_total = subtotal_departamento
-        # + cargo_fijo) always reflect the most current values — including any
-        # override that was applied for one of their inputs — before the new
-        # state is pushed to the listening entities.
-        # ------------------------------------------------------------------
-        self._recompute_gc_derived_attrs(extracted_attrs)
-
-        derived_keys = [k for k in extracted_attrs if not k.startswith("_") and k not in attr_keys]
-        if derived_keys:
-            _LOGGER.info(
-                "Concierge Services [%s]: derived attributes recomputed after "
-                "force refresh — %s",
-                service_name,
-                ", ".join(
-                    f"{k}={extracted_attrs[k]!r}" for k in derived_keys
-                ),
-            )
-
         self._manage_ocr_repair_issue()
-        # Replace the service entry and notify all listening entities.
+        # Replace the service entry and push state to all listening entities.
         current: dict[str, Any] = (
             self.data if self.data is not None
             else {"connection_status": "OK", "services": {}}
         )
         current.setdefault("services", {})[subentry_id] = result
         self.async_set_updated_data(current)
+
+        # ------------------------------------------------------------------
+        # Step 4 — Recompute formula-derived attributes (e.g. gc_total).
+        #
+        # Delegated to async_recompute_derived so the recomputation logic
+        # lives in one place and the Recalculate button can call it
+        # independently.  async_recompute_derived reads from self.data (which
+        # was just updated above) and issues a second async_set_updated_data
+        # push with the final derived values.
+        # ------------------------------------------------------------------
+        await self.async_recompute_derived(subentry_id)
         _LOGGER.info(
             "Concierge Services [%s]: sensor states updated from force refresh "
             "(subentry=%s)",
