@@ -57,7 +57,11 @@ from .attribute_extractor import (
     _strip_html,
 )
 from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
-from .service_detector import classify_service_type, normalize_service_id
+from .service_detector import (
+    SERVICE_PATTERNS,
+    classify_service_type,
+    normalize_service_id,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -788,7 +792,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     if self._matches_service(
                         service_id_raw, service_name, sample_from, sample_subject,
-                        from_addr, subject, body,
+                        from_addr, subject, body, service_type,
                     ):
                         if date_header:
                             try:
@@ -975,6 +979,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         from_addr: str,
         subject: str,
         body: str,
+        service_type: str = SERVICE_TYPE_UNKNOWN,
     ) -> bool:
         """Check if email matches a service based on flexible patterns."""
         combined_text = f"{from_addr} {subject} {body}".lower()
@@ -1016,6 +1021,20 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ]
             if unique_words and any(w in combined_text for w in unique_words):
                 return True
+
+        # Fallback: match using the canonical SERVICE_PATTERNS for this service
+        # type.  This handles forwarded emails (e.g. via Gmail) where the sender
+        # domain is a generic webmail provider — so the domain check is skipped —
+        # and the service_name / service_id are stored in English while the email
+        # body is in Spanish (e.g. "Gastos Comunes", "Aguas Andinas").  If any
+        # pattern associated with the configured service_type matches the email
+        # content, consider it a match.
+        if service_type and service_type != SERVICE_TYPE_UNKNOWN:
+            for pattern, _name, svc_type in SERVICE_PATTERNS:
+                if svc_type == service_type and re.search(
+                    pattern, combined_text, re.IGNORECASE
+                ):
+                    return True
 
         return False
 
