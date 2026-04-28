@@ -1,0 +1,152 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurar Concierge Services",
+        "description": "Insira as credenciais do e-mail IMAP onde recebe as contas de serviço (eletricidade, água, gás, etc.)",
+        "data": {
+          "imap_server": "Servidor IMAP",
+          "imap_port": "Porta IMAP",
+          "email": "Endereço de e-mail",
+          "password": "Senha"
+        },
+        "data_description": {
+          "imap_server": "Exemplo: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
+          "imap_port": "Porta padrão para conexões IMAP seguras",
+          "email": "Exemplo: usuario@gmail.com",
+          "password": "Use uma senha de aplicativo para Gmail e Yahoo"
+        }
+      },
+      "finalize": {
+        "title": "Finalizar configuração",
+        "description": "Defina um nome amigável para esta conta de e-mail ({email})",
+        "data": {
+          "friendly_name": "Nome amigável",
+          "ocrspace_api_key": "Chave API do OCR.space"
+        },
+        "data_description": {
+          "friendly_name": "Um nome descritivo para esta conta de e-mail",
+          "ocrspace_api_key": "Chave API gratuita de ocr.space/OCRAPI. Usada para extração OCR de Água Quente. Deixe em branco para ignorar o OCR."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Falha ao conectar ao servidor IMAP",
+      "invalid_auth": "Autenticação inválida",
+      "unknown": "Erro inesperado"
+    },
+    "abort": {
+      "already_configured": "Esta integração já está configurada. Use o botão CONFIGURAR para atualizar as configurações.",
+      "single_instance_allowed": "Apenas uma instância do Concierge Services é permitida."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Reconfigurar Concierge Services",
+        "description": "Atualize as credenciais do e-mail IMAP",
+        "data": {
+          "imap_server": "Servidor IMAP",
+          "imap_port": "Porta IMAP",
+          "email": "Endereço de e-mail",
+          "password": "Senha",
+          "friendly_name": "Nome amigável",
+          "ocrspace_api_key": "Chave API do OCR.space"
+        },
+        "data_description": {
+          "imap_server": "Exemplo: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
+          "imap_port": "Porta padrão para conexões IMAP seguras",
+          "email": "Exemplo: usuario@gmail.com",
+          "password": "Use uma senha de aplicativo para Gmail e Yahoo",
+          "friendly_name": "Um nome descritivo para esta conta de e-mail",
+          "ocrspace_api_key": "Chave API gratuita de ocr.space/OCRAPI. Usada para extração OCR de Água Quente. Deixe em branco para ignorar o OCR."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Falha ao conectar ao servidor IMAP",
+      "invalid_auth": "Autenticação inválida",
+      "unknown": "Erro inesperado"
+    }
+  },
+  "config_subentries": {
+    "service": {
+      "initiate_flow": {
+        "user": "Adicionar dispositivo de serviço",
+        "discovery": "Dispositivo de serviço detectado"
+      },
+      "entry_type": "Dispositivo de serviço",
+      "step": {
+        "user": {
+          "title": "Adicionar dispositivo de serviço",
+          "description": "Encontrada(s) {count} conta(s) de serviço disponível(is) para adicionar. Selecione qual deseja configurar como dispositivo:",
+          "data": {
+            "service_id": "Serviço"
+          }
+        },
+        "discovery_confirm": {
+          "title": "Detectado: {service_name}",
+          "description": "{service_name} foi detectado na caixa de entrada ({email_count} e-mail(s)). Deseja adicioná-lo como dispositivo de serviço?"
+        },
+        "reconfigure": {
+          "title": "Reconfigurar {service_name}",
+          "description": "Atualize as configurações deste dispositivo de serviço",
+          "data": {
+            "service_name": "Nome do serviço"
+          }
+        }
+      },
+      "error": {
+        "service_not_found": "O serviço selecionado não foi encontrado. Por favor, tente novamente."
+      },
+      "abort": {
+        "already_configured": "Esta conta de serviço já está configurada.",
+        "detection_failed": "Falha ao verificar a caixa de entrada em busca de serviços. Verifique suas credenciais de e-mail.",
+        "no_services_available": "Nenhuma nova conta de serviço foi encontrada na caixa de entrada. Todos os serviços detectados podem já estar configurados.",
+        "subentry_added": "Dispositivo de serviço adicionado com sucesso."
+      }
+    }
+  },
+  "services": {
+    "force_refresh": {
+      "name": "Forçar atualização",
+      "description": "Força a leitura imediata de e-mails e análise de PDF para um dispositivo de serviço Concierge específico, ignorando o intervalo de sondagem regular. Como último passo, recalcula automaticamente todos os sensores derivados de fórmulas.",
+      "fields": {
+        "device_id": {
+          "name": "Dispositivo",
+          "description": "O dispositivo de serviço Concierge a atualizar. Apenas os dispositivos pertencentes à integração Concierge HA são exibidos."
+        }
+      }
+    },
+    "recalculate": {
+      "name": "Recalcular",
+      "description": "Recalcula todos os sensores derivados de fórmulas (ex. Total = Subtotal + Tarifa fixa) para um dispositivo de serviço Concierge usando os valores já armazenados no coordenador, sem verificar o e-mail nem baixar nenhum PDF.",
+      "fields": {
+        "device_id": {
+          "name": "Dispositivo",
+          "description": "O dispositivo de serviço Concierge a recalcular. Apenas os dispositivos pertencentes à integração Concierge HA são exibidos."
+        }
+      }
+    },
+    "set_value": {
+      "name": "Definir valor (correção de aprendizado)",
+      "description": "Força um valor específico para um atributo de uma entidade de serviço Concierge e o persiste como correção de aprendizado. O valor é aplicado imediatamente e após cada análise futura de e-mail/PDF. Os sensores derivados de fórmulas (ex. Total = Subtotal + Tarifa fixa) são recalculados automaticamente. Apenas uma entidade pode ser selecionada por vez.",
+      "fields": {
+        "attribute": {
+          "name": "Atributo",
+          "description": "A chave de atributo interno a sobrescrever (ex. 'fixed_charge', 'gastos_comunes_amount'). Se omitida, a chave é inferida automaticamente da entidade selecionada."
+        },
+        "value": {
+          "name": "Valor",
+          "description": "O valor numérico correto para o atributo (ex. 9638)."
+        }
+      }
+    }
+  },
+  "issues": {
+    "ocr_unavailable": {
+      "title": "Chave API do OCR.space não configurada — sensores de Água Quente indisponíveis",
+      "description": "Nenhuma **chave API do OCR.space** está configurada. Os cinco sensores de **Água Quente** (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) permanecerão vazios até que uma chave seja definida.\n\n**Para resolver**, registre-se para obter uma chave gratuita em [ocr.space/OCRAPI]({ocrspace_url}) e insira-a nas opções da integração (**Chave API do OCR.space**).\n\nEste problema é resolvido automaticamente assim que o OCR funcionar e uma nova fatura de Gastos Comunes for processada."
+    }
+  }
+}

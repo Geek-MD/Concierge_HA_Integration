@@ -1,0 +1,152 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Concierge Services konfigurieren",
+        "description": "Geben Sie die IMAP-Zugangsdaten des E-Mail-Kontos ein, über das Sie Ihre Dienstleistungsrechnungen (Strom, Wasser, Gas usw.) erhalten.",
+        "data": {
+          "imap_server": "IMAP-Server",
+          "imap_port": "IMAP-Port",
+          "email": "E-Mail-Adresse",
+          "password": "Passwort"
+        },
+        "data_description": {
+          "imap_server": "Beispiel: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
+          "imap_port": "Standardport für sichere IMAP-Verbindungen",
+          "email": "Beispiel: benutzer@gmail.com",
+          "password": "Verwenden Sie ein App-Passwort für Gmail und Yahoo"
+        }
+      },
+      "finalize": {
+        "title": "Konfiguration abschließen",
+        "description": "Legen Sie einen Anzeigenamen für dieses E-Mail-Konto fest ({email})",
+        "data": {
+          "friendly_name": "Anzeigename",
+          "ocrspace_api_key": "OCR.space API-Schlüssel"
+        },
+        "data_description": {
+          "friendly_name": "Ein beschreibender Name für dieses E-Mail-Konto",
+          "ocrspace_api_key": "Kostenloser API-Schlüssel von ocr.space/OCRAPI. Wird für die OCR-Extraktion von Warmwasser verwendet. Leer lassen, um OCR zu überspringen."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum IMAP-Server fehlgeschlagen",
+      "invalid_auth": "Ungültige Authentifizierung",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "already_configured": "Diese Integration ist bereits konfiguriert. Verwenden Sie die Schaltfläche KONFIGURIEREN, um die Einstellungen zu aktualisieren.",
+      "single_instance_allowed": "Es ist nur eine Instanz von Concierge Services erlaubt."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Concierge Services neu konfigurieren",
+        "description": "IMAP-Zugangsdaten aktualisieren",
+        "data": {
+          "imap_server": "IMAP-Server",
+          "imap_port": "IMAP-Port",
+          "email": "E-Mail-Adresse",
+          "password": "Passwort",
+          "friendly_name": "Anzeigename",
+          "ocrspace_api_key": "OCR.space API-Schlüssel"
+        },
+        "data_description": {
+          "imap_server": "Beispiel: imap.gmail.com, outlook.office365.com, imap.mail.yahoo.com",
+          "imap_port": "Standardport für sichere IMAP-Verbindungen",
+          "email": "Beispiel: benutzer@gmail.com",
+          "password": "Verwenden Sie ein App-Passwort für Gmail und Yahoo",
+          "friendly_name": "Ein beschreibender Name für dieses E-Mail-Konto",
+          "ocrspace_api_key": "Kostenloser API-Schlüssel von ocr.space/OCRAPI. Wird für die OCR-Extraktion von Warmwasser verwendet. Leer lassen, um OCR zu überspringen."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum IMAP-Server fehlgeschlagen",
+      "invalid_auth": "Ungültige Authentifizierung",
+      "unknown": "Unerwarteter Fehler"
+    }
+  },
+  "config_subentries": {
+    "service": {
+      "initiate_flow": {
+        "user": "Servicegerät hinzufügen",
+        "discovery": "Servicegerät erkannt"
+      },
+      "entry_type": "Servicegerät",
+      "step": {
+        "user": {
+          "title": "Servicegerät hinzufügen",
+          "description": "{count} Dienstkonto/Dienstkonten zum Hinzufügen gefunden. Wählen Sie aus, welches als Gerät konfiguriert werden soll:",
+          "data": {
+            "service_id": "Dienst"
+          }
+        },
+        "discovery_confirm": {
+          "title": "Erkannt: {service_name}",
+          "description": "{service_name} wurde im Posteingang gefunden ({email_count} E-Mail(s)). Möchten Sie es als Servicegerät hinzufügen?"
+        },
+        "reconfigure": {
+          "title": "{service_name} neu konfigurieren",
+          "description": "Einstellungen dieses Servicegeräts aktualisieren",
+          "data": {
+            "service_name": "Dienstname"
+          }
+        }
+      },
+      "error": {
+        "service_not_found": "Der ausgewählte Dienst wurde nicht gefunden. Bitte versuchen Sie es erneut."
+      },
+      "abort": {
+        "already_configured": "Dieses Dienstkonto ist bereits konfiguriert.",
+        "detection_failed": "Der Posteingang konnte nicht nach Diensten durchsucht werden. Überprüfen Sie Ihre E-Mail-Zugangsdaten.",
+        "no_services_available": "Im Posteingang wurden keine neuen Dienstkonten gefunden. Alle erkannten Dienste sind möglicherweise bereits konfiguriert.",
+        "subentry_added": "Servicegerät erfolgreich hinzugefügt."
+      }
+    }
+  },
+  "services": {
+    "force_refresh": {
+      "name": "Aktualisierung erzwingen",
+      "description": "Erzwingt das sofortige Lesen von E-Mails und die PDF-Analyse für ein bestimmtes Concierge-Servicegerät und umgeht das reguläre Abfrageintervall. Als letzten Schritt werden automatisch alle formelbasierten Sensoren neu berechnet.",
+      "fields": {
+        "device_id": {
+          "name": "Gerät",
+          "description": "Das zu aktualisierende Concierge-Servicegerät. Es werden nur Geräte der Concierge HA Integration angezeigt."
+        }
+      }
+    },
+    "recalculate": {
+      "name": "Neu berechnen",
+      "description": "Berechnet alle formelbasierten Sensoren (z. B. Gesamt = Zwischensumme + Grundgebühr) für ein Concierge-Servicegerät neu und verwendet die bereits im Koordinator gespeicherten Werte — ohne das Postfach zu scannen oder ein PDF herunterzuladen.",
+      "fields": {
+        "device_id": {
+          "name": "Gerät",
+          "description": "Das neu zu berechnende Concierge-Servicegerät. Es werden nur Geräte der Concierge HA Integration angezeigt."
+        }
+      }
+    },
+    "set_value": {
+      "name": "Wert setzen (Lernkorrektur)",
+      "description": "Erzwingt einen bestimmten Wert für ein Attribut einer Concierge-Dienstentität und speichert ihn als Lernkorrektur. Der Wert wird sofort und nach jeder zukünftigen E-Mail/PDF-Analyse angewendet. Formelbasierte Sensoren (z. B. Gesamt = Zwischensumme + Grundgebühr) werden automatisch neu berechnet. Es kann jeweils nur eine Entität ausgewählt werden.",
+      "fields": {
+        "attribute": {
+          "name": "Attribut",
+          "description": "Der interne Attributschlüssel, der überschrieben werden soll (z. B. 'fixed_charge', 'gastos_comunes_amount'). Wird er weggelassen, wird der Schlüssel automatisch aus der ausgewählten Entität abgeleitet."
+        },
+        "value": {
+          "name": "Wert",
+          "description": "Der korrekte numerische Wert für das Attribut (z. B. 9638)."
+        }
+      }
+    }
+  },
+  "issues": {
+    "ocr_unavailable": {
+      "title": "OCR.space API-Schlüssel nicht konfiguriert — Warmwasser-Sensoren nicht verfügbar",
+      "description": "Es ist kein **OCR.space API-Schlüssel** konfiguriert. Die fünf **Warmwasser**-Sensoren (`hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`, `hot_water_prev_reading`, `hot_water_curr_reading`) bleiben leer, bis ein Schlüssel eingestellt wird.\n\n**So beheben Sie das Problem:** Registrieren Sie sich für einen kostenlosen Schlüssel auf [ocr.space/OCRAPI]({ocrspace_url}) und tragen Sie ihn in den Integrationsoptionen ein (**OCR.space API-Schlüssel**).\n\nDieses Problem wird automatisch behoben, sobald OCR funktioniert und eine neue Gastos-Comunes-Rechnung verarbeitet wird."
+    }
+  }
+}
