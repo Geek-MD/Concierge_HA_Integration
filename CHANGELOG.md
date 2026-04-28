@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The call site in the coordinator's `_async_update_data` loop passes
     `service_type` to `_matches_service`.
 
+## [1.2.0] - 2026-04-06
 
 ### Added
 
