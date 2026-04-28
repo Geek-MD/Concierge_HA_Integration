@@ -1702,6 +1702,71 @@ def _download_first_valid_pdf(
     return None
 
 
+def delete_service_pdfs(pdf_dir: str, service_id: str) -> list[str]:
+    """Delete all cached PDF files for *service_id* from *pdf_dir*.
+
+    Files are matched by a ``{service_id}_`` prefix (case-insensitive) so that
+    every billing PDF cached for this service device is removed regardless of
+    the billing period or folio encoded in the filename.
+
+    This is called by the *force_refresh* flow immediately before the IMAP
+    scan so that the downloader always fetches a fresh copy from the email
+    rather than reusing a potentially stale or corrupted on-disk file.
+
+    Args:
+        pdf_dir:    Directory that stores the cached PDF files.
+        service_id: Normalised slug identifying the service (e.g. ``aguas_andinas``).
+
+    Returns:
+        List of absolute paths that were successfully deleted.
+    """
+    deleted: list[str] = []
+
+    if not os.path.isdir(pdf_dir):
+        _LOGGER.info(
+            "Concierge Services: PDF directory '%s' does not exist — "
+            "nothing to delete for service '%s'",
+            pdf_dir,
+            service_id,
+        )
+        return deleted
+
+    prefix = f"{service_id}_".lower()
+
+    for fname in os.listdir(pdf_dir):
+        if not fname.lower().endswith(".pdf"):
+            continue
+        if not fname.lower().startswith(prefix):
+            continue
+        fpath = os.path.join(pdf_dir, fname)
+        try:
+            os.remove(fpath)
+            _LOGGER.info(
+                "Concierge Services: deleted cached PDF '%s' for service '%s' "
+                "(force refresh)",
+                fpath,
+                service_id,
+            )
+            deleted.append(fpath)
+        except OSError as err:
+            _LOGGER.warning(
+                "Concierge Services: could not delete cached PDF '%s' for "
+                "service '%s': %s",
+                fpath,
+                service_id,
+                err,
+            )
+
+    if not deleted:
+        _LOGGER.info(
+            "Concierge Services: no cached PDFs found for service '%s' in '%s'",
+            service_id,
+            pdf_dir,
+        )
+
+    return deleted
+
+
 def purge_old_pdfs(pdf_dir: str, max_age_days: int = 365) -> int:
     """Delete ``.pdf`` files in *pdf_dir* that are older than *max_age_days*.
 

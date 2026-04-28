@@ -41,6 +41,9 @@ SERVICE_FORCE_REFRESH = "force_refresh"
 # HA service name for the learning-override action
 SERVICE_SET_VALUE = "set_value"
 
+# HA service name for the derived-attribute recomputation action
+SERVICE_RECALCULATE = "recalculate"
+
 # Field name passed in the service call data
 _ATTR_DEVICE_ID = "device_id"
 _ATTR_ENTITY_ID = "entity_id"
@@ -48,6 +51,10 @@ _ATTR_ATTRIBUTE = "attribute"
 _ATTR_VALUE = "value"
 
 _SERVICE_FORCE_REFRESH_SCHEMA = vol.Schema(
+    {vol.Required(_ATTR_DEVICE_ID): cv.string}
+)
+
+_SERVICE_RECALCULATE_SCHEMA = vol.Schema(
     {vol.Required(_ATTR_DEVICE_ID): cv.string}
 )
 
@@ -319,6 +326,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # entry so it is automatically removed when the entry is unloaded.
     _async_register_force_refresh_service(hass, entry)
 
+    # Register the recalculate (derived-attribute recomputation) service.
+    _async_register_recalculate_service(hass, entry)
+
     # Register the set_value (learning-override) service.
     _async_register_set_value_service(hass, entry)
 
@@ -409,6 +419,71 @@ def _async_register_force_refresh_service(
     )
     entry.async_on_unload(
         lambda: hass.services.async_remove(DOMAIN, SERVICE_FORCE_REFRESH)
+    )
+
+
+@callback
+def _async_register_recalculate_service(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Register the ``recalculate`` service and schedule its removal on unload.
+
+    The service recomputes all formula-derived attributes (e.g.
+    ``gc_total = subtotal_departamento + cargo_fijo``) for a Concierge service
+    device **without** triggering a new IMAP scan or PDF download.  It is
+    equivalent to pressing the per-device *Recalculate* button.
+
+    The service is registered only once (guarded by ``has_service``).
+    """
+    if hass.services.has_service(DOMAIN, SERVICE_RECALCULATE):
+        return
+
+    async def _handle_recalculate(service_call: ServiceCall) -> None:
+        """Recompute derived attributes for a Concierge service device.
+
+        The caller must pass ``device_id`` — the HA device registry ID of a
+        Concierge service device.  The handler locates the matching subentry
+        and asks the coordinator to recompute the derived attributes for that
+        service only.
+        """
+        device_id: str = service_call.data[_ATTR_DEVICE_ID]
+        dev_reg = dr.async_get(hass)
+
+        for entry_id, entry_data in hass.data.get(DOMAIN, {}).items():
+            coordinator: ConciergeServicesCoordinator | None = entry_data.get(
+                "coordinator"
+            )
+            if coordinator is None:
+                continue
+            config_entry = hass.config_entries.async_get_entry(entry_id)
+            if config_entry is None:
+                continue
+            for sub_id in config_entry.subentries:  # type: ignore[attr-defined]
+                sub_device = dev_reg.async_get_device(
+                    identifiers={(DOMAIN, f"{entry_id}_{sub_id}")}
+                )
+                if sub_device is not None and sub_device.id == device_id:
+                    _LOGGER.info(
+                        "Concierge Services: recalculate requested for "
+                        "device %s (subentry %s)",
+                        device_id,
+                        sub_id,
+                    )
+                    await coordinator.async_recompute_derived(sub_id)
+                    return
+
+        raise HomeAssistantError(
+            f"Device '{device_id}' is not a Concierge HA Integration service device."
+        )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RECALCULATE,
+        _handle_recalculate,
+        schema=_SERVICE_RECALCULATE_SCHEMA,
+    )
+    entry.async_on_unload(
+        lambda: hass.services.async_remove(DOMAIN, SERVICE_RECALCULATE)
     )
 
 

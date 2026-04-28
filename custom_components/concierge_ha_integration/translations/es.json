@@ -110,11 +110,21 @@
   "services": {
     "force_refresh": {
       "name": "Forzar Actualización",
-      "description": "Fuerza la lectura inmediata de correos electrónicos y el análisis de PDF para un dispositivo de servicio específico, omitiendo el intervalo de sondeo regular.",
+      "description": "Fuerza la lectura inmediata de correos electrónicos y el análisis de PDF para un dispositivo de servicio específico, omitiendo el intervalo de sondeo regular. Como último paso, recalcula automáticamente todos los sensores derivados de fórmulas.",
       "fields": {
         "device_id": {
           "name": "Dispositivo",
           "description": "El dispositivo de servicio Concierge a actualizar. Solo se muestran los dispositivos pertenecientes a la integración Concierge HA."
+        }
+      }
+    },
+    "recalculate": {
+      "name": "Recalcular",
+      "description": "Recalcula todos los sensores derivados de fórmulas (p.ej. Total = Subtotal + Cargo Fijo) para un dispositivo de servicio Concierge usando los valores ya almacenados en el coordinador, sin escanear el correo ni descargar ningún PDF.",
+      "fields": {
+        "device_id": {
+          "name": "Dispositivo",
+          "description": "El dispositivo de servicio Concierge a recalcular. Solo se muestran los dispositivos pertenecientes a la integración Concierge HA."
         }
       }
     },
