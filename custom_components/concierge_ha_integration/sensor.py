@@ -790,10 +790,28 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     subject = self._decode_mime_words(subject_header)
                     body = self._get_email_body(msg)
 
-                    if self._matches_service(
+                    _LOGGER.debug(
+                        "Concierge Services [%s]: evaluating email — from='%s', subject='%s'",
+                        service_name,
+                        from_addr,
+                        subject,
+                    )
+
+                    match_strategy = self._matches_service(
                         service_id_raw, service_name, sample_from, sample_subject,
                         from_addr, subject, body, service_type,
-                    ):
+                    )
+
+                    if match_strategy:
+                        _LOGGER.info(
+                            "Concierge Services [%s]: email matched via strategy '%s' — "
+                            "from='%s', subject='%s', date='%s'",
+                            service_name,
+                            match_strategy,
+                            from_addr,
+                            subject,
+                            date_header,
+                        )
                         if date_header:
                             try:
                                 email_date = parsedate_to_datetime(date_header)
@@ -801,6 +819,28 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 latest_attributes = extract_attributes_from_email_body(
                                     subject, body, service_type
                                 )
+
+                                # Log attributes extracted from the email body
+                                body_attr_keys = [
+                                    k for k in latest_attributes if not k.startswith("_")
+                                ]
+                                if body_attr_keys:
+                                    _LOGGER.info(
+                                        "Concierge Services [%s]: attributes extracted from "
+                                        "email body — %s",
+                                        service_name,
+                                        ", ".join(
+                                            f"{k}={latest_attributes[k]!r}"
+                                            for k in body_attr_keys
+                                        ),
+                                    )
+                                else:
+                                    _LOGGER.debug(
+                                        "Concierge Services [%s]: no attributes extracted "
+                                        "from email body",
+                                        service_name,
+                                    )
+
                                 # Attempt to download (or locate) the bill PDF
                                 try:
                                     pdf_path = download_pdf_from_email(
@@ -812,6 +852,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     )
                                     if pdf_path:
                                         latest_attributes["pdf_path"] = pdf_path
+                                        _LOGGER.info(
+                                            "Concierge Services [%s]: PDF found at '%s' — "
+                                            "extracting additional attributes",
+                                            service_name,
+                                            pdf_path,
+                                        )
                                         # Extract additional attributes from the
                                         # PDF (e.g. consumption for Metrogas).
                                         # PDF values override email-derived values.
@@ -821,6 +867,27 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             self._cfg.get(CONF_OCRSPACE_API_KEY, ""),
                                         )
                                         latest_attributes.update(pdf_attrs)
+
+                                        pdf_attr_keys = [
+                                            k for k in pdf_attrs if not k.startswith("_")
+                                        ]
+                                        if pdf_attr_keys:
+                                            _LOGGER.info(
+                                                "Concierge Services [%s]: attributes extracted "
+                                                "from PDF — %s",
+                                                service_name,
+                                                ", ".join(
+                                                    f"{k}={pdf_attrs[k]!r}"
+                                                    for k in pdf_attr_keys
+                                                ),
+                                            )
+                                        else:
+                                            _LOGGER.debug(
+                                                "Concierge Services [%s]: no attributes "
+                                                "extracted from PDF",
+                                                service_name,
+                                            )
+
                                         # For PDF-only services (common_expenses,
                                         # hot_water) the email Date header reflects
                                         # when the administrator forwarded the bill,
@@ -851,8 +918,20 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                                         second=0,
                                                         tzinfo=dt_util.DEFAULT_TIME_ZONE,
                                                     )
+                                                    _LOGGER.info(
+                                                        "Concierge Services [%s]: last_updated "
+                                                        "overridden with PDF emission date '%s'",
+                                                        service_name,
+                                                        emission_str,
+                                                    )
                                                 except ValueError:
                                                     pass
+                                    else:
+                                        _LOGGER.debug(
+                                            "Concierge Services [%s]: no PDF attachment found "
+                                            "in matching email",
+                                            service_name,
+                                        )
                                 except Exception as pdf_err:
                                     _LOGGER.warning(
                                         "PDF download failed for service '%s': %s",
@@ -860,7 +939,16 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     )
                             except Exception:
                                 pass
+                    else:
+                        _LOGGER.debug(
+                            "Concierge Services [%s]: email did not match — "
+                            "from='%s', subject='%s'",
+                            service_name,
+                            from_addr,
+                            subject,
+                        )
 
+                    if match_strategy:
                         # Only analyse the single most-recent matching email.
                         # Emails are iterated newest-first (reversed), so the
                         # first match is always the most recent one.
@@ -980,35 +1068,40 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         subject: str,
         body: str,
         service_type: str = SERVICE_TYPE_UNKNOWN,
-    ) -> bool:
-        """Check if email matches a service based on flexible patterns."""
+    ) -> str | None:
+        """Check if email matches a service based on flexible patterns.
+
+        Returns the name of the matching strategy (a non-empty string) when the
+        email is accepted, or ``None`` when no strategy fires.  The strategy name
+        is used by callers to log which detection path triggered the match.
+        """
         combined_text = f"{from_addr} {subject} {body}".lower()
 
-        # Match by sender domain from sample_from (skip generic webmail providers)
+        # Strategy 1 – Match by sender domain from sample_from (skip generic webmail providers)
         if sample_from:
             domain_match = re.search(r'@([a-zA-Z0-9\-]+)\.[a-zA-Z]+', sample_from)
             if domain_match:
                 domain = domain_match.group(1).lower()
                 if domain not in _GENERIC_WEBMAIL_DOMAINS and domain in from_addr.lower():
-                    return True
+                    return "sender-domain"
 
-        # Match by service name keywords (only when there are significant words)
+        # Strategy 2 – Match by service name keywords (only when there are significant words)
         if service_name:
             words = service_name.lower().split()
             significant_words = [w for w in words if len(w) > 3]
             if significant_words:
                 matches = sum(1 for word in significant_words if word in combined_text)
                 if matches >= len(significant_words):
-                    return True
+                    return "service-name-keywords"
 
-        # Match by service_id pattern using whole-word boundaries so that a
+        # Strategy 3 – Match by service_id pattern using whole-word boundaries so that a
         # short service ID such as "gas" does not spuriously match words that
         # merely contain it as a substring (e.g. "Gastos Comunes").
         service_pattern = r'\b' + service_id.replace('_', r'.*') + r'\b'
         if re.search(service_pattern, combined_text, re.IGNORECASE):
-            return True
+            return "service-id-pattern"
 
-        # Match by unique keywords from sample_subject.
+        # Strategy 4 – Match by unique keywords from sample_subject.
         # This covers forwarded emails where the From domain is a generic webmail
         # provider (e.g. Gmail).  We extract alphabetic words that are specific to
         # the service (filtering out generic billing terms and month names) and
@@ -1020,9 +1113,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if w.lower() not in _SUBJECT_SKIP_WORDS
             ]
             if unique_words and any(w in combined_text for w in unique_words):
-                return True
+                return "sample-subject-keywords"
 
-        # Fallback: match using the canonical SERVICE_PATTERNS for this service
+        # Strategy 5 (fallback) – Match using the canonical SERVICE_PATTERNS for this service
         # type.  This handles forwarded emails (e.g. via Gmail) where the sender
         # domain is a generic webmail provider — so the domain check is skipped —
         # and the service_name / service_id are stored in English while the email
@@ -1034,9 +1127,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if svc_type == service_type and re.search(
                     pattern, combined_text, re.IGNORECASE
                 ):
-                    return True
+                    return "service-type-pattern-fallback"
 
-        return False
+        return None
 
 
 class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):
