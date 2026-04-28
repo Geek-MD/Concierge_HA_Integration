@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-04-28
+
+### Added
+
+- **Structured email-processing logs** (`sensor.py`):
+
+  Every time the coordinator scans the mailbox, it now emits structured log
+  entries so you can trace exactly what happened with each email:
+
+  - **`DEBUG`** — one line per email evaluated, showing `from` and `subject`
+    before any matching is attempted:
+    ```
+    Concierge Services [Gas]: evaluating email — from='...', subject='...'
+    ```
+  - **`DEBUG`** — when an email does *not* match a service:
+    ```
+    Concierge Services [Gas]: email did not match — from='...', subject='...'
+    ```
+  - **`INFO`** — when an email **matches** a service, including which of the
+    five detection strategies triggered the match (`sender-domain`,
+    `service-name-keywords`, `service-id-pattern`, `sample-subject-keywords`,
+    or `service-type-pattern-fallback`) and the email's `from`, `subject`, and
+    `date` fields:
+    ```
+    Concierge Services [Gas]: email matched via strategy 'sender-domain' — from='...', subject='...', date='...'
+    ```
+  - **`INFO`** — attributes extracted from the email body (key=value pairs):
+    ```
+    Concierge Services [Gas]: attributes extracted from email body — total_amount=12345, ...
+    ```
+  - **`INFO`** — PDF attachment found and being processed:
+    ```
+    Concierge Services [Common Expenses]: PDF found at '/config/...pdf' — extracting additional attributes
+    ```
+  - **`INFO`** — attributes extracted from the PDF:
+    ```
+    Concierge Services [Common Expenses]: attributes extracted from PDF — consumption=3.5, ...
+    ```
+  - **`INFO`** — when `last_updated` is overridden with the PDF's emission date:
+    ```
+    Concierge Services [Common Expenses]: last_updated overridden with PDF emission date '15-04-2026'
+    ```
+  - **`DEBUG`** — when a matching email has no PDF attachment.
+  - **`WARNING`** — when no matching email is found (pre-existing, unchanged).
+
+  `_matches_service` now returns the matching strategy name (`str`) instead of
+  `bool`; `None` is returned when no strategy fires.  This is a purely internal
+  refactor — external behaviour is unchanged.
+
 ## [1.2.1] - 2026-04-28
 
 ### Fixed

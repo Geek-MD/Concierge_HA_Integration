@@ -107,6 +107,10 @@
   > When OCR is unavailable the sensors exist but report `None` until a
   > manual override is applied via the `set_value` service.
 
+- 🪵 **Structured Email-Processing Logs** (v1.2.2): Every time the integration scans the
+  mailbox it emits detailed log entries so you can verify whether each email was detected
+  and why — see [Logging & Diagnostics](#-logging--diagnostics) for details.
+
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
   - Service identity: `service_id`, `service_name`, `service_type`, `friendly_name`, `icon`
@@ -441,6 +445,8 @@ with five entities:
 - ✅ Agua Caliente sensors on the Gastos Comunes device (v0.9.5): five dedicated sensor entities (`consumption`, `cost_per_unit`, `amount`, `prev_reading`, `curr_reading`) are automatically created for every Gastos Comunes service and populated from the same "Nota de Cobro" PDF via OCR — no separate "Agua Caliente" service device is required or supported, since the hot-water data lives exclusively inside the Gastos Comunes email/PDF
 - ✅ **OCR.space cloud API as sole OCR engine (v1.0.2)**: removed RapidOCR (onnxruntime unavailable on HA OS) and Concierge Add-on fallback; users register for a free key at [ocr.space/OCRAPI](https://ocr.space/OCRAPI) and enter it during setup or via CONFIGURE
 - ✅ **Gastos Comunes PDF extraction generalised for any building (v1.1.0)**: alícuota, fondos, and building-total patterns were previously hard-coded to the reference building's values; they now match any building's Nota de Cobro regardless of alícuota magnitude, fondos percentage, or total size; the three-amounts fallback is scoped to the breakdown section to prevent false matches
+- ✅ **Forwarded-email detection fixed (v1.2.1)**: a new fifth strategy (`service-type-pattern-fallback`) iterates the canonical `SERVICE_PATTERNS` list so that Spanish-language keywords ("gastos comunes", "aguas andinas", "metrogas", …) are recognised regardless of the sender address, fixing cases where bills forwarded through Gmail or other generic webmail providers were silently missed
+- ✅ **Structured email-processing logs (v1.2.2)**: every mailbox scan now emits `INFO`-level entries for each matched email (from, subject, date, **detection strategy**), extracted attributes (email body and PDF), and PDF emission-date overrides; `DEBUG`-level entries cover every email evaluated and every non-match — see [Logging & Diagnostics](#-logging--diagnostics)
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services
@@ -448,6 +454,58 @@ with five entities:
 - Historical billing data tracking
 - Consumption trends and analytics
 - Payment reminders and automations
+
+---
+
+## 🔍 Logging & Diagnostics
+
+Starting with **v1.2.2**, the integration emits structured log entries every time it
+scans the mailbox for a service.  These entries let you confirm:
+
+- which emails were evaluated,
+- which one matched and **why** (detection strategy),
+- what data was extracted from the email body and from the PDF.
+
+### Enabling the logs
+
+Add the following to your `configuration.yaml` and restart Home Assistant:
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.concierge_ha_integration: debug
+```
+
+Use `info` instead of `debug` if you only want the match/extraction lines without
+the per-email evaluation noise.
+
+### Log levels
+
+| Level | When emitted | Example message |
+|-------|-------------|-----------------|
+| `DEBUG` | Every email fetched from the mailbox | `Concierge Services [Gas]: evaluating email — from='...', subject='...'` |
+| `DEBUG` | Email did **not** match the service | `Concierge Services [Gas]: email did not match — from='...', subject='...'` |
+| `INFO` | Email **matched** — shows which strategy triggered it | `Concierge Services [Gas]: email matched via strategy 'sender-domain' — from='facturas@metrogas.cl', subject='Boleta Marzo 2026', date='...'` |
+| `INFO` | Attributes extracted from the email body | `Concierge Services [Gas]: attributes extracted from email body — total_amount=45230, consumption=18.3` |
+| `INFO` | PDF attachment found and being processed | `Concierge Services [Common Expenses]: PDF found at '/config/.../gc_2026-04.pdf' — extracting additional attributes` |
+| `INFO` | Attributes extracted from the PDF | `Concierge Services [Common Expenses]: attributes extracted from PDF — subtotal=95000, cargo_fijo=9638, ...` |
+| `INFO` | `last_updated` overridden with the PDF's issue date | `Concierge Services [Common Expenses]: last_updated overridden with PDF emission date '15-04-2026'` |
+| `DEBUG` | Matching email found but no PDF attachment | `Concierge Services [Gas]: no PDF attachment found in matching email` |
+| `WARNING` | No matching email found after scanning the last 100 messages | `No matching email found for service 'Gas' (id: gas) in the last N emails` |
+
+### Detection strategies (in order)
+
+The integration tries five strategies to decide whether an email belongs to a
+configured service.  The strategy name appears in the `INFO` match log line:
+
+| Strategy | How it works |
+|---|---|
+| `sender-domain` | The sender's domain matches the domain recorded in the sample e-mail, and the domain is not a generic webmail provider (Gmail, Hotmail, …) |
+| `service-name-keywords` | Every significant word (> 3 chars) from the service name appears in the combined email text |
+| `service-id-pattern` | The service ID slug matches a whole-word pattern in the email text |
+| `sample-subject-keywords` | At least one unique keyword from the sample subject is found in the email (handles forwarded bills) |
+| `service-type-pattern-fallback` | A canonical Spanish-language pattern for this service type (e.g. *"gastos comunes"*, *"aguas andinas"*) matches the email text — last resort for forwarded emails via generic webmail providers |
 
 ---
 
