@@ -5,7 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - 2026-04-06
+## [1.2.1] - 2026-04-28
+
+### Fixed
+
+- **`_matches_service` fails to recognise forwarded billing emails** (`sensor.py`):
+
+  When an email is forwarded to the monitored mailbox through a generic webmail
+  provider such as Gmail (e.g. `From: edison.montes@gmail.com`), the existing
+  four matching strategies all fail:
+
+  1. **Sender-domain check** — the domain `gmail` is in `_GENERIC_WEBMAIL_DOMAINS`
+     and is therefore deliberately skipped.
+  2. **Service-name keywords** — the service name is stored in English
+     (e.g. `"Common Expenses"`) while the email body is in Spanish, so words
+     like `"common"` or `"expenses"` are never found.
+  3. **Service-ID pattern** — the slug `common_expenses` is also English and
+     produces no match against Spanish content such as `"Gastos Comunes"`.
+  4. **Sample-subject keywords** — this strategy only succeeds when the
+     `sample_subject` stored at detection time contains language-specific
+     keywords that are also present in the new email.  If the stored sample
+     was itself a generic forward, this check also fails.
+
+  **Fix**: a new fifth strategy is added as the final fallback.  When no
+  earlier strategy matches, `_matches_service` iterates the canonical
+  `SERVICE_PATTERNS` list (already used during initial service detection) and
+  tests each pattern whose `service_type` matches the configured service.  If
+  any regex matches the combined email text, the email is accepted.  This
+  ensures that Spanish keywords such as `"gastos comunes"`, `"aguas andinas"`,
+  `"metrogas"`, etc. are recognised regardless of the sender address.
+
+  - `_matches_service` now accepts an optional `service_type` parameter
+    (defaults to `SERVICE_TYPE_UNKNOWN` for backward compatibility).
+  - `SERVICE_PATTERNS` is now imported into `sensor.py` from `service_detector`.
+  - The call site in the coordinator's `_async_update_data` loop passes
+    `service_type` to `_matches_service`.
+
 
 ### Added
 
