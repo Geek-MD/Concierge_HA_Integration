@@ -2276,8 +2276,21 @@ def _extract_common_expenses_pdf_attributes(
 
     # GC total = Subtotal Departamento + Cargo Fijo
     # (does NOT include hot-water, which is a separate device)
-    subtotal_val = attrs.get("subtotal_departamento", 0)
-    cargo_val = attrs.get("cargo_fijo", 0)
+    # Prefer the canonical keys; fall back to their aliases (`subtotal`,
+    # `fixed_charge`) so the Total sensor is never "Unknown" when the
+    # constituent breakdown sensors already show correct values.
+    # Use explicit key-presence checks to avoid treating a legitimate zero
+    # value as "missing" (Python's `or` short-circuits on falsy values).
+    subtotal_val = (
+        attrs["subtotal_departamento"]
+        if "subtotal_departamento" in attrs
+        else attrs.get("subtotal", 0)
+    )
+    cargo_val = (
+        attrs["cargo_fijo"]
+        if "cargo_fijo" in attrs
+        else attrs.get("fixed_charge", 0)
+    )
     if subtotal_val and cargo_val:
         attrs["gc_total"] = subtotal_val + cargo_val
         _confidence["gc_total"] = CONF_SCORE_DERIVED

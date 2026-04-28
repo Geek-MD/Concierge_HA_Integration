@@ -56,7 +56,7 @@ from .attribute_extractor import (
     is_ocr_available,
     _strip_html,
 )
-from .pdf_downloader import download_pdf_from_email, purge_old_pdfs
+from .pdf_downloader import delete_service_pdfs, download_pdf_from_email, purge_old_pdfs
 from .service_detector import (
     SERVICE_PATTERNS,
     classify_service_type,
@@ -605,13 +605,82 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_refresh_service(self, subentry_id: str) -> None:
         """Force an immediate email scan and PDF analysis for a single service subentry.
 
-        Opens a dedicated IMAP connection, fetches the latest email for the
-        specified subentry, merges the result into the coordinator data, and
-        notifies all listeners so that every entity tied to the device updates
-        immediately.
+        Sequence
+        --------
+        1. Resolve the normalised ``service_id`` slug for this subentry.
+        2. **Delete** every cached PDF whose filename starts with
+           ``{service_id}_`` so that the downloader fetches a fresh copy from
+           the matching email instead of reusing a potentially stale file.
+        3. Open a dedicated IMAP connection, find the latest matching email,
+           download the bill PDF, and extract all available attributes.
+        4. If the fetch returned a valid result (``last_updated`` is not
+           ``None``), replace the subentry's coordinator data and notify all
+           listening entities so their states update immediately.  If the
+           fetch failed or found no matching email, the existing sensor values
+           are preserved and a warning is logged.
+        5. **Recompute derived attributes** (e.g. ``gc_total``) from the
+           freshly extracted values so that formula-based sensors always
+           reflect the latest data, including any stored learning overrides
+           that were applied during extraction.
         """
+        if self.config_entry is None:
+            _LOGGER.error(
+                "Concierge Services: force refresh called but config_entry is None "
+                "(subentry=%s) — aborting",
+                subentry_id,
+            )
+            return
+        subentry = self.config_entry.subentries.get(subentry_id)  # type: ignore[attr-defined]
+        service_id_raw: str = subentry.data.get(CONF_SERVICE_ID, subentry_id) if subentry else subentry_id
+        service_id: str = normalize_service_id(service_id_raw)
+        service_name: str = (
+            subentry.data.get(CONF_SERVICE_NAME, service_id.replace("_", " ").title())
+            if subentry else service_id
+        )
+
         _LOGGER.info(
-            "Concierge Services: force refresh started for subentry %s", subentry_id
+            "Concierge Services [%s]: force refresh started — "
+            "subentry=%s, service_id='%s'",
+            service_name,
+            subentry_id,
+            service_id,
+        )
+
+        # ------------------------------------------------------------------
+        # Step 1 — Delete cached PDFs so the downloader fetches a fresh copy.
+        # ------------------------------------------------------------------
+        try:
+            deleted = await self.hass.async_add_executor_job(
+                delete_service_pdfs, self._pdf_dir, service_id
+            )
+            if deleted:
+                _LOGGER.info(
+                    "Concierge Services [%s]: deleted %d cached PDF(s) before "
+                    "force refresh: %s",
+                    service_name,
+                    len(deleted),
+                    ", ".join(deleted),
+                )
+            else:
+                _LOGGER.info(
+                    "Concierge Services [%s]: no cached PDFs to delete — "
+                    "will attempt fresh download",
+                    service_name,
+                )
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "Concierge Services [%s]: error while deleting cached PDFs "
+                "(continuing with refresh): %s",
+                service_name,
+                err,
+            )
+
+        # ------------------------------------------------------------------
+        # Step 2 — Scan the mailbox and extract data from email + PDF.
+        # ------------------------------------------------------------------
+        _LOGGER.info(
+            "Concierge Services [%s]: scanning mailbox for latest bill email",
+            service_name,
         )
         try:
             result = await self.hass.async_add_executor_job(
@@ -619,15 +688,63 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.warning(
-                "Concierge Services: force refresh failed for subentry %s: %s",
-                subentry_id,
+                "Concierge Services [%s]: force refresh failed — "
+                "mailbox scan raised an exception: %s",
+                service_name,
                 err,
             )
             return
 
+        # ------------------------------------------------------------------
+        # Step 3 — Update coordinator data only when the scan found a result.
+        # ------------------------------------------------------------------
+        last_updated = result.get("last_updated")
+        extracted_attrs = result.get("attributes", {})
+        attr_keys = [k for k in extracted_attrs if not k.startswith("_")]
+
+        if last_updated is None:
+            _LOGGER.warning(
+                "Concierge Services [%s]: force refresh found no matching email "
+                "— existing sensor values are preserved (subentry=%s)",
+                service_name,
+                subentry_id,
+            )
+            return
+
+        _LOGGER.info(
+            "Concierge Services [%s]: force refresh succeeded — "
+            "last_updated=%s, attributes extracted: %s",
+            service_name,
+            last_updated.isoformat() if hasattr(last_updated, "isoformat") else last_updated,
+            ", ".join(f"{k}={extracted_attrs[k]!r}" for k in attr_keys) if attr_keys else "(none)",
+        )
+
+        # ------------------------------------------------------------------
+        # Step 4 — Recompute formula-derived attributes (e.g. gc_total).
+        #
+        # Learning overrides are applied during extraction (inside
+        # _fetch_single_service_data → _apply_learning_overrides), but
+        # _recompute_gc_derived_attrs is NOT called there.  Running it here
+        # ensures that calculated fields (e.g. gc_total = subtotal_departamento
+        # + cargo_fijo) always reflect the most current values — including any
+        # override that was applied for one of their inputs — before the new
+        # state is pushed to the listening entities.
+        # ------------------------------------------------------------------
+        self._recompute_gc_derived_attrs(extracted_attrs)
+
+        derived_keys = [k for k in extracted_attrs if not k.startswith("_") and k not in attr_keys]
+        if derived_keys:
+            _LOGGER.info(
+                "Concierge Services [%s]: derived attributes recomputed after "
+                "force refresh — %s",
+                service_name,
+                ", ".join(
+                    f"{k}={extracted_attrs[k]!r}" for k in derived_keys
+                ),
+            )
+
         self._manage_ocr_repair_issue()
-        # Merge the fresh result into the current coordinator state and notify
-        # all listeners so every entity linked to this device is refreshed.
+        # Replace the service entry and notify all listening entities.
         current: dict[str, Any] = (
             self.data if self.data is not None
             else {"connection_status": "OK", "services": {}}
@@ -635,7 +752,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         current.setdefault("services", {})[subentry_id] = result
         self.async_set_updated_data(current)
         _LOGGER.info(
-            "Concierge Services: force refresh completed for subentry %s", subentry_id
+            "Concierge Services [%s]: sensor states updated from force refresh "
+            "(subentry=%s)",
+            service_name,
+            subentry_id,
         )
 
     def _fetch_single_service_data(self, subentry_id: str) -> dict[str, Any]:

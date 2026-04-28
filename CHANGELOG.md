@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026-04-28
+
+### Fixed
+
+- **Force-refresh flow — PDF cache busting** (`button.py`, `sensor.py`,
+  `pdf_downloader.py`):
+
+  Pressing *Forzar refresco* now **deletes every cached PDF** for the target
+  service device before rescanning the mailbox.  Previously the downloader
+  would reuse the on-disk file if it already existed for that billing period,
+  so a corrupted or stale PDF would never be replaced.  The new sequence is:
+
+  1. Resolve the normalised `service_id` slug for the subentry.
+  2. Delete all `{service_id}_*.pdf` files from the PDF cache directory and
+     log each deletion at `INFO` level.
+  3. Scan the mailbox and download a fresh PDF from the matching email.
+  4. Only replace the coordinator data (and therefore the sensor states) when
+     the scan actually found a matching email (`last_updated` is not `None`).
+     If no email is found the existing sensor values are preserved and a
+     `WARNING` is emitted.
+  5. **Recompute all formula-derived attributes** (e.g.
+     `gc_total = subtotal_departamento + cargo_fijo`) from the freshly
+     extracted values.  This is the final step before pushing the new state
+     to HA, ensuring that formula sensors always reflect the latest extracted
+     and override-applied data.
+
+  All steps emit structured `INFO`-level log entries so the full refresh
+  lifecycle can be traced in the HA log.
+
+- **`sensor.concierge_common_expenses_total` showing "Unknown"**
+  (`attribute_extractor.py`):
+
+  The `gc_total` formula (`subtotal_departamento + cargo_fijo`) now also
+  falls back to the public alias keys (`subtotal`, `fixed_charge`) when the
+  canonical extraction keys are absent.  This prevents the *Total* sensor
+  from being "Unknown" when the *Subtotal* and *Fixed Charge* breakdown
+  sensors already show correct values.
+
+- **Force-refresh does not overwrite existing sensor data on failure**
+  (`sensor.py`):
+
+  If the force-refresh IMAP scan fails or finds no matching email, the method
+  now returns early without calling `async_set_updated_data`, preserving the
+  sensor values that were already visible in HA.  Previously a failed scan
+  would silently replace all service attributes with an empty dict, making
+  every sensor for that device go "Unknown".
+
 ## [1.2.2] - 2026-04-28
 
 ### Added
