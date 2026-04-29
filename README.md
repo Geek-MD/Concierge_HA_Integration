@@ -64,26 +64,27 @@
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device; recomputes derived sensors as its final step |
   | `button.concierge_{id}_recalculate` | Button | Configuration | Recomputes formula-derived sensors from already-stored values (no email scan) |
 
-  **Water (16 entities — `cost_per_unit` is replaced by granular sensors):**
+  **Water (15 entities — formula-derived sensors marked with ✦):**
 
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
   | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
   | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
-  | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
+  | `sensor.concierge_{id}_total_amount` ✦ | Sensor | — | Total bill amount (`$`) — `subtotal + other_charges` |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Fixed service charge (`$`) |
-  | `sensor.concierge_{id}_cost_per_unit_peak` | Sensor | — | Cost per m³ — peak (`$/m³`) |
-  | `sensor.concierge_{id}_cost_per_unit_non_peak` | Sensor | — | Cost per m³ — non-peak (`$/m³`) |
-  | `sensor.concierge_{id}_cubic_meter_overconsumption` | Sensor | — | Cost per m³ — overconsumption (`$/m³`) |
-  | `sensor.concierge_{id}_cubic_meter_collection` | Sensor | — | Cost per m³ — collection (`$/m³`) |
-  | `sensor.concierge_{id}_cubic_meter_treatment` | Sensor | — | Cost per m³ — treatment (`$/m³`) |
+  | `sensor.concierge_{id}_cost_per_unit` ✦ | Sensor | — | Effective cost per m³ (`$/m³`) — `water_consumption / consumption` |
+  | `sensor.concierge_{id}_cubic_meter_collection` ✦ | Sensor | — | Effective collection cost per m³ (`$/m³`) — `wastewater_recolection / consumption` |
+  | `sensor.concierge_{id}_cubic_meter_treatment` ✦ | Sensor | — | Effective treatment cost per m³ (`$/m³`) — `wastewater_treatment / consumption` |
   | `sensor.concierge_{id}_water_consumption` | Sensor | — | Potable water charge (`$`) |
   | `sensor.concierge_{id}_wastewater_recolection` | Sensor | — | Wastewater collection charge (`$`) |
   | `sensor.concierge_{id}_wastewater_treatment` | Sensor | — | Wastewater treatment charge (`$`) |
-  | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal before surcharges (`$`) |
+  | `sensor.concierge_{id}_subtotal` ✦ | Sensor | — | Subtotal before surcharges (`$`) — `water_consumption + wastewater_recolection + wastewater_treatment + fixed_charge` |
+  | `sensor.concierge_{id}_other_charges` | Sensor | — | Net surcharges (interest − rounding discount) (`$`) |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device; recomputes derived sensors as its final step |
   | `button.concierge_{id}_recalculate` | Button | Configuration | Recomputes formula-derived sensors from already-stored values (no email scan) |
+
+  > ✦ Formula-derived — automatically recalculated when any constituent value is updated via `set_value` or a new bill is processed.
 
   **Common Expenses (14 entities — includes Hot Water sub-account):**
 

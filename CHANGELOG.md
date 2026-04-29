@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] - 2026-04-29
+
+### Changed
+
+- **Water service — formula-derived sensors** (`sensor.py`,
+  `attribute_extractor.py`):
+
+  Five water sensors are now **computed from other sensor values** instead of
+  being extracted directly from the PDF tariff table.  They are calculated at
+  extraction time and also recomputed automatically whenever a constituent
+  value is updated via the `set_value` service or the *Recalculate* button:
+
+  | Sensor | Formula |
+  |---|---|
+  | `sensor.concierge_{id}_cost_per_unit` *(new)* | `water_consumption / consumption` (float, 2 decimals) |
+  | `sensor.concierge_{id}_cubic_meter_collection` | `wastewater_recolection / consumption` (float, 2 decimals) |
+  | `sensor.concierge_{id}_cubic_meter_treatment` | `wastewater_treatment / consumption` (float, 2 decimals) |
+  | `sensor.concierge_{id}_subtotal` | `water_consumption + wastewater_recolection + wastewater_treatment + fixed_charge` |
+  | `sensor.concierge_{id}_total_amount` | `subtotal + other_charges` |
+
+  The new `_recompute_water_derived_attrs` coordinator method mirrors the
+  existing `_recompute_gc_derived_attrs` pattern: attributes explicitly
+  overridden by the user (confidence == `CONF_SCORE_OVERRIDE`) are never
+  overwritten.  All formula results carry confidence score `CONF_SCORE_DERIVED`
+  (60).
+
+  Both `async_set_learning_override` and `async_recompute_derived` are now
+  service-type-aware and dispatch to the correct recompute helper.
+
+### Removed
+
+- **Three water sensors eliminated**:
+  - `sensor.concierge_{id}_cost_per_unit_peak` (`cubic_meter_peak_water_cost`)
+  - `sensor.concierge_{id}_cost_per_unit_non_peak` (`cubic_meter_non_peak_water_cost`)
+  - `sensor.concierge_{id}_cubic_meter_overconsumption` (`cubic_meter_overconsumption`)
+
+  These three sensors, along with their associated PDF tariff-rate regex
+  patterns and cross-verification logic, have been removed.  The effective
+  per-m³ costs are now derived directly from the billed amounts.
+
 ## [1.2.5] - 2026-04-28
 
 ### Added

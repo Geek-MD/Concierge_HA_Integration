@@ -111,19 +111,19 @@ _TOTAL_AMOUNT_ATTR: dict[str, str] = {
 # Each tuple: (extracted_attr_key, name_suffix, unit, unique_id_suffix)
 # Used by ConciergeServiceBillingBreakdownSensor (one instance per row).
 
-# Water: the two cost-per-unit peak/non-peak sensors renamed per spec v0.7.6.
+# Water billing-breakdown sensors (v1.2.6).
+# cost_per_unit, cubic_meter_collection, cubic_meter_treatment, subtotal and
+# total_amount are formula-derived (see _recompute_water_derived_attrs).
 _WATER_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
-    ("fixed_charge",                 "Fixed Charge",                 "$",     "water_fixed_charge"),
-    ("cubic_meter_peak_water_cost",  "Cost Per Unit Peak",           "$/m³",  "cost_per_unit_peak"),
-    ("cubic_meter_non_peak_water_cost", "Cost Per Unit Non Peak",    "$/m³",  "cost_per_unit_non_peak"),
-    ("cubic_meter_overconsumption",  "Cubic Meter Overconsumption",  "$/m³",  "water_cubic_meter_overconsumption"),
-    ("cubic_meter_collection",       "Cubic Meter Collection",       "$/m³",  "water_cubic_meter_collection"),
-    ("cubic_meter_treatment",        "Cubic Meter Treatment",        "$/m³",  "water_cubic_meter_treatment"),
-    ("water_consumption",            "Water Consumption",            "$",     "water_consumption_charge"),
-    ("wastewater_recolection",       "Wastewater Recolection",       "$",     "wastewater_recolection"),
-    ("wastewater_treatment",         "Wastewater Treatment",         "$",     "wastewater_treatment"),
-    ("subtotal",                     "Subtotal",                     "$",     "water_subtotal"),
-    ("other_charges",                "Other Charges",                "$",     "water_other_charges"),
+    ("fixed_charge",           "Fixed Charge",            "$",     "water_fixed_charge"),
+    ("cost_per_unit",          "Cost Per Unit",           "$/m³",  "water_cost_per_unit"),
+    ("cubic_meter_collection", "Cubic Meter Collection",  "$/m³",  "water_cubic_meter_collection"),
+    ("cubic_meter_treatment",  "Cubic Meter Treatment",   "$/m³",  "water_cubic_meter_treatment"),
+    ("water_consumption",      "Water Consumption",       "$",     "water_consumption_charge"),
+    ("wastewater_recolection", "Wastewater Recolection",  "$",     "wastewater_recolection"),
+    ("wastewater_treatment",   "Wastewater Treatment",    "$",     "wastewater_treatment"),
+    ("subtotal",               "Subtotal",                "$",     "water_subtotal"),
+    ("other_charges",          "Other Charges",           "$",     "water_other_charges"),
 ]
 
 # Electricity: billing charge breakdown (all CLP amounts).
@@ -226,9 +226,11 @@ async def async_setup_entry(
     - Electricity: cost_per_unit + 4 billing-breakdown sensors
       (service_administration, electricity_transport, stabilization_fund,
       electricity_consumption).
-    - Water: cost_per_unit is replaced by 11 water-specific sensors
-      (fixed_charge, cost_per_unit_peak, cost_per_unit_non_peak, and other
-      water billing breakdown fields).
+    - Water: cost_per_unit is replaced by 9 water-specific sensors
+      (fixed_charge, cost_per_unit, cubic_meter_collection,
+      cubic_meter_treatment, and other water billing breakdown fields).
+      cost_per_unit, cubic_meter_collection, cubic_meter_treatment,
+      subtotal, and total_amount are formula-derived.
     Each entity is associated with its own subentry so it appears correctly
     grouped in the HA device registry.
     """
@@ -470,7 +472,16 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 attrs.setdefault("_confidence", {})[attribute] = CONF_SCORE_OVERRIDE
                 # Recompute any formula-derived attributes that depend on the
                 # attribute that was just overridden.
-                self._recompute_gc_derived_attrs(attrs)
+                subentry = self.config_entry.subentries.get(subentry_id)  # type: ignore[attr-defined,union-attr]
+                service_type = (
+                    subentry.data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
+                    if subentry
+                    else SERVICE_TYPE_UNKNOWN
+                )
+                if service_type == SERVICE_TYPE_WATER:
+                    self._recompute_water_derived_attrs(attrs)
+                else:
+                    self._recompute_gc_derived_attrs(attrs)
                 self.async_set_updated_data(self.data)
 
     def _recompute_gc_derived_attrs(self, attrs: dict[str, Any]) -> None:
@@ -523,6 +534,70 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             attrs["gc_total"] = subtotal_val + cargo_val
             confidence["gc_total"] = CONF_SCORE_DERIVED
 
+    def _recompute_water_derived_attrs(self, attrs: dict[str, Any]) -> None:
+        """Recompute water-service formula-derived attributes in-place.
+
+        Computes the following attributes from the primary extracted values:
+
+        - ``cost_per_unit``          = ``water_consumption / consumption``
+        - ``cubic_meter_collection`` = ``wastewater_recolection / consumption``
+        - ``cubic_meter_treatment``  = ``wastewater_treatment / consumption``
+        - ``subtotal``               = ``water_consumption + wastewater_recolection
+                                       + wastewater_treatment + fixed_charge``
+        - ``total_amount``           = ``subtotal + other_charges``
+
+        All results are rounded to 2 decimal places for the rate sensors and
+        left as integers for the monetary totals.
+
+        Attributes that were explicitly overridden by the user (confidence ==
+        CONF_SCORE_OVERRIDE) are never overwritten.
+        """
+        confidence = attrs.setdefault("_confidence", {})
+
+        def _is_overridden(key: str) -> bool:
+            return confidence.get(key, 0) >= CONF_SCORE_OVERRIDE
+
+        consumption = attrs.get("consumption")
+
+        if consumption:
+            water_cons = attrs.get("water_consumption")
+            if water_cons is not None and not _is_overridden("cost_per_unit"):
+                attrs["cost_per_unit"] = round(water_cons / consumption, 2)
+                confidence["cost_per_unit"] = CONF_SCORE_DERIVED
+
+            ww_recol = attrs.get("wastewater_recolection")
+            if ww_recol is not None and not _is_overridden("cubic_meter_collection"):
+                attrs["cubic_meter_collection"] = round(ww_recol / consumption, 2)
+                confidence["cubic_meter_collection"] = CONF_SCORE_DERIVED
+
+            ww_treat = attrs.get("wastewater_treatment")
+            if ww_treat is not None and not _is_overridden("cubic_meter_treatment"):
+                attrs["cubic_meter_treatment"] = round(ww_treat / consumption, 2)
+                confidence["cubic_meter_treatment"] = CONF_SCORE_DERIVED
+
+        # --- Formula: subtotal = water_consumption + wastewater_recolection
+        #              + wastewater_treatment + fixed_charge ---
+        water_cons = attrs.get("water_consumption")
+        ww_recol = attrs.get("wastewater_recolection")
+        ww_treat = attrs.get("wastewater_treatment")
+        fixed = attrs.get("fixed_charge")
+        if (
+            water_cons is not None
+            and ww_recol is not None
+            and ww_treat is not None
+            and fixed is not None
+            and not _is_overridden("subtotal")
+        ):
+            subtotal = water_cons + ww_recol + ww_treat + fixed
+            attrs["subtotal"] = subtotal
+            confidence["subtotal"] = CONF_SCORE_DERIVED
+
+            # --- Formula: total_amount = subtotal + other_charges ---
+            other = attrs.get("other_charges")
+            if other is not None and not _is_overridden("total_amount"):
+                attrs["total_amount"] = subtotal + other
+                confidence["total_amount"] = CONF_SCORE_DERIVED
+
     async def async_recompute_derived(self, subentry_id: str) -> None:
         """Recompute all formula-derived attributes for a single service subentry.
 
@@ -568,7 +643,18 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Snapshot current non-metadata values so we can log only what changed.
         before = {k: attrs[k] for k in attrs if not k.startswith("_")}
 
-        self._recompute_gc_derived_attrs(attrs)
+        # Determine service type so we call the correct recompute helper.
+        subentry = self.config_entry.subentries.get(subentry_id)  # type: ignore[attr-defined,union-attr]
+        service_type = (
+            subentry.data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
+            if subentry
+            else SERVICE_TYPE_UNKNOWN
+        )
+
+        if service_type == SERVICE_TYPE_WATER:
+            self._recompute_water_derived_attrs(attrs)
+        else:
+            self._recompute_gc_derived_attrs(attrs)
 
         changed = {
             k: attrs[k]
