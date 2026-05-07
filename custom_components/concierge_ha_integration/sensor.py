@@ -105,14 +105,15 @@ _TOTAL_AMOUNT_ATTR: dict[str, str] = {
 # Used by ConciergeServiceBillingBreakdownSensor (one instance per row).
 
 # Water billing-breakdown sensors.
-# cost_per_unit_non_peak, cost_per_unit_peak, cost_per_unit,
+# cost_per_unit_non_peak, cost_per_unit_peak,
 # cubic_meter_collection, cubic_meter_treatment, subtotal and total_amount are
 # formula-derived (see _recompute_water_derived_attrs).
+# water_consumption (combined potable-water charge) is kept as an internal
+# attribute for the subtotal formula but is not exposed as a sensor.
 _WATER_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("fixed_charge",                "Fixed Charge",               "$",     "water_fixed_charge"),
     ("cost_per_unit_non_peak",      "Cost Per Unit Non Peak",     "$/m³",  "water_cost_per_unit_non_peak"),
     ("cost_per_unit_peak",          "Cost Per Unit Peak",         "$/m³",  "water_cost_per_unit_peak"),
-    ("cost_per_unit",               "Cost Per Unit",              "$/m³",  "water_cost_per_unit"),
     ("cubic_meter_collection",      "Cubic Meter Collection",     "$/m³",  "water_cubic_meter_collection"),
     ("cubic_meter_treatment",       "Cubic Meter Treatment",      "$/m³",  "water_cubic_meter_treatment"),
     ("water_consumption_non_peak_m3", "Water Non Peak m³",        "m³",    "water_non_peak_m3"),
@@ -477,7 +478,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                        water_consumption_non_peak_m3``
         - ``cost_per_unit_peak``     = ``water_consumption_peak /
                                        water_consumption_peak_m3``
-        - ``cost_per_unit``          = ``water_consumption / consumption``
         - ``cubic_meter_collection`` = ``wastewater_recolection / consumption``
         - ``cubic_meter_treatment``  = ``wastewater_treatment / consumption``
         - ``subtotal``               = ``fixed_charge + water_consumption_non_peak
@@ -523,11 +523,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             confidence["water_consumption"] = CONF_SCORE_DERIVED
 
         if consumption:
-            water_cons = attrs.get("water_consumption")
-            if water_cons is not None and not _is_overridden("cost_per_unit"):
-                attrs["cost_per_unit"] = round(water_cons / consumption, 2)
-                confidence["cost_per_unit"] = CONF_SCORE_DERIVED
-
             ww_recol = attrs.get("wastewater_recolection")
             if ww_recol is not None and not _is_overridden("cubic_meter_collection"):
                 attrs["cubic_meter_collection"] = round(ww_recol / consumption, 2)

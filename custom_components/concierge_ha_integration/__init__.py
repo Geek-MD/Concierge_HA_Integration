@@ -26,6 +26,7 @@ from .const import (
     DOMAIN,
     SERVICE_TYPE_COMMON_EXPENSES,
     SERVICE_TYPE_UNKNOWN,
+    SERVICE_TYPE_WATER,
 )
 from .sensor import ConciergeServicesCoordinator, attr_key_from_uid_suffix
 from .service_detector import detect_services_from_imap, normalize_service_id
@@ -305,6 +306,38 @@ def _migrate_1_4_to_1_5(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 old_entity_id,
                 new_entity_id,
             )
+
+
+@callback
+def _migrate_1_5_to_1_6(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Migrate entity registry from v1.5 (≤ v1.2.7) to v1.6 (≥ v1.2.8).
+
+    Two redundant water sensors are removed:
+
+    - ``water_consumption_charge``: the combined potable-water charge ($) that
+      duplicated the sum of the new ``water_non_peak_charge`` +
+      ``water_peak_charge`` sensors.
+    - ``water_cost_per_unit``: the combined cost-per-m³ that duplicated the
+      more granular ``water_cost_per_unit_non_peak`` and
+      ``water_cost_per_unit_peak`` sensors.
+    """
+    ent_reg = er.async_get(hass)
+    subentries = entry.subentries  # type: ignore[attr-defined]
+
+    obsolete_suffixes = ("water_consumption_charge", "water_cost_per_unit")
+    for sub_id, subentry in subentries.items():
+        if subentry.data.get(CONF_SERVICE_TYPE) != SERVICE_TYPE_WATER:
+            continue
+        for suffix in obsolete_suffixes:
+            old_unique_id = f"{entry.entry_id}_{sub_id}_{suffix}"
+            entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, old_unique_id)
+            if entity_id is not None:
+                ent_reg.async_remove(entity_id)
+                _LOGGER.debug(
+                    "Removed obsolete water sensor %s (unique_id: %s)",
+                    entity_id,
+                    old_unique_id,
+                )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

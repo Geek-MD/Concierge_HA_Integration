@@ -69,7 +69,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
     """
 
     VERSION = 1
-    MINOR_VERSION = 3
+    MINOR_VERSION = 6
 
     def __init__(self) -> None:
         """Initialize the config flow."""

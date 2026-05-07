@@ -53,6 +53,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The existing line-by-line fallback patterns are retained for alternative PDF
   layouts where label, m³ and CLP appear on the same row.
 
+### Added
+
+- **Four new water billing sensors** replacing the removed combined sensor:
+
+  | Sensor suffix | Attribute | Unit | Description |
+  |---|---|---|---|
+  | `water_non_peak_m3` | `water_consumption_non_peak_m3` | m³ | No-punta water consumed |
+  | `water_non_peak_charge` | `water_consumption_non_peak` | $ | No-punta potable-water charge |
+  | `water_peak_m3` | `water_consumption_peak_m3` | m³ | Punta water consumed |
+  | `water_peak_charge` | `water_consumption_peak` | $ | Punta potable-water charge |
+
+### Removed
+
+- **Two redundant water sensors eliminated** (migration v1.6):
+  - `sensor.concierge_{id}_water_consumption` (`water_consumption_charge`):
+    combined potable-water charge ($) superseded by the individual
+    `water_non_peak_charge` and `water_peak_charge` sensors.
+  - `sensor.concierge_{id}_cost_per_unit` (`water_cost_per_unit`):
+    combined cost-per-m³ ($/m³) superseded by the more granular
+    `water_cost_per_unit_non_peak` and `water_cost_per_unit_peak` sensors.
+
+  A config-entry migration (v1.6) removes both entities from the entity
+  registry on first load.  `config_flow.MINOR_VERSION` is updated to 6.
+
 ## [1.2.7] - 2026-05-07
 
 ### Fixed

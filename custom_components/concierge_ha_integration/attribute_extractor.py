@@ -577,7 +577,6 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
 
         ``cost_per_unit_non_peak`` = ``water_consumption_non_peak / water_consumption_non_peak_m3``
         ``cost_per_unit_peak``     = ``water_consumption_peak / water_consumption_peak_m3``
-        ``cost_per_unit``          = ``water_consumption / consumption``
         ``cubic_meter_collection`` = ``wastewater_recolection / consumption``
         ``cubic_meter_treatment``  = ``wastewater_treatment / consumption``
         ``subtotal``               = ``fixed_charge + water_consumption_non_peak
@@ -714,11 +713,6 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
 
     consumption = attrs.get("consumption")
     if consumption:
-        wc = attrs.get("water_consumption")
-        if wc is not None:
-            attrs["cost_per_unit"] = round(wc / consumption, 2)
-            _confidence["cost_per_unit"] = CONF_SCORE_DERIVED
-
         wr = attrs.get("wastewater_recolection")
         if wr is not None:
             attrs["cubic_meter_collection"] = round(wr / consumption, 2)
