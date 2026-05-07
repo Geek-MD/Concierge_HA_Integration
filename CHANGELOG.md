@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.7] - 2026-05-07
+
+### Fixed
+
+- **Water PDF extractor — new Aguas Andinas line-by-line layout**
+  (`attribute_extractor.py`):
+
+  The water billing table now supports a layout where potable-water consumption
+  is split into two separate rows:
+
+  - `Consumo Agua Potable No Punta`
+  - `Consumo Agua Potable Punta`
+
+  `water_consumption` is now computed as the sum of those two row amounts when
+  this layout is detected.
+
+  The extractor also supports row-based parsing for:
+
+  - `Recolección Aguas Servidas`
+  - `Tratamiento Aguas Servidas`
+  - `Descuento Ley Redondeo`
+
+  For this layout, `other_charges` now follows the bill's
+  `Descuento Ley Redondeo` value (including `Interés Deuda` when present, for
+  backward compatibility with older formats).
+
 ## [1.2.6] - 2026-04-29
 
 ### Changed
