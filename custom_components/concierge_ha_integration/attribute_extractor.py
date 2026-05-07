@@ -420,6 +420,10 @@ _WATER_AA_PDF_FIXED_CHARGE_RE = re.compile(
     r"cargo\s+fijo\s*" + _WATER_AA_TARIFF_AMT,
     re.IGNORECASE,
 )
+_WATER_AA_PDF_FIXED_CHARGE_ROW_RE = re.compile(
+    r"^CARGO\s+FIJO(?:\s*\|\s*|\s+)(-?[0-9][0-9.,]*)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 # Billing breakdown table — pdfminer serialises the table column-by-column:
 # all row labels first, then the three per-row consumption sub-values (10,98
 # repeated for each water service), then the eight CLP amounts in row order.
@@ -456,6 +460,37 @@ _WATER_AA_PDF_BILLING_TABLE_RE = re.compile(
     r"(-?[0-9][0-9.,]*)",                  # group 8 – DESCUENTO LEY REDONDEO
     re.IGNORECASE,
 )
+# Newer Aguas Andinas layout (line-by-line rows) splits potable-water billing
+# into two rows: "NO PUNTA" and "PUNTA".  Amount is the last numeric token in
+# each row.
+_WATER_AA_PDF_WATER_NO_PUNTA_RE = re.compile(
+    r"^CONSUMO\s+AGUA\s+POTABLE\s+NO\s+PUNTA(?:\s*\|\s*|\s+)"
+    r"([0-9]+(?:[.,][0-9]+)?)(?:\s*\|\s*|\s+)"
+    r"(-?[0-9][0-9.,]*)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WATER_AA_PDF_WATER_PUNTA_RE = re.compile(
+    r"^CONSUMO\s+AGUA\s+POTABLE\s+PUNTA(?:\s*\|\s*|\s+)"
+    r"([0-9]+(?:[.,][0-9]+)?)(?:\s*\|\s*|\s+)"
+    r"(-?[0-9][0-9.,]*)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WATER_AA_PDF_WW_RECOLECTION_RE = re.compile(
+    r"^RECOLECCI[OÓ]N\s+AGUAS\s+SERVIDAS[^\n]*?(-?[0-9][0-9.,]*)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WATER_AA_PDF_WW_TREATMENT_RE = re.compile(
+    r"^TRATAMIENTO\s+AGUAS\s+SERVIDAS[^\n]*?(-?[0-9][0-9.,]*)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WATER_AA_PDF_INTEREST_RE = re.compile(
+    r"^INTER[EÉ]S\s+DEUDA[^\n]*?(-?[0-9][0-9.,]*)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WATER_AA_PDF_ROUNDING_DISCOUNT_RE = re.compile(
+    r"^DESCUENTO\s+LEY\s+REDONDEO[^\n]*?(-?[0-9][0-9.,]*)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
@@ -483,6 +518,10 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
         ``consumption``                   – total water consumed (float, m³)
         ``consumption_unit``              – unit of consumption (``"m3"``)
         ``fixed_charge``                  – fixed service charge as integer
+        ``water_consumption_non_peak``    – no-punta potable-water amount (CLP)
+        ``water_consumption_peak``        – punta potable-water amount (CLP)
+        ``water_consumption_non_peak_m3`` – no-punta potable-water consumption (m³)
+        ``water_consumption_peak_m3``     – punta potable-water consumption (m³)
         ``water_consumption``             – potable water charge as integer (CLP)
         ``wastewater_recolection``        – wastewater collection charge as integer (CLP)
         ``wastewater_treatment``          – wastewater treatment charge as integer (CLP)
@@ -493,11 +532,14 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
     are also recomputed by ``_recompute_water_derived_attrs`` after any
     ``set_value`` override, so they always stay consistent:
 
+        ``cost_per_unit_non_peak`` = ``water_consumption_non_peak / water_consumption_non_peak_m3``
+        ``cost_per_unit_peak``     = ``water_consumption_peak / water_consumption_peak_m3``
         ``cost_per_unit``          = ``water_consumption / consumption``
         ``cubic_meter_collection`` = ``wastewater_recolection / consumption``
         ``cubic_meter_treatment``  = ``wastewater_treatment / consumption``
-        ``subtotal``               = ``water_consumption + wastewater_recolection
-                                     + wastewater_treatment + fixed_charge``
+        ``subtotal``               = ``fixed_charge + water_consumption_non_peak
+                                     + water_consumption_peak + wastewater_recolection
+                                     + wastewater_treatment``
         ``total_amount``           = ``subtotal + other_charges``
     """
     attrs: dict[str, Any] = {}
@@ -541,11 +583,16 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
     fixed_match = _WATER_AA_PDF_FIXED_CHARGE_RE.search(text)
     if fixed_match:
         attrs["fixed_charge"] = _parse_amount_to_int(fixed_match.group(1))
+    else:
+        fixed_row_match = _WATER_AA_PDF_FIXED_CHARGE_ROW_RE.search(text)
+        if fixed_row_match:
+            attrs["fixed_charge"] = _parse_amount_to_int(fixed_row_match.group(1))
 
     # Billing breakdown table — water_consumption, wastewater charges and
-    # other_charges (surcharges net of rounding discount).
-    # pdfminer serialises the table as labels → sub-values → amounts; the
-    # regex anchors on the label block to recover amounts in row order.
+    # other_charges.
+    # Supports:
+    #   1) legacy column-serialised table (single "CONSUMO AGUA POTABLE" row)
+    #   2) newer line-by-line table with "NO PUNTA" + "PUNTA" split rows
     table_match = _WATER_AA_PDF_BILLING_TABLE_RE.search(text)
     if table_match:
         water_cons = _parse_amount_to_int(table_match.group(2))
@@ -558,9 +605,51 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
         attrs["wastewater_recolection"] = ww_recol
         attrs["wastewater_treatment"]   = ww_treat
         attrs["other_charges"]          = interes + descuento
+    else:
+        no_punta_m = _WATER_AA_PDF_WATER_NO_PUNTA_RE.search(text)
+        punta_m = _WATER_AA_PDF_WATER_PUNTA_RE.search(text)
+        if no_punta_m:
+            attrs["water_consumption_non_peak_m3"] = _parse_consumption_to_float(no_punta_m.group(1))
+            attrs["water_consumption_non_peak"] = _parse_amount_to_int(no_punta_m.group(2))
+        if punta_m:
+            attrs["water_consumption_peak_m3"] = _parse_consumption_to_float(punta_m.group(1))
+            attrs["water_consumption_peak"] = _parse_amount_to_int(punta_m.group(2))
+        if no_punta_m and punta_m:
+            attrs["water_consumption"] = (
+                attrs["water_consumption_non_peak"] + attrs["water_consumption_peak"]
+            )
+
+        reco_m = _WATER_AA_PDF_WW_RECOLECTION_RE.search(text)
+        if reco_m:
+            attrs["wastewater_recolection"] = _parse_amount_to_int(reco_m.group(1))
+
+        treat_m = _WATER_AA_PDF_WW_TREATMENT_RE.search(text)
+        if treat_m:
+            attrs["wastewater_treatment"] = _parse_amount_to_int(treat_m.group(1))
+
+        # "Other Charges" in this layout is driven by "Descuento Ley Redondeo";
+        # if "Interés Deuda" exists, include it for backwards compatibility.
+        descuento_m = _WATER_AA_PDF_ROUNDING_DISCOUNT_RE.search(text)
+        interes_m = _WATER_AA_PDF_INTEREST_RE.search(text)
+        if descuento_m or interes_m:
+            descuento = _parse_amount_to_int(descuento_m.group(1)) if descuento_m else 0
+            interes = _parse_amount_to_int(interes_m.group(1)) if interes_m else 0
+            attrs["other_charges"] = descuento + interes
 
     # Formula-derived attributes (initial computation; also recomputed by
     # _recompute_water_derived_attrs on set_value overrides).
+    no_punta_m3 = attrs.get("water_consumption_non_peak_m3")
+    no_punta_amt = attrs.get("water_consumption_non_peak")
+    if no_punta_m3 and no_punta_amt is not None:
+        attrs["cost_per_unit_non_peak"] = round(no_punta_amt / no_punta_m3, 2)
+        _confidence["cost_per_unit_non_peak"] = CONF_SCORE_DERIVED
+
+    punta_m3 = attrs.get("water_consumption_peak_m3")
+    punta_amt = attrs.get("water_consumption_peak")
+    if punta_m3 and punta_amt is not None:
+        attrs["cost_per_unit_peak"] = round(punta_amt / punta_m3, 2)
+        _confidence["cost_per_unit_peak"] = CONF_SCORE_DERIVED
+
     consumption = attrs.get("consumption")
     if consumption:
         wc = attrs.get("water_consumption")
@@ -578,7 +667,14 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
             attrs["cubic_meter_treatment"] = round(wt / consumption, 2)
             _confidence["cubic_meter_treatment"] = CONF_SCORE_DERIVED
 
-    wc2    = attrs.get("water_consumption")
+    wc2 = attrs.get("water_consumption")
+    if wc2 is None:
+        np_amt = attrs.get("water_consumption_non_peak")
+        p_amt = attrs.get("water_consumption_peak")
+        if np_amt is not None and p_amt is not None:
+            wc2 = np_amt + p_amt
+            attrs["water_consumption"] = wc2
+            _confidence["water_consumption"] = CONF_SCORE_DERIVED
     wr2    = attrs.get("wastewater_recolection")
     wt2    = attrs.get("wastewater_treatment")
     fixed2 = attrs.get("fixed_charge")

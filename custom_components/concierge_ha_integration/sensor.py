@@ -111,11 +111,14 @@ _TOTAL_AMOUNT_ATTR: dict[str, str] = {
 # Each tuple: (extracted_attr_key, name_suffix, unit, unique_id_suffix)
 # Used by ConciergeServiceBillingBreakdownSensor (one instance per row).
 
-# Water billing-breakdown sensors (v1.2.6).
-# cost_per_unit, cubic_meter_collection, cubic_meter_treatment, subtotal and
-# total_amount are formula-derived (see _recompute_water_derived_attrs).
+# Water billing-breakdown sensors.
+# cost_per_unit_non_peak, cost_per_unit_peak, cost_per_unit,
+# cubic_meter_collection, cubic_meter_treatment, subtotal and total_amount are
+# formula-derived (see _recompute_water_derived_attrs).
 _WATER_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("fixed_charge",           "Fixed Charge",            "$",     "water_fixed_charge"),
+    ("cost_per_unit_non_peak", "Cost Per Unit Non Peak",  "$/m³",  "water_cost_per_unit_non_peak"),
+    ("cost_per_unit_peak",     "Cost Per Unit Peak",      "$/m³",  "water_cost_per_unit_peak"),
     ("cost_per_unit",          "Cost Per Unit",           "$/m³",  "water_cost_per_unit"),
     ("cubic_meter_collection", "Cubic Meter Collection",  "$/m³",  "water_cubic_meter_collection"),
     ("cubic_meter_treatment",  "Cubic Meter Treatment",   "$/m³",  "water_cubic_meter_treatment"),
@@ -226,11 +229,11 @@ async def async_setup_entry(
     - Electricity: cost_per_unit + 4 billing-breakdown sensors
       (service_administration, electricity_transport, stabilization_fund,
       electricity_consumption).
-    - Water: cost_per_unit is replaced by 9 water-specific sensors
-      (fixed_charge, cost_per_unit, cubic_meter_collection,
-      cubic_meter_treatment, and other water billing breakdown fields).
-      cost_per_unit, cubic_meter_collection, cubic_meter_treatment,
-      subtotal, and total_amount are formula-derived.
+    - Water: generic cost_per_unit is complemented by granular water billing
+      sensors, including separate no-punta/punta unit-cost entities and other
+      water billing breakdown fields.  cost_per_unit_non_peak,
+      cost_per_unit_peak, cost_per_unit, cubic_meter_collection,
+      cubic_meter_treatment, subtotal, and total_amount are formula-derived.
     Each entity is associated with its own subentry so it appears correctly
     grouped in the HA device registry.
     """
@@ -273,9 +276,8 @@ async def async_setup_entry(
             )
 
         if service_type == SERVICE_TYPE_WATER:
-            # Water services use granular peak/non-peak cost sensors instead of
-            # the generic cost_per_unit sensor, plus additional billing breakdown
-            # sensors.
+            # Water services expose additional billing-breakdown sensors,
+            # including granular no-punta/punta unit-cost sensors.
             for attr_key, name_suffix, unit, uid_suffix in _WATER_SPECIFIC_SENSORS:
                 entities.append(
                     ConciergeServiceBillingBreakdownSensor(
@@ -539,11 +541,16 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Computes the following attributes from the primary extracted values:
 
+        - ``cost_per_unit_non_peak`` = ``water_consumption_non_peak /
+                                       water_consumption_non_peak_m3``
+        - ``cost_per_unit_peak``     = ``water_consumption_peak /
+                                       water_consumption_peak_m3``
         - ``cost_per_unit``          = ``water_consumption / consumption``
         - ``cubic_meter_collection`` = ``wastewater_recolection / consumption``
         - ``cubic_meter_treatment``  = ``wastewater_treatment / consumption``
-        - ``subtotal``               = ``water_consumption + wastewater_recolection
-                                       + wastewater_treatment + fixed_charge``
+        - ``subtotal``               = ``fixed_charge + water_consumption_non_peak
+                                       + water_consumption_peak + wastewater_recolection
+                                       + wastewater_treatment``
         - ``total_amount``           = ``subtotal + other_charges``
 
         All results are rounded to 2 decimal places for the rate sensors and
@@ -557,7 +564,31 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         def _is_overridden(key: str) -> bool:
             return confidence.get(key, 0) >= CONF_SCORE_OVERRIDE
 
+        non_peak_m3 = attrs.get("water_consumption_non_peak_m3")
+        non_peak_amt = attrs.get("water_consumption_non_peak")
+        if (
+            non_peak_m3
+            and non_peak_amt is not None
+            and not _is_overridden("cost_per_unit_non_peak")
+        ):
+            attrs["cost_per_unit_non_peak"] = round(non_peak_amt / non_peak_m3, 2)
+            confidence["cost_per_unit_non_peak"] = CONF_SCORE_DERIVED
+
+        peak_m3 = attrs.get("water_consumption_peak_m3")
+        peak_amt = attrs.get("water_consumption_peak")
+        if peak_m3 and peak_amt is not None and not _is_overridden("cost_per_unit_peak"):
+            attrs["cost_per_unit_peak"] = round(peak_amt / peak_m3, 2)
+            confidence["cost_per_unit_peak"] = CONF_SCORE_DERIVED
+
         consumption = attrs.get("consumption")
+
+        if (
+            non_peak_amt is not None
+            and peak_amt is not None
+            and not _is_overridden("water_consumption")
+        ):
+            attrs["water_consumption"] = non_peak_amt + peak_amt
+            confidence["water_consumption"] = CONF_SCORE_DERIVED
 
         if consumption:
             water_cons = attrs.get("water_consumption")
@@ -578,6 +609,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # --- Formula: subtotal = water_consumption + wastewater_recolection
         #              + wastewater_treatment + fixed_charge ---
         water_cons = attrs.get("water_consumption")
+        if water_cons is None and non_peak_amt is not None and peak_amt is not None:
+            water_cons = non_peak_amt + peak_amt
         ww_recol = attrs.get("wastewater_recolection")
         ww_treat = attrs.get("wastewater_treatment")
         fixed = attrs.get("fixed_charge")

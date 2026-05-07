@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.7] - 2026-05-07
+
+### Fixed
+
+- **Water PDF extractor — new Aguas Andinas line-by-line layout**
+  (`attribute_extractor.py`):
+
+  The water billing table now supports a layout where potable-water consumption
+  is split into two separate rows:
+
+  - `Consumo Agua Potable No Punta`
+  - `Consumo Agua Potable Punta`
+
+  `water_consumption` is now computed as the sum of those two row amounts when
+  this layout is detected, and the split-row consumptions are also captured so
+  the following cost entities can be derived as `float` values with 2 decimals:
+
+  - `cost_per_unit_non_peak = amount_non_peak / consumption_non_peak`
+  - `cost_per_unit_peak = amount_peak / consumption_peak`
+
+  The extractor also supports row-based parsing for:
+
+  - `Recolección Aguas Servidas`
+  - `Tratamiento Aguas Servidas`
+  - `Descuento Ley Redondeo`
+
+  For this layout, `other_charges` now follows the bill's
+  `Descuento Ley Redondeo` value (including `Interés Deuda` when present, for
+  backward compatibility with older formats).
+
+- **Water service — updated derived-entity split**
+  (`sensor.py`, `attribute_extractor.py`):
+
+  The water recomputation graph now treats the PDF row amounts as the source of
+  truth and keeps only cost entities as decimal sensors:
+
+  - Cost entities remain `float` with 2 decimals.
+  - All remaining billing amounts (`fixed_charge`, `water_consumption`,
+    `wastewater_recolection`, `wastewater_treatment`, `subtotal`,
+    `other_charges`, `total_amount`) remain integers.
+
+  `Total Venta` continues to be ignored.
+
 ## [1.2.6] - 2026-04-29
 
 ### Changed
