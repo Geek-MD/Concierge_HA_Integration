@@ -460,9 +460,52 @@ _WATER_AA_PDF_BILLING_TABLE_RE = re.compile(
     r"(-?[0-9][0-9.,]*)",                  # group 8 – DESCUENTO LEY REDONDEO
     re.IGNORECASE,
 )
-# Newer Aguas Andinas layout (line-by-line rows) splits potable-water billing
-# into two rows: "NO PUNTA" and "PUNTA".  Amount is the last numeric token in
-# each row.
+# Newer Aguas Andinas layout (column-serialised, NO PUNTA + PUNTA split):
+# pdfminer reads labels first, then m³ sub-values, then CLP amounts — all on
+# separate lines.  CARGO FIJO has no m³ sub-value; SUBTOTAL SERVICIO,
+# TOTAL VENTA and DESCUENTO LEY REDONDEO also appear only in the amounts
+# column.  Four m³ values follow the labels block (NO PUNTA, PUNTA,
+# RECOLECCION, TRATAMIENTO), then eight CLP amounts in row order.
+#
+# Group mapping:
+#   group 1  – NO PUNTA m³          (e.g. "9,69")
+#   group 2  – PUNTA m³             (e.g. "1,94")
+#   group 3  – RECOLECCION m³       (e.g. "11,63")
+#   group 4  – TRATAMIENTO m³       (e.g. "11,63")
+#   group 5  – CARGO FIJO CLP       (e.g. "914")
+#   group 6  – NO PUNTA CLP         (e.g. "5.803")
+#   group 7  – PUNTA CLP            (e.g. "1.150")
+#   group 8  – RECOLECCION CLP      (e.g. "5.267")
+#   group 9  – TRATAMIENTO CLP      (e.g. "3.564")
+#   group 10 – SUBTOTAL CLP         (e.g. "16.698")
+#   group 11 – TOTAL VENTA CLP      (not stored)
+#   group 12 – DESCUENTO CLP        (e.g. "-8")
+_WATER_AA_PDF_BILLING_TABLE_NOPUNTA_RE = re.compile(
+    r"CARGO\s+FIJO\n"
+    r"CONSUMO\s+AGUA\s+POTABLE\s+NO\s+PUNTA\n"
+    r"CONSUMO\s+AGUA\s+POTABLE\s+PUNTA\n"
+    r"RECOLECCI[OÓ]N\s+AGUAS\s+SERVIDAS\n"
+    r"TRATAMIENTO\s+AGUAS\s+SERVIDAS\n"
+    r"SUBTOTAL\s+SERVICIO\n"
+    r"TOTAL\s+VENTA\n"
+    r"DESCUENTO\s+LEY\s+REDONDEO\n"
+    r"\s*TOTAL\s+A\s+PAGAR\s*\n"           # intermediate label (not stored)
+    r"\s*([0-9][0-9.,]*)\s*\n"             # group 1  – NO PUNTA m³
+    r"\s*([0-9][0-9.,]*)\s*\n"             # group 2  – PUNTA m³
+    r"\s*([0-9][0-9.,]*)\s*\n"             # group 3  – RECOLECCION m³
+    r"\s*([0-9][0-9.,]*)\s*\n"             # group 4  – TRATAMIENTO m³
+    r"\s*([0-9][0-9.,]+)\s*\n"             # group 5  – CARGO FIJO CLP
+    r"([0-9][0-9.,]+)\s*\n"               # group 6  – NO PUNTA CLP
+    r"([0-9][0-9.,]+)\s*\n"               # group 7  – PUNTA CLP
+    r"([0-9][0-9.,]+)\s*\n"               # group 8  – RECOLECCION CLP
+    r"([0-9][0-9.,]+)\s*\n"               # group 9  – TRATAMIENTO CLP
+    r"([0-9][0-9.,]+)\s*\n"               # group 10 – SUBTOTAL CLP
+    r"([0-9][0-9.,]+)\s*\n"               # group 11 – TOTAL VENTA CLP (not stored)
+    r"(-?[0-9][0-9.,]*)",                  # group 12 – DESCUENTO CLP
+    re.IGNORECASE,
+)
+# Line-by-line fallback patterns (used when the column-serialised table
+# structure is not present — e.g. custom or third-party PDF layouts).
 _WATER_AA_PDF_WATER_NO_PUNTA_RE = re.compile(
     r"^CONSUMO\s+AGUA\s+POTABLE\s+NO\s+PUNTA(?:\s*\|\s*|\s+)"
     r"([0-9]+(?:[.,][0-9]+)?)(?:\s*\|\s*|\s+)"
@@ -534,7 +577,6 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
 
         ``cost_per_unit_non_peak`` = ``water_consumption_non_peak / water_consumption_non_peak_m3``
         ``cost_per_unit_peak``     = ``water_consumption_peak / water_consumption_peak_m3``
-        ``cost_per_unit``          = ``water_consumption / consumption``
         ``cubic_meter_collection`` = ``wastewater_recolection / consumption``
         ``cubic_meter_treatment``  = ``wastewater_treatment / consumption``
         ``subtotal``               = ``fixed_charge + water_consumption_non_peak
@@ -592,7 +634,8 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
     # other_charges.
     # Supports:
     #   1) legacy column-serialised table (single "CONSUMO AGUA POTABLE" row)
-    #   2) newer line-by-line table with "NO PUNTA" + "PUNTA" split rows
+    #   2) newer column-serialised table ("NO PUNTA" + "PUNTA" split rows)
+    #   3) line-by-line fallback (each row on its own line with m³ and CLP)
     table_match = _WATER_AA_PDF_BILLING_TABLE_RE.search(text)
     if table_match:
         water_cons = _parse_amount_to_int(table_match.group(2))
@@ -606,35 +649,53 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
         attrs["wastewater_treatment"]   = ww_treat
         attrs["other_charges"]          = interes + descuento
     else:
-        no_punta_m = _WATER_AA_PDF_WATER_NO_PUNTA_RE.search(text)
-        punta_m = _WATER_AA_PDF_WATER_PUNTA_RE.search(text)
-        if no_punta_m:
-            attrs["water_consumption_non_peak_m3"] = _parse_consumption_to_float(no_punta_m.group(1))
-            attrs["water_consumption_non_peak"] = _parse_amount_to_int(no_punta_m.group(2))
-        if punta_m:
-            attrs["water_consumption_peak_m3"] = _parse_consumption_to_float(punta_m.group(1))
-            attrs["water_consumption_peak"] = _parse_amount_to_int(punta_m.group(2))
-        if no_punta_m and punta_m:
-            attrs["water_consumption"] = (
+        nopunta_match = _WATER_AA_PDF_BILLING_TABLE_NOPUNTA_RE.search(text)
+        if nopunta_match:
+            # Column-serialised format with NO PUNTA / PUNTA split.
+            # fixed_charge is already set from the tariff section; overwrite it
+            # with the value from the billing table (same figure, more direct).
+            attrs["fixed_charge"] = _parse_amount_to_int(nopunta_match.group(5))
+            attrs["water_consumption_non_peak_m3"] = _parse_consumption_to_float(nopunta_match.group(1))
+            attrs["water_consumption_non_peak"]    = _parse_amount_to_int(nopunta_match.group(6))
+            attrs["water_consumption_peak_m3"]     = _parse_consumption_to_float(nopunta_match.group(2))
+            attrs["water_consumption_peak"]        = _parse_amount_to_int(nopunta_match.group(7))
+            attrs["water_consumption"]             = (
                 attrs["water_consumption_non_peak"] + attrs["water_consumption_peak"]
             )
+            attrs["wastewater_recolection"] = _parse_amount_to_int(nopunta_match.group(8))
+            attrs["wastewater_treatment"]   = _parse_amount_to_int(nopunta_match.group(9))
+            attrs["other_charges"]          = _parse_amount_to_int(nopunta_match.group(12))
+        else:
+            # Line-by-line fallback: each row on its own line with m³ and CLP.
+            no_punta_m = _WATER_AA_PDF_WATER_NO_PUNTA_RE.search(text)
+            punta_m = _WATER_AA_PDF_WATER_PUNTA_RE.search(text)
+            if no_punta_m:
+                attrs["water_consumption_non_peak_m3"] = _parse_consumption_to_float(no_punta_m.group(1))
+                attrs["water_consumption_non_peak"] = _parse_amount_to_int(no_punta_m.group(2))
+            if punta_m:
+                attrs["water_consumption_peak_m3"] = _parse_consumption_to_float(punta_m.group(1))
+                attrs["water_consumption_peak"] = _parse_amount_to_int(punta_m.group(2))
+            if no_punta_m and punta_m:
+                attrs["water_consumption"] = (
+                    attrs["water_consumption_non_peak"] + attrs["water_consumption_peak"]
+                )
 
-        reco_m = _WATER_AA_PDF_WW_RECOLECTION_RE.search(text)
-        if reco_m:
-            attrs["wastewater_recolection"] = _parse_amount_to_int(reco_m.group(1))
+            reco_m = _WATER_AA_PDF_WW_RECOLECTION_RE.search(text)
+            if reco_m:
+                attrs["wastewater_recolection"] = _parse_amount_to_int(reco_m.group(1))
 
-        treat_m = _WATER_AA_PDF_WW_TREATMENT_RE.search(text)
-        if treat_m:
-            attrs["wastewater_treatment"] = _parse_amount_to_int(treat_m.group(1))
+            treat_m = _WATER_AA_PDF_WW_TREATMENT_RE.search(text)
+            if treat_m:
+                attrs["wastewater_treatment"] = _parse_amount_to_int(treat_m.group(1))
 
-        # "Other Charges" in this layout is driven by "Descuento Ley Redondeo";
-        # if "Interés Deuda" exists, include it for backwards compatibility.
-        descuento_m = _WATER_AA_PDF_ROUNDING_DISCOUNT_RE.search(text)
-        interes_m = _WATER_AA_PDF_INTEREST_RE.search(text)
-        if descuento_m or interes_m:
-            descuento = _parse_amount_to_int(descuento_m.group(1)) if descuento_m else 0
-            interes = _parse_amount_to_int(interes_m.group(1)) if interes_m else 0
-            attrs["other_charges"] = descuento + interes
+            # "Other Charges" is driven by "Descuento Ley Redondeo";
+            # include "Interés Deuda" when present for backwards compatibility.
+            descuento_m = _WATER_AA_PDF_ROUNDING_DISCOUNT_RE.search(text)
+            interes_m = _WATER_AA_PDF_INTEREST_RE.search(text)
+            if descuento_m or interes_m:
+                descuento = _parse_amount_to_int(descuento_m.group(1)) if descuento_m else 0
+                interes = _parse_amount_to_int(interes_m.group(1)) if interes_m else 0
+                attrs["other_charges"] = descuento + interes
 
     # Formula-derived attributes (initial computation; also recomputed by
     # _recompute_water_derived_attrs on set_value overrides).
@@ -652,11 +713,6 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
 
     consumption = attrs.get("consumption")
     if consumption:
-        wc = attrs.get("water_consumption")
-        if wc is not None:
-            attrs["cost_per_unit"] = round(wc / consumption, 2)
-            _confidence["cost_per_unit"] = CONF_SCORE_DERIVED
-
         wr = attrs.get("wastewater_recolection")
         if wr is not None:
             attrs["cubic_meter_collection"] = round(wr / consumption, 2)
