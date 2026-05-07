@@ -19,7 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Consumo Agua Potable Punta`
 
   `water_consumption` is now computed as the sum of those two row amounts when
-  this layout is detected.
+  this layout is detected, and the split-row consumptions are also captured so
+  the following cost entities can be derived as `float` values with 2 decimals:
+
+  - `cost_per_unit_non_peak = amount_non_peak / consumption_non_peak`
+  - `cost_per_unit_peak = amount_peak / consumption_peak`
 
   The extractor also supports row-based parsing for:
 
@@ -30,6 +34,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   For this layout, `other_charges` now follows the bill's
   `Descuento Ley Redondeo` value (including `Interés Deuda` when present, for
   backward compatibility with older formats).
+
+- **Water service — updated derived-entity split**
+  (`sensor.py`, `attribute_extractor.py`):
+
+  The water recomputation graph now treats the PDF row amounts as the source of
+  truth and keeps only cost entities as decimal sensors:
+
+  - Cost entities remain `float` with 2 decimals.
+  - All remaining billing amounts (`fixed_charge`, `water_consumption`,
+    `wastewater_recolection`, `wastewater_treatment`, `subtotal`,
+    `other_charges`, `total_amount`) remain integers.
+
+  `Total Venta` continues to be ignored.
 
 ## [1.2.6] - 2026-04-29
 
