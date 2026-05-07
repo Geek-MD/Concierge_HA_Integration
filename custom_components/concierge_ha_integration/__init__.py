@@ -38,7 +38,7 @@ PLATFORMS: list[str] = ["sensor", "binary_sensor", "button"]
 # HA service name for the force-refresh action
 SERVICE_FORCE_REFRESH = "force_refresh"
 
-# HA service name for the learning-override action
+# HA service name for the value-override action
 SERVICE_SET_VALUE = "set_value"
 
 # HA service name for the derived-attribute recomputation action
@@ -89,6 +89,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     - 1.5 (≥ v0.9.7): service IDs renamed from Spanish to English generic names
       (e.g. gastos_comunes → common_expenses, agua → water); entity registry entries
       are renamed to match the new English entity IDs.
+    - 1.6 (≥ v1.2.8): redundant combined water_consumption sensor removed; replaced
+      by individual water_non_peak_charge and water_peak_charge sensors.
     """
     _LOGGER.info(
         "Migrating Concierge Services config entry from version %s.%s",
@@ -115,6 +117,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_1_4_to_1_5(hass, entry)
         hass.config_entries.async_update_entry(entry, minor_version=5)  # type: ignore[call-arg]
         _LOGGER.info("Concierge Services migration to version 1.5 completed")
+
+    if entry.version == 1 and entry.minor_version < 6:
+        _migrate_1_5_to_1_6(hass, entry)
+        hass.config_entries.async_update_entry(entry, minor_version=6)  # type: ignore[call-arg]
+        _LOGGER.info("Concierge Services migration to version 1.6 completed")
 
     return True
 
@@ -491,19 +498,20 @@ def _async_register_recalculate_service(
 def _async_register_set_value_service(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Register the ``set_value`` service for learning-override corrections.
+    """Register the ``set_value`` service for in-memory attribute overrides.
 
     The service is registered only once (guarded by ``has_service``).  It
-    stores a user-supplied correct value for a named attribute of a specific
-    service device, persists it to the learning store, and applies it
-    immediately so all related entities refresh without waiting for the next
-    polling cycle.
+    overwrites the in-memory value of a named attribute for a specific service
+    entity and immediately propagates the change to all related sensors without
+    waiting for the next polling cycle.  The override is not persisted — it is
+    lost when HA restarts or when a force-refresh scan replaces the coordinator
+    data.
     """
     if hass.services.has_service(DOMAIN, SERVICE_SET_VALUE):
         return
 
     async def _handle_set_value(service_call: ServiceCall) -> None:
-        """Store a user-corrected attribute value for a Concierge service entity.
+        """Overwrite an attribute value for a Concierge service entity in memory.
 
         Parameters
         ----------
@@ -518,7 +526,7 @@ def _async_register_set_value_service(
             from the entity's unique_id suffix so the caller does not need to
             know the internal name.
         value : float | str
-            The correct value.  Integers are stored as-is; floats that are
+            The new value.  Integers are stored as-is; floats that are
             whole numbers (e.g. ``9638.0``) are coerced to ``int`` to match
             the type expected by the sensor.
         """

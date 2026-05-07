@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.8] - 2026-05-07
+
+### Changed
+
+- **`set_value` service — in-memory override only** (`sensor.py`, `__init__.py`):
+
+  The `set_value` service no longer persists overrides to a JSON file.  It
+  now simply overwrites the attribute value in the coordinator's in-memory
+  data and immediately triggers a recomputation of formula-derived sensors
+  (e.g. `subtotal`, `total_amount`).  The override is lost when HA restarts
+  or when a *Force Refresh* replaces the coordinator data with fresh PDF
+  values.
+
+  Removed: `_load_learning_data`, `_save_learning_data`,
+  `_set_learning_override_sync`, `_apply_learning_overrides` methods and the
+  `learning.json` file-path constant.
+
+### Fixed
+
+- **Water PDF extractor — column-serialised NO PUNTA / PUNTA table**
+  (`attribute_extractor.py`):
+
+  The Aguas Andinas PDF uses a column-serialised table layout (pdfminer reads
+  all row labels first, then m³ sub-values, then CLP amounts — each group on
+  its own lines).  The previous `_WATER_AA_PDF_WATER_NO_PUNTA_RE` and related
+  patterns expected the m³ and CLP values on the *same* line as the row label,
+  so they never matched.  As a result the billing breakdown was not extracted
+  and Recalculate had no source data to work with.
+
+  A new `_WATER_AA_PDF_BILLING_TABLE_NOPUNTA_RE` pattern handles this format
+  and correctly captures:
+
+  | Attribute | Example value |
+  |---|---|
+  | `water_consumption_non_peak_m3` | 9.69 |
+  | `water_consumption_non_peak` | 5803 |
+  | `water_consumption_peak_m3` | 1.94 |
+  | `water_consumption_peak` | 1150 |
+  | `water_consumption` | 6953 (derived: non_peak + peak) |
+  | `wastewater_recolection` | 5267 |
+  | `wastewater_treatment` | 3564 |
+  | `other_charges` | −8 |
+  | `subtotal` | 16698 (derived) |
+  | `total_amount` | 16690 (derived) |
+
+  The existing line-by-line fallback patterns are retained for alternative PDF
+  layouts where label, m³ and CLP appear on the same row.
+
 ## [1.2.7] - 2026-05-07
 
 ### Fixed
