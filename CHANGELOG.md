@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-05-24
+
+### Changed
+
+- **Gastos Comunes OCR extraction now uses markdown-template anchors**
+  (`attribute_extractor.py`, `services_templates/common_expenses/edificio_jose_miguel.md`):
+
+  The common-expenses extractor now reads OCR.space `ParsedResults` overlay lines
+  and maps values using the structure defined in the markdown template for
+  `edificio_jose_miguel`. The template is used as a structural reference (field
+  anchors), not as a source of fixed values.
+
+  This improves parsing stability for:
+  `gastos_comunes_amount`, `fondos_amount`, `subtotal_departamento`,
+  `cargo_fijo`, `subtotal_recargos`, `total_amount`,
+  `hot_water_reading_prev`, `hot_water_reading_curr`,
+  `hot_water_consumption`, `hot_water_cost_per_m3`, `hot_water_amount`,
+  and last-payment fields.
+
+  Scope is intentionally limited to **common_expenses** for this release.
+
 ## [1.2.8] - 2026-05-07
 
 ### Changed
