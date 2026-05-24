@@ -18,7 +18,9 @@ from __future__ import annotations
 import calendar
 import difflib
 import logging
+from pathlib import Path
 import re
+import unicodedata
 from html import unescape as _html_unescape
 from html.parser import HTMLParser
 from typing import Any
@@ -1522,6 +1524,305 @@ _MONTH_NAME_TO_NUM: dict[str, int] = {
     "diciembre": 12, "dic": 12,
 }
 
+_GC_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent
+    / "services_templates"
+    / "common_expenses"
+    / "edificio_jose_miguel.md"
+)
+
+_GC_TEMPLATE_ANCHOR_TOKENS: dict[str, tuple[str, ...]] = {
+    "emission_date": ("fecha", "emision"),
+    "due_date": ("pagar", "hasta"),
+    "owner_name": ("copropietario",),
+    "alicuota": ("alicuota", "total"),
+    "building_total_expense": ("gasto", "comun", "prorratear"),
+    "concepto": ("concepto",),
+    "fondos_amount": ("provision", "fondos"),
+    "subtotal_departamento": ("subtotal", "departamento"),
+    "hot_water_prev": ("lectura", "anterior"),
+    "hot_water_curr": ("lectura", "actual"),
+    "hot_water_consumption": ("consumos",),
+    "hot_water_cost": ("valor",),
+    "hot_water_amount": ("subtotal", "consumo"),
+    "cargo_fijo": ("cargo", "fijo"),
+    "subtotal_recargos": ("subtotal", "recargos"),
+    "total_amount": ("total", "mes"),
+    "last_payment_date": ("fecha", "ultimo", "pago"),
+    "last_payment_amount": ("monto", "ultimo", "pago"),
+    "last_payment_folio": ("folio", "ultimo", "pago"),
+}
+
+_GC_DATE_RE = re.compile(r"(\d{2}[/-]\d{2}[/-]\d{4})")
+_GC_AMOUNT_CAPTURE_RE = re.compile(
+    r"\$?\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
+)
+
+
+def _normalize_gc_anchor_text(value: str) -> str:
+    """Return *value* normalized for anchor matching."""
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = value.lower()
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _load_gc_template_lines() -> list[str]:
+    """Load normalized reference lines from the common-expenses markdown template."""
+    try:
+        template_text = _GC_TEMPLATE_PATH.read_text(encoding="utf-8")
+    except OSError as err:
+        _LOGGER.debug("Could not read common-expenses template '%s': %s", _GC_TEMPLATE_PATH, err)
+        return []
+
+    lines: list[str] = []
+    for raw_line in template_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [line]
+        if "|" in line:
+            parts = [part.strip() for part in line.split("|") if part.strip()]
+        for part in parts:
+            normalized = _normalize_gc_anchor_text(part)
+            if not normalized:
+                continue
+            if normalized.replace("-", "") == "":
+                continue
+            lines.append(normalized)
+    return lines
+
+
+def _find_gc_template_anchor(
+    template_lines: list[str],
+    anchor_key: str,
+) -> str | None:
+    """Return the template anchor line that best matches *anchor_key*."""
+    tokens = _GC_TEMPLATE_ANCHOR_TOKENS.get(anchor_key)
+    if not tokens:
+        return None
+    for line in template_lines:
+        if all(token in line for token in tokens):
+            return line
+    return None
+
+
+def _extract_common_expenses_from_ocr_json(
+    ocr_raw_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Extract attributes from OCR.space JSON using markdown-template anchors."""
+    best_lines: list[str] = []
+    for parsed in ocr_raw_results:
+        overlay = parsed.get("Overlay")
+        if not isinstance(overlay, dict):
+            continue
+        overlay_lines = overlay.get("Lines")
+        if not isinstance(overlay_lines, list):
+            continue
+        current_lines = [
+            str(line.get("LineText", "")).strip()
+            for line in overlay_lines
+            if isinstance(line, dict) and str(line.get("LineText", "")).strip()
+        ]
+        if len(current_lines) > len(best_lines):
+            best_lines = current_lines
+
+    if not best_lines:
+        return {}
+
+    template_lines = _load_gc_template_lines()
+    if not template_lines:
+        return {}
+
+    norm_lines = [_normalize_gc_anchor_text(line) for line in best_lines]
+    attrs: dict[str, Any] = {}
+
+    def _find_anchor_index(anchor_key: str) -> int | None:
+        anchor = _find_gc_template_anchor(template_lines, anchor_key)
+        if anchor:
+            for idx, line in enumerate(norm_lines):
+                if anchor in line or line in anchor:
+                    return idx
+        tokens = _GC_TEMPLATE_ANCHOR_TOKENS.get(anchor_key, ())
+        if tokens:
+            for idx, line in enumerate(norm_lines):
+                if all(token in line for token in tokens):
+                    return idx
+        return None
+
+    def _scan_after(start_idx: int, pattern: re.Pattern[str], max_lines: int = 8) -> str | None:
+        end = min(len(best_lines), start_idx + max_lines + 1)
+        for idx in range(start_idx, end):
+            match = pattern.search(best_lines[idx])
+            if match:
+                return (match.group(1) if match.lastindex else match.group(0)).strip()
+        return None
+
+    billing_year = ""
+
+    emission_idx = _find_anchor_index("emission_date")
+    if emission_idx is not None:
+        emission = _scan_after(emission_idx, _GC_DATE_RE, max_lines=4)
+        if emission:
+            emission_norm = emission.replace("/", "-")
+            attrs["emission_date"] = emission_norm
+            year_match = re.search(r"(\d{4})$", emission_norm)
+            if year_match:
+                billing_year = year_match.group(1)
+
+    due_idx = _find_anchor_index("due_date")
+    if due_idx is not None:
+        due = _scan_after(due_idx, _GC_DATE_RE, max_lines=4)
+        if due:
+            due_norm = due.replace("/", "-")
+            attrs["due_date"] = _gc_fix_year(due_norm, billing_year) if billing_year else due_norm
+
+    for line in best_lines:
+        if line.lower().startswith("edificio "):
+            attrs["building_name"] = line.strip()
+            break
+
+    for idx, line in enumerate(best_lines):
+        rut_match = _GC_RUT_RE.search(line)
+        if rut_match:
+            attrs["building_rut"] = rut_match.group(1)
+            for nxt in range(idx + 1, min(len(best_lines), idx + 4)):
+                if best_lines[nxt].strip() and "fono" not in norm_lines[nxt]:
+                    attrs["address"] = best_lines[nxt].strip()
+                    break
+            break
+
+    for line in best_lines:
+        apt_match = _GC_APARTMENT_RE.search(line)
+        if apt_match:
+            attrs["apartment"] = apt_match.group(1)
+            break
+
+    owner_idx = _find_anchor_index("owner_name")
+    if owner_idx is not None:
+        owner = _scan_after(owner_idx + 1, _GC_OWNER_RE, max_lines=6)
+        if owner:
+            attrs["owner_name"] = owner
+
+    alicuota_idx = _find_anchor_index("alicuota")
+    if alicuota_idx is not None:
+        ali_raw = _scan_after(
+            alicuota_idx,
+            re.compile(r"(?:^|[^0-9])0[,.](\d{4,6})\s*%"),
+            max_lines=5,
+        )
+        if ali_raw:
+            try:
+                attrs["alicuota"] = round(float("0." + ali_raw), 4)
+            except ValueError:
+                pass
+
+    bld_total_idx = _find_anchor_index("building_total_expense")
+    if bld_total_idx is not None:
+        bld_total_raw = _scan_after(bld_total_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=5)
+        if bld_total_raw:
+            attrs["building_total_expense"] = _parse_amount_to_int(bld_total_raw)
+
+    concepto_idx = _find_anchor_index("concepto")
+    gasto_idx = None
+    if concepto_idx is not None:
+        for idx in range(concepto_idx + 1, min(len(norm_lines), concepto_idx + 10)):
+            if "gasto comun" in norm_lines[idx]:
+                gasto_idx = idx
+                break
+    if gasto_idx is not None:
+        gasto_raw = _scan_after(gasto_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=6)
+        if gasto_raw:
+            attrs["gastos_comunes_amount"] = _parse_amount_to_int(gasto_raw)
+
+    fondos_idx = _find_anchor_index("fondos_amount")
+    if fondos_idx is not None:
+        fondos_raw = _scan_after(fondos_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=6)
+        if fondos_raw:
+            attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
+            pct_match = re.search(r"fondos\s+(\d+)\s*%", norm_lines[fondos_idx])
+            if pct_match:
+                attrs["fondos_pct"] = int(pct_match.group(1))
+
+    sub_depto_idx = _find_anchor_index("subtotal_departamento")
+    if sub_depto_idx is not None:
+        sub_depto_raw = _scan_after(sub_depto_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=4)
+        if sub_depto_raw:
+            attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
+
+    prev_idx = _find_anchor_index("hot_water_prev")
+    if prev_idx is not None:
+        prev_raw = _scan_after(prev_idx, re.compile(r"([\d.,]{6,}\d{3})"), max_lines=4)
+        if prev_raw:
+            attrs["hot_water_reading_prev"] = _parse_meter_reading(prev_raw)
+
+    curr_idx = _find_anchor_index("hot_water_curr")
+    if curr_idx is not None:
+        curr_raw = _scan_after(curr_idx, re.compile(r"([\d.,]{6,}\d{3})"), max_lines=4)
+        if curr_raw:
+            attrs["hot_water_reading_curr"] = _parse_meter_reading(curr_raw)
+
+    consumo_idx = _find_anchor_index("hot_water_consumption")
+    if consumo_idx is not None:
+        consumo_raw = _scan_after(consumo_idx, re.compile(r"([\d.,]{6,}\d{3})"), max_lines=6)
+        if consumo_raw:
+            attrs["hot_water_consumption"] = _parse_meter_reading(consumo_raw)
+            attrs["hot_water_consumption_unit"] = "m³"
+
+    valor_idx = _find_anchor_index("hot_water_cost")
+    if valor_idx is not None:
+        cost_raw = _scan_after(valor_idx, re.compile(r"([\d.]+,\d{2}|[\d,]+\.\d{2})"), max_lines=5)
+        if cost_raw:
+            attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_raw)
+
+    hw_amount_idx = _find_anchor_index("hot_water_amount")
+    if hw_amount_idx is not None:
+        hw_amount_raw = _scan_after(hw_amount_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=4)
+        if hw_amount_raw:
+            subtotal_consumo = _parse_amount_to_int(hw_amount_raw)
+            attrs["subtotal_consumo"] = subtotal_consumo
+            attrs["hot_water_amount"] = subtotal_consumo
+
+    cargo_idx = _find_anchor_index("cargo_fijo")
+    if cargo_idx is not None:
+        cargo_raw = _scan_after(cargo_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=4)
+        if cargo_raw:
+            attrs["cargo_fijo"] = _parse_amount_to_int(cargo_raw)
+
+    recargos_idx = _find_anchor_index("subtotal_recargos")
+    if recargos_idx is not None:
+        recargos_raw = _scan_after(recargos_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=4)
+        if recargos_raw:
+            attrs["subtotal_recargos"] = _parse_amount_to_int(recargos_raw)
+
+    total_idx = _find_anchor_index("total_amount")
+    if total_idx is not None:
+        total_raw = _scan_after(total_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=5)
+        if total_raw:
+            attrs["total_amount"] = _parse_amount_to_int(total_raw)
+
+    lp_date_idx = _find_anchor_index("last_payment_date")
+    if lp_date_idx is not None:
+        lp_date = _scan_after(lp_date_idx, _GC_DATE_RE, max_lines=20)
+        if lp_date:
+            lp_norm = lp_date.replace("/", "-")
+            attrs["last_payment_date"] = _gc_fix_year(lp_norm, billing_year) if billing_year else lp_norm
+
+    lp_amount_idx = _find_anchor_index("last_payment_amount")
+    if lp_amount_idx is not None:
+        lp_amount_raw = _scan_after(lp_amount_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=20)
+        if lp_amount_raw:
+            attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_raw)
+
+    lp_folio_idx = _find_anchor_index("last_payment_folio")
+    if lp_folio_idx is not None:
+        lp_folio = _scan_after(lp_folio_idx, re.compile(r"(\d{5,6})"), max_lines=20)
+        if lp_folio:
+            attrs["last_payment_folio"] = lp_folio
+
+    return attrs
+
 
 def _gc_fix_year(date_str: str, expected_year: str) -> str:
     """Replace a garbled 4-digit year in *date_str* with *expected_year*.
@@ -1590,7 +1891,10 @@ def _parse_meter_reading(raw: str) -> float:
     return _parse_consumption_to_float(raw)
 
 
-def _try_ocr_pdf_via_ocrspace(pdf_path: str, api_key: str) -> str:
+def _try_ocr_pdf_via_ocrspace(
+    pdf_path: str,
+    api_key: str,
+) -> tuple[str, list[dict[str, Any]]]:
     """Render the first page of *pdf_path* and OCR it via the OCR.space cloud API.
 
     Uses the free `OCR.space <https://ocr.space/OCRAPI>`_ REST API
@@ -1608,7 +1912,9 @@ def _try_ocr_pdf_via_ocrspace(pdf_path: str, api_key: str) -> str:
         api_key:  OCR.space API key (``"helloworld"`` for the free demo tier).
 
     Returns:
-        Combined OCR plain text from both passes, or an empty string on error.
+        ``(ocr_text, parsed_results)`` where *ocr_text* is the combined plain
+        text from both passes and *parsed_results* is the combined OCR.space
+        ``ParsedResults`` list.
     """
     import base64
     import io
@@ -1637,15 +1943,15 @@ def _try_ocr_pdf_via_ocrspace(pdf_path: str, api_key: str) -> str:
         img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
-    def _call_ocrspace(img: "Image.Image") -> str:
-        """POST *img* to OCR.space and return the extracted text."""
+    def _call_ocrspace(img: "Image.Image") -> tuple[str, list[dict[str, Any]]]:
+        """POST *img* to OCR.space and return extracted text + raw parsed results."""
         payload = urllib.parse.urlencode(
             {
                 "apikey": api_key,
                 "base64Image": f"data:image/png;base64,{_png_b64(img)}",
                 "language": "spa",
                 "OCREngine": "2",
-                "isOverlayRequired": "false",
+                "isOverlayRequired": "true",
             }
         ).encode("utf-8")
         req = urllib.request.Request(
@@ -1662,9 +1968,10 @@ def _try_ocr_pdf_via_ocrspace(pdf_path: str, api_key: str) -> str:
                 pdf_path,
                 data.get("ErrorMessage"),
             )
-            return ""
+            return "", []
         results = data.get("ParsedResults") or []
-        return "\n".join(r.get("ParsedText", "") for r in results)
+        typed_results = [r for r in results if isinstance(r, dict)]
+        return "\n".join(r.get("ParsedText", "") for r in typed_results), typed_results
 
     try:
         doc = pdfium.PdfDocument(pdf_path)
@@ -1675,7 +1982,7 @@ def _try_ocr_pdf_via_ocrspace(pdf_path: str, api_key: str) -> str:
         img_full = bitmap.to_pil()
 
         # Pass 1 — full page
-        text_full = _call_ocrspace(img_full)
+        text_full, raw_full = _call_ocrspace(img_full)
 
         # Pass 2 — agua caliente area crop (≈ 30–55 % from top), enlarged 2×
         img_width = img_full.width
@@ -1689,9 +1996,9 @@ def _try_ocr_pdf_via_ocrspace(pdf_path: str, api_key: str) -> str:
             ),
             _lanczos,
         )
-        text_crop2 = _call_ocrspace(crop2)
+        text_crop2, raw_crop2 = _call_ocrspace(crop2)
 
-        return text_full + "\n" + text_crop2
+        return text_full + "\n" + text_crop2, [*raw_full, *raw_crop2]
 
     except urllib.error.URLError as exc:
         _LOGGER.debug(
@@ -1700,10 +2007,10 @@ def _try_ocr_pdf_via_ocrspace(pdf_path: str, api_key: str) -> str:
             pdf_path,
             exc,
         )
-        return ""
+        return "", []
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("OCR.space failed for '%s': %s", pdf_path, err)
-        return ""
+        return "", []
 
 
 def _try_ocr_pdf(
@@ -1722,8 +2029,10 @@ def _try_ocr_pdf(
                           for a higher-quota free key).
 
     Returns:
-        ``(ocr_text, [])`` where *ocr_text* is the extracted text, or
-        ``("", [])`` when no key is configured or the call fails.
+        ``(ocr_text, parsed_results)`` where *ocr_text* is the extracted text
+        and *parsed_results* is the OCR.space ``ParsedResults`` payload used by
+        template-guided extraction; returns ``("", [])`` when no key is
+        configured or the call fails.
     """
     global _ocr_available  # noqa: PLW0603
 
@@ -1736,9 +2045,9 @@ def _try_ocr_pdf(
     # specific PDF yields any text (transient API errors or PDFs without
     # hot-water content must not trigger the "key not configured" notification).
     _ocr_available = True
-    space_text = _try_ocr_pdf_via_ocrspace(pdf_path, ocrspace_api_key)
+    space_text, space_raw = _try_ocr_pdf_via_ocrspace(pdf_path, ocrspace_api_key)
     if space_text:
-        return space_text, []
+        return space_text, space_raw
     _LOGGER.debug("OCR.space returned no text for '%s'", pdf_path)
     return "", []
 
@@ -2291,6 +2600,14 @@ def _extract_common_expenses_pdf_attributes(
             if lp_folio_ocr_m:
                 attrs["last_payment_folio"] = lp_folio_ocr_m.group(1)
                 _confidence["last_payment_folio"] = CONF_SCORE_OCR
+
+            # Template-guided OCR JSON extraction (v1.3.0):
+            # Use the markdown structure as anchor reference to read OCR-space
+            # JSON overlay lines and override any OCR-text regex misreads.
+            template_json_attrs = _extract_common_expenses_from_ocr_json(_ocr_raw)
+            for key, value in template_json_attrs.items():
+                attrs[key] = value
+                _confidence[key] = CONF_SCORE_OCR
 
     # ------------------------------------------------------------------
     # Combined address for binary-sensor display
