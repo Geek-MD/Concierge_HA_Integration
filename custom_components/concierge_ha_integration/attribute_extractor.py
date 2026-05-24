@@ -1557,6 +1557,10 @@ _GC_DATE_RE = re.compile(r"(\d{2}[/-]\d{2}[/-]\d{4})")
 _GC_AMOUNT_CAPTURE_RE = re.compile(
     r"\$?\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
 )
+_GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE = re.compile(
+    r"\$\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
+)
+_GC_METER_VALUE_RE = re.compile(r"(\d{1,3}[,.]\d{6})")
 
 
 def _normalize_gc_anchor_text(value: str) -> str:
@@ -1720,9 +1724,37 @@ def _extract_common_expenses_from_ocr_json(
 
     bld_total_idx = _find_anchor_index("building_total_expense")
     if bld_total_idx is not None:
-        bld_total_raw = _scan_after(bld_total_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=5)
+        bld_total_raw = _scan_after(
+            bld_total_idx,
+            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
+            max_lines=5,
+        )
         if bld_total_raw:
             attrs["building_total_expense"] = _parse_amount_to_int(bld_total_raw)
+
+    monto_pagar_idx = next(
+        (
+            idx
+            for idx, line in enumerate(norm_lines)
+            if "monto a pagar" in line
+        ),
+        None,
+    )
+    if monto_pagar_idx is not None:
+        amount_values = [
+            _parse_amount_to_int(match.group(1))
+            for line in best_lines[monto_pagar_idx + 1 :]
+            if (match := _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE.search(line))
+        ]
+        if len(amount_values) >= 8:
+            attrs["gastos_comunes_amount"] = amount_values[0]
+            attrs["fondos_amount"] = amount_values[1]
+            attrs["subtotal_departamento"] = amount_values[2]
+            attrs["hot_water_amount"] = amount_values[3]
+            attrs["subtotal_consumo"] = amount_values[4]
+            attrs["cargo_fijo"] = amount_values[5]
+            attrs["subtotal_recargos"] = amount_values[6]
+            attrs["total_amount"] = amount_values[7]
 
     concepto_idx = _find_anchor_index("concepto")
     gasto_idx = None
@@ -1731,41 +1763,56 @@ def _extract_common_expenses_from_ocr_json(
             if "gasto comun" in norm_lines[idx]:
                 gasto_idx = idx
                 break
-    if gasto_idx is not None:
-        gasto_raw = _scan_after(gasto_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=6)
+    if gasto_idx is not None and "gastos_comunes_amount" not in attrs:
+        gasto_raw = _scan_after(gasto_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=6)
         if gasto_raw:
             attrs["gastos_comunes_amount"] = _parse_amount_to_int(gasto_raw)
 
     fondos_idx = _find_anchor_index("fondos_amount")
-    if fondos_idx is not None:
-        fondos_raw = _scan_after(fondos_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=6)
+    if fondos_idx is not None and "fondos_amount" not in attrs:
+        fondos_raw = _scan_after(fondos_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=6)
         if fondos_raw:
             attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
-            pct_match = re.search(r"fondos\s+(\d+)\s*%", norm_lines[fondos_idx])
+            pct_match = re.search(r"fondos\s+(\d+)", norm_lines[fondos_idx])
             if pct_match:
                 attrs["fondos_pct"] = int(pct_match.group(1))
+    elif fondos_idx is not None:
+        pct_match = re.search(r"fondos\s+(\d+)", norm_lines[fondos_idx])
+        if pct_match:
+            attrs["fondos_pct"] = int(pct_match.group(1))
 
     sub_depto_idx = _find_anchor_index("subtotal_departamento")
-    if sub_depto_idx is not None:
-        sub_depto_raw = _scan_after(sub_depto_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=4)
+    if sub_depto_idx is not None and "subtotal_departamento" not in attrs:
+        sub_depto_raw = _scan_after(
+            sub_depto_idx,
+            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
+            max_lines=4,
+        )
         if sub_depto_raw:
             attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
 
     prev_idx = _find_anchor_index("hot_water_prev")
     if prev_idx is not None:
-        prev_raw = _scan_after(prev_idx, re.compile(r"([\d.,]{6,}\d{3})"), max_lines=4)
+        prev_raw = _scan_after(prev_idx, _GC_METER_VALUE_RE, max_lines=4)
         if prev_raw:
             attrs["hot_water_reading_prev"] = _parse_meter_reading(prev_raw)
 
     curr_idx = _find_anchor_index("hot_water_curr")
     if curr_idx is not None:
-        curr_raw = _scan_after(curr_idx, re.compile(r"([\d.,]{6,}\d{3})"), max_lines=4)
+        curr_raw = _scan_after(curr_idx, _GC_METER_VALUE_RE, max_lines=4)
         if curr_raw:
             attrs["hot_water_reading_curr"] = _parse_meter_reading(curr_raw)
 
     consumo_idx = _find_anchor_index("hot_water_consumption")
+    consumo_candidates = [
+        idx
+        for idx, line in enumerate(norm_lines)
+        if "consumos" in line and "generales" not in line
+    ]
+    if consumo_candidates:
+        consumo_idx = consumo_candidates[0]
     if consumo_idx is not None:
-        consumo_raw = _scan_after(consumo_idx, re.compile(r"([\d.,]{6,}\d{3})"), max_lines=6)
+        consumo_raw = _scan_after(consumo_idx, _GC_METER_VALUE_RE, max_lines=6)
         if consumo_raw:
             attrs["hot_water_consumption"] = _parse_meter_reading(consumo_raw)
             attrs["hot_water_consumption_unit"] = "m³"
@@ -1777,28 +1824,36 @@ def _extract_common_expenses_from_ocr_json(
             attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_raw)
 
     hw_amount_idx = _find_anchor_index("hot_water_amount")
-    if hw_amount_idx is not None:
-        hw_amount_raw = _scan_after(hw_amount_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=4)
+    if hw_amount_idx is not None and "hot_water_amount" not in attrs:
+        hw_amount_raw = _scan_after(
+            hw_amount_idx,
+            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
+            max_lines=4,
+        )
         if hw_amount_raw:
             subtotal_consumo = _parse_amount_to_int(hw_amount_raw)
             attrs["subtotal_consumo"] = subtotal_consumo
             attrs["hot_water_amount"] = subtotal_consumo
 
     cargo_idx = _find_anchor_index("cargo_fijo")
-    if cargo_idx is not None:
-        cargo_raw = _scan_after(cargo_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=4)
+    if cargo_idx is not None and "cargo_fijo" not in attrs:
+        cargo_raw = _scan_after(cargo_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=4)
         if cargo_raw:
             attrs["cargo_fijo"] = _parse_amount_to_int(cargo_raw)
 
     recargos_idx = _find_anchor_index("subtotal_recargos")
-    if recargos_idx is not None:
-        recargos_raw = _scan_after(recargos_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=4)
+    if recargos_idx is not None and "subtotal_recargos" not in attrs:
+        recargos_raw = _scan_after(
+            recargos_idx,
+            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
+            max_lines=4,
+        )
         if recargos_raw:
             attrs["subtotal_recargos"] = _parse_amount_to_int(recargos_raw)
 
     total_idx = _find_anchor_index("total_amount")
-    if total_idx is not None:
-        total_raw = _scan_after(total_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=5)
+    if total_idx is not None and "total_amount" not in attrs:
+        total_raw = _scan_after(total_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=5)
         if total_raw:
             attrs["total_amount"] = _parse_amount_to_int(total_raw)
 
@@ -1811,7 +1866,11 @@ def _extract_common_expenses_from_ocr_json(
 
     lp_amount_idx = _find_anchor_index("last_payment_amount")
     if lp_amount_idx is not None:
-        lp_amount_raw = _scan_after(lp_amount_idx, _GC_AMOUNT_CAPTURE_RE, max_lines=20)
+        lp_amount_raw = _scan_after(
+            lp_amount_idx,
+            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
+            max_lines=20,
+        )
         if lp_amount_raw:
             attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_raw)
 
@@ -1933,7 +1992,7 @@ def _try_ocr_pdf_via_ocrspace(
             pdf_path,
             exc,
         )
-        return ""
+        return "", []
 
     _lanczos = getattr(Image, "Resampling", Image).LANCZOS
     _OCRSPACE_URL = "https://api.ocr.space/parse/image"  # noqa: N806
