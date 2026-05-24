@@ -1,0 +1,1651 @@
+{
+  "ParsedResults": [
+    {
+      "Overlay": {
+        "Lines": [
+          {
+            "LineText": "¡Paga tu Gasto Común en lineal",
+            "Words": [
+              {
+                "WordText": "¡",
+                "Left": 1578,
+                "Top": 157,
+                "Height": 44,
+                "Width": 77
+              },
+              {
+                "WordText": "Paga",
+                "Left": 1578,
+                "Top": 157,
+                "Height": 44,
+                "Width": 77
+              },
+              {
+                "WordText": "tu",
+                "Left": 1661,
+                "Top": 157,
+                "Height": 44,
+                "Width": 33
+              },
+              {
+                "WordText": "Gasto",
+                "Left": 1699,
+                "Top": 157,
+                "Height": 44,
+                "Width": 88
+              },
+              {
+                "WordText": "Común",
+                "Left": 1793,
+                "Top": 157,
+                "Height": 44,
+                "Width": 99
+              },
+              {
+                "WordText": "en",
+                "Left": 1897,
+                "Top": 157,
+                "Height": 44,
+                "Width": 33
+              },
+              {
+                "WordText": "lineal",
+                "Left": 1936,
+                "Top": 157,
+                "Height": 44,
+                "Width": 84
+              }
+            ],
+            "MaxHeight": 44,
+            "MinTop": 157
+          },
+          {
+            "LineText": "Ingresa a: https://pagos.kastor.cl",
+            "Words": [
+              {
+                "WordText": "Ingresa",
+                "Left": 1572,
+                "Top": 196,
+                "Height": 41,
+                "Width": 106
+              },
+              {
+                "WordText": "a",
+                "Left": 1681,
+                "Top": 199,
+                "Height": 39,
+                "Width": 30
+              },
+              {
+                "WordText": ":",
+                "Left": 1681,
+                "Top": 199,
+                "Height": 39,
+                "Width": 30
+              },
+              {
+                "WordText": "https",
+                "Left": 1715,
+                "Top": 200,
+                "Height": 47,
+                "Width": 286
+              },
+              {
+                "WordText": "://",
+                "Left": 1715,
+                "Top": 200,
+                "Height": 47,
+                "Width": 286
+              },
+              {
+                "WordText": "pagos.kastor.cl",
+                "Left": 1715,
+                "Top": 200,
+                "Height": 47,
+                "Width": 286
+              }
+            ],
+            "MaxHeight": 51,
+            "MinTop": 196
+          },
+          {
+            "LineText": "Codigo cliente: D5EO5F-34AF6",
+            "Words": [
+              {
+                "WordText": "Codigo",
+                "Left": 1573,
+                "Top": 235,
+                "Height": 39,
+                "Width": 97
+              },
+              {
+                "WordText": "cliente",
+                "Left": 1675,
+                "Top": 236,
+                "Height": 39,
+                "Width": 97
+              },
+              {
+                "WordText": ":",
+                "Left": 1675,
+                "Top": 236,
+                "Height": 39,
+                "Width": 97
+              },
+              {
+                "WordText": "D5EO5F",
+                "Left": 1778,
+                "Top": 235,
+                "Height": 39,
+                "Width": 212
+              },
+              {
+                "WordText": "-",
+                "Left": 1778,
+                "Top": 235,
+                "Height": 39,
+                "Width": 212
+              },
+              {
+                "WordText": "34AF6",
+                "Left": 1778,
+                "Top": 235,
+                "Height": 39,
+                "Width": 212
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 235
+          },
+          {
+            "LineText": "COE",
+            "Words": [
+              {
+                "WordText": "COE",
+                "Left": 1823,
+                "Top": 373,
+                "Height": 113,
+                "Width": 279
+              }
+            ],
+            "MaxHeight": 113,
+            "MinTop": 373
+          },
+          {
+            "LineText": "ADMINISTRACIONES",
+            "Words": [
+              {
+                "WordText": "ADMINISTRACIONES",
+                "Left": 1817,
+                "Top": 484,
+                "Height": 45,
+                "Width": 282
+              }
+            ],
+            "MaxHeight": 45,
+            "MinTop": 484
+          },
+          {
+            "LineText": "Fecha Emisión:",
+            "Words": [
+              {
+                "WordText": "Fecha",
+                "Left": 1730,
+                "Top": 540,
+                "Height": 29,
+                "Width": 91
+              },
+              {
+                "WordText": "Emisión",
+                "Left": 1824,
+                "Top": 540,
+                "Height": 29,
+                "Width": 112
+              },
+              {
+                "WordText": ":",
+                "Left": 1824,
+                "Top": 540,
+                "Height": 29,
+                "Width": 112
+              }
+            ],
+            "MaxHeight": 29,
+            "MinTop": 540
+          },
+          {
+            "LineText": "21-05-2026",
+            "Words": [
+              {
+                "WordText": "21",
+                "Left": 2009,
+                "Top": 549,
+                "Height": 35,
+                "Width": 162
+              },
+              {
+                "WordText": "-",
+                "Left": 2009,
+                "Top": 549,
+                "Height": 35,
+                "Width": 162
+              },
+              {
+                "WordText": "05",
+                "Left": 2009,
+                "Top": 549,
+                "Height": 35,
+                "Width": 162
+              },
+              {
+                "WordText": "-",
+                "Left": 2009,
+                "Top": 549,
+                "Height": 35,
+                "Width": 162
+              },
+              {
+                "WordText": "2026",
+                "Left": 2009,
+                "Top": 549,
+                "Height": 35,
+                "Width": 162
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 549
+          },
+          {
+            "LineText": "Pagar Hasta:",
+            "Words": [
+              {
+                "WordText": "Pagar",
+                "Left": 1730,
+                "Top": 574,
+                "Height": 39,
+                "Width": 88
+              },
+              {
+                "WordText": "Hasta",
+                "Left": 1823,
+                "Top": 574,
+                "Height": 39,
+                "Width": 84
+              },
+              {
+                "WordText": ":",
+                "Left": 1823,
+                "Top": 574,
+                "Height": 39,
+                "Width": 84
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 574
+          },
+          {
+            "LineText": "31-05-2026",
+            "Words": [
+              {
+                "WordText": "31",
+                "Left": 2019,
+                "Top": 583,
+                "Height": 35,
+                "Width": 152
+              },
+              {
+                "WordText": "-",
+                "Left": 2019,
+                "Top": 583,
+                "Height": 35,
+                "Width": 152
+              },
+              {
+                "WordText": "05",
+                "Left": 2019,
+                "Top": 583,
+                "Height": 35,
+                "Width": 152
+              },
+              {
+                "WordText": "-",
+                "Left": 2019,
+                "Top": 583,
+                "Height": 35,
+                "Width": 152
+              },
+              {
+                "WordText": "2026",
+                "Left": 2019,
+                "Top": 583,
+                "Height": 35,
+                "Width": 152
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 583
+          },
+          {
+            "LineText": "Edificio Jose Miguel",
+            "Words": [
+              {
+                "WordText": "Edificio",
+                "Left": 250,
+                "Top": 569,
+                "Height": 35,
+                "Width": 96
+              },
+              {
+                "WordText": "Jose",
+                "Left": 351,
+                "Top": 569,
+                "Height": 35,
+                "Width": 61
+              },
+              {
+                "WordText": "Miguel",
+                "Left": 416,
+                "Top": 569,
+                "Height": 35,
+                "Width": 93
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 569
+          },
+          {
+            "LineText": "RUT: 56080400-8",
+            "Words": [
+              {
+                "WordText": "RUT",
+                "Left": 245,
+                "Top": 608,
+                "Height": 40,
+                "Width": 75
+              },
+              {
+                "WordText": ":",
+                "Left": 245,
+                "Top": 608,
+                "Height": 40,
+                "Width": 75
+              },
+              {
+                "WordText": "56080400",
+                "Left": 325,
+                "Top": 608,
+                "Height": 40,
+                "Width": 160
+              },
+              {
+                "WordText": "-",
+                "Left": 325,
+                "Top": 608,
+                "Height": 40,
+                "Width": 160
+              },
+              {
+                "WordText": "8",
+                "Left": 325,
+                "Top": 608,
+                "Height": 40,
+                "Width": 160
+              }
+            ],
+            "MaxHeight": 40,
+            "MinTop": 608
+          },
+          {
+            "LineText": "Curico 380 - Santiago",
+            "Words": [
+              {
+                "WordText": "Curico",
+                "Left": 250,
+                "Top": 643,
+                "Height": 39,
+                "Width": 83
+              },
+              {
+                "WordText": "380",
+                "Left": 338,
+                "Top": 643,
+                "Height": 39,
+                "Width": 54
+              },
+              {
+                "WordText": "-",
+                "Left": 396,
+                "Top": 643,
+                "Height": 39,
+                "Width": 15
+              },
+              {
+                "WordText": "Santiago",
+                "Left": 416,
+                "Top": 643,
+                "Height": 39,
+                "Width": 118
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 643
+          },
+          {
+            "LineText": "Santiago",
+            "Words": [
+              {
+                "WordText": "Santiago",
+                "Left": 250,
+                "Top": 687,
+                "Height": 34,
+                "Width": 118
+              }
+            ],
+            "MaxHeight": 34,
+            "MinTop": 687
+          },
+          {
+            "LineText": "Fono: +56359280",
+            "Words": [
+              {
+                "WordText": "Fono",
+                "Left": 250,
+                "Top": 719,
+                "Height": 41,
+                "Width": 74
+              },
+              {
+                "WordText": ":",
+                "Left": 250,
+                "Top": 719,
+                "Height": 40,
+                "Width": 74
+              },
+              {
+                "WordText": "+",
+                "Left": 328,
+                "Top": 720,
+                "Height": 42,
+                "Width": 158
+              },
+              {
+                "WordText": "56359280",
+                "Left": 328,
+                "Top": 720,
+                "Height": 42,
+                "Width": 158
+              }
+            ],
+            "MaxHeight": 44,
+            "MinTop": 719
+          },
+          {
+            "LineText": "44121821052026",
+            "Words": [
+              {
+                "WordText": "44121821052026",
+                "Left": 245,
+                "Top": 760,
+                "Height": 25,
+                "Width": 152
+              }
+            ],
+            "MaxHeight": 25,
+            "MinTop": 760
+          },
+          {
+            "LineText": "Copropietario",
+            "Words": [
+              {
+                "WordText": "Copropietario",
+                "Left": 255,
+                "Top": 907,
+                "Height": 45,
+                "Width": 201
+              }
+            ],
+            "MaxHeight": 45,
+            "MinTop": 907
+          },
+          {
+            "LineText": "Alicuota Total",
+            "Words": [
+              {
+                "WordText": "Alicuota",
+                "Left": 255,
+                "Top": 966,
+                "Height": 44,
+                "Width": 121
+              },
+              {
+                "WordText": "Total",
+                "Left": 382,
+                "Top": 966,
+                "Height": 44,
+                "Width": 79
+              }
+            ],
+            "MaxHeight": 44,
+            "MinTop": 966
+          },
+          {
+            "LineText": "Gasto común a Prorratear",
+            "Words": [
+              {
+                "WordText": "Gasto",
+                "Left": 255,
+                "Top": 1030,
+                "Height": 40,
+                "Width": 90
+              },
+              {
+                "WordText": "común",
+                "Left": 350,
+                "Top": 1030,
+                "Height": 40,
+                "Width": 100
+              },
+              {
+                "WordText": "a",
+                "Left": 455,
+                "Top": 1030,
+                "Height": 40,
+                "Width": 20
+              },
+              {
+                "WordText": "Prorratear",
+                "Left": 480,
+                "Top": 1030,
+                "Height": 40,
+                "Width": 152
+              }
+            ],
+            "MaxHeight": 40,
+            "MinTop": 1030
+          },
+          {
+            "LineText": "Nota de Cobro Abril 2026",
+            "Words": [
+              {
+                "WordText": "Nota",
+                "Left": 877,
+                "Top": 829,
+                "Height": 49,
+                "Width": 92
+              },
+              {
+                "WordText": "de",
+                "Left": 975,
+                "Top": 829,
+                "Height": 49,
+                "Width": 43
+              },
+              {
+                "WordText": "Cobro",
+                "Left": 1024,
+                "Top": 829,
+                "Height": 49,
+                "Width": 110
+              },
+              {
+                "WordText": "Abril",
+                "Left": 1140,
+                "Top": 829,
+                "Height": 49,
+                "Width": 92
+              },
+              {
+                "WordText": "2026",
+                "Left": 1238,
+                "Top": 829,
+                "Height": 49,
+                "Width": 85
+              }
+            ],
+            "MaxHeight": 49,
+            "MinTop": 829
+          },
+          {
+            "LineText": "JORGE CORDERO ORELLANA",
+            "Words": [
+              {
+                "WordText": "JORGE",
+                "Left": 809,
+                "Top": 898,
+                "Height": 44,
+                "Width": 116
+              },
+              {
+                "WordText": "CORDERO",
+                "Left": 930,
+                "Top": 898,
+                "Height": 44,
+                "Width": 149
+              },
+              {
+                "WordText": "ORELLANA",
+                "Left": 1084,
+                "Top": 898,
+                "Height": 44,
+                "Width": 171
+              }
+            ],
+            "MaxHeight": 44,
+            "MinTop": 898
+          },
+          {
+            "LineText": "0,95110 %",
+            "Words": [
+              {
+                "WordText": "0,95110",
+                "Left": 960,
+                "Top": 961,
+                "Height": 41,
+                "Width": 117
+              },
+              {
+                "WordText": "%",
+                "Left": 1082,
+                "Top": 961,
+                "Height": 39,
+                "Width": 31
+              }
+            ],
+            "MaxHeight": 41,
+            "MinTop": 961
+          },
+          {
+            "LineText": "$ 13.890.556",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 946,
+                "Top": 1025,
+                "Height": 39,
+                "Width": 24
+              },
+              {
+                "WordText": "13.890.556",
+                "Left": 975,
+                "Top": 1025,
+                "Height": 39,
+                "Width": 157
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 1025
+          },
+          {
+            "LineText": "Concepto",
+            "Words": [
+              {
+                "WordText": "Concepto",
+                "Left": 818,
+                "Top": 1158,
+                "Height": 29,
+                "Width": 132
+              }
+            ],
+            "MaxHeight": 29,
+            "MinTop": 1158
+          },
+          {
+            "LineText": "Gasto Común",
+            "Words": [
+              {
+                "WordText": "Gasto",
+                "Left": 250,
+                "Top": 1197,
+                "Height": 35,
+                "Width": 83
+              },
+              {
+                "WordText": "Común",
+                "Left": 337,
+                "Top": 1197,
+                "Height": 35,
+                "Width": 99
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 1197
+          },
+          {
+            "LineText": "PROVISION DE FONDOS 5% DEL GASTO MENSUAL",
+            "Words": [
+              {
+                "WordText": "PROVISION",
+                "Left": 245,
+                "Top": 1231,
+                "Height": 39,
+                "Width": 171
+              },
+              {
+                "WordText": "DE",
+                "Left": 421,
+                "Top": 1232,
+                "Height": 39,
+                "Width": 44
+              },
+              {
+                "WordText": "FONDOS",
+                "Left": 469,
+                "Top": 1232,
+                "Height": 39,
+                "Width": 127
+              },
+              {
+                "WordText": "5",
+                "Left": 601,
+                "Top": 1232,
+                "Height": 39,
+                "Width": 49
+              },
+              {
+                "WordText": "%",
+                "Left": 601,
+                "Top": 1232,
+                "Height": 39,
+                "Width": 49
+              },
+              {
+                "WordText": "DEL",
+                "Left": 655,
+                "Top": 1232,
+                "Height": 39,
+                "Width": 63
+              },
+              {
+                "WordText": "GASTO",
+                "Left": 723,
+                "Top": 1232,
+                "Height": 39,
+                "Width": 107
+              },
+              {
+                "WordText": "MENSUAL",
+                "Left": 835,
+                "Top": 1231,
+                "Height": 39,
+                "Width": 145
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 1231
+          },
+          {
+            "LineText": "Consumos Generales",
+            "Words": [
+              {
+                "WordText": "Consumos",
+                "Left": 387,
+                "Top": 1354,
+                "Height": 30,
+                "Width": 157
+              },
+              {
+                "WordText": "Generales",
+                "Left": 548,
+                "Top": 1354,
+                "Height": 30,
+                "Width": 148
+              }
+            ],
+            "MaxHeight": 30,
+            "MinTop": 1354
+          },
+          {
+            "LineText": "Aqua Caliente",
+            "Words": [
+              {
+                "WordText": "Aqua",
+                "Left": 441,
+                "Top": 1388,
+                "Height": 34,
+                "Width": 76
+              },
+              {
+                "WordText": "Caliente",
+                "Left": 522,
+                "Top": 1388,
+                "Height": 34,
+                "Width": 115
+              }
+            ],
+            "MaxHeight": 34,
+            "MinTop": 1388
+          },
+          {
+            "LineText": "Lectura Anterior",
+            "Words": [
+              {
+                "WordText": "Lectura",
+                "Left": 872,
+                "Top": 1349,
+                "Height": 30,
+                "Width": 116
+              },
+              {
+                "WordText": "Anterior",
+                "Left": 992,
+                "Top": 1349,
+                "Height": 30,
+                "Width": 116
+              }
+            ],
+            "MaxHeight": 30,
+            "MinTop": 1349
+          },
+          {
+            "LineText": "594,996000",
+            "Words": [
+              {
+                "WordText": "594,996000",
+                "Left": 960,
+                "Top": 1383,
+                "Height": 40,
+                "Width": 172
+              }
+            ],
+            "MaxHeight": 40,
+            "MinTop": 1383
+          },
+          {
+            "LineText": "Lectura Actual",
+            "Words": [
+              {
+                "WordText": "Lectura",
+                "Left": 1181,
+                "Top": 1344,
+                "Height": 29,
+                "Width": 112
+              },
+              {
+                "WordText": "Actual",
+                "Left": 1297,
+                "Top": 1344,
+                "Height": 29,
+                "Width": 95
+              }
+            ],
+            "MaxHeight": 29,
+            "MinTop": 1344
+          },
+          {
+            "LineText": "599,286000",
+            "Words": [
+              {
+                "WordText": "599,286000",
+                "Left": 1255,
+                "Top": 1378,
+                "Height": 39,
+                "Width": 172
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 1378
+          },
+          {
+            "LineText": "Depto. 515",
+            "Words": [
+              {
+                "WordText": "Depto",
+                "Left": 1407,
+                "Top": 824,
+                "Height": 49,
+                "Width": 117
+              },
+              {
+                "WordText": ".",
+                "Left": 1407,
+                "Top": 824,
+                "Height": 49,
+                "Width": 117
+              },
+              {
+                "WordText": "515",
+                "Left": 1529,
+                "Top": 824,
+                "Height": 49,
+                "Width": 68
+              }
+            ],
+            "MaxHeight": 49,
+            "MinTop": 824
+          },
+          {
+            "LineText": "Fecha ultimo Pago",
+            "Words": [
+              {
+                "WordText": "Fecha",
+                "Left": 1397,
+                "Top": 893,
+                "Height": 34,
+                "Width": 89
+              },
+              {
+                "WordText": "ultimo",
+                "Left": 1490,
+                "Top": 893,
+                "Height": 34,
+                "Width": 94
+              },
+              {
+                "WordText": "Pago",
+                "Left": 1588,
+                "Top": 893,
+                "Height": 34,
+                "Width": 73
+              }
+            ],
+            "MaxHeight": 34,
+            "MinTop": 893
+          },
+          {
+            "LineText": "Monto ultimo Pago",
+            "Words": [
+              {
+                "WordText": "Monto",
+                "Left": 1397,
+                "Top": 952,
+                "Height": 39,
+                "Width": 88
+              },
+              {
+                "WordText": "ultimo",
+                "Left": 1490,
+                "Top": 952,
+                "Height": 39,
+                "Width": 93
+              },
+              {
+                "WordText": "Pago",
+                "Left": 1587,
+                "Top": 952,
+                "Height": 39,
+                "Width": 79
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 952
+          },
+          {
+            "LineText": "Follo ultimo Pago",
+            "Words": [
+              {
+                "WordText": "Follo",
+                "Left": 1402,
+                "Top": 1020,
+                "Height": 29,
+                "Width": 80
+              },
+              {
+                "WordText": "ultimo",
+                "Left": 1485,
+                "Top": 1021,
+                "Height": 29,
+                "Width": 94
+              },
+              {
+                "WordText": "Pago",
+                "Left": 1583,
+                "Top": 1020,
+                "Height": 29,
+                "Width": 73
+              }
+            ],
+            "MaxHeight": 29,
+            "MinTop": 1020
+          },
+          {
+            "LineText": "Detalle",
+            "Words": [
+              {
+                "WordText": "Detalle",
+                "Left": 1642,
+                "Top": 1143,
+                "Height": 29,
+                "Width": 98
+              }
+            ],
+            "MaxHeight": 29,
+            "MinTop": 1143
+          },
+          {
+            "LineText": "0,95110%",
+            "Words": [
+              {
+                "WordText": "0,95110",
+                "Left": 1607,
+                "Top": 1175,
+                "Height": 44,
+                "Width": 158
+              },
+              {
+                "WordText": "%",
+                "Left": 1607,
+                "Top": 1175,
+                "Height": 44,
+                "Width": 158
+              }
+            ],
+            "MaxHeight": 44,
+            "MinTop": 1175
+          },
+          {
+            "LineText": "5,00%",
+            "Words": [
+              {
+                "WordText": "5,00",
+                "Left": 1637,
+                "Top": 1217,
+                "Height": 39,
+                "Width": 98
+              },
+              {
+                "WordText": "%",
+                "Left": 1637,
+                "Top": 1217,
+                "Height": 39,
+                "Width": 98
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 1217
+          },
+          {
+            "LineText": "Subtotal Departamento",
+            "Words": [
+              {
+                "WordText": "Subtotal",
+                "Left": 1519,
+                "Top": 1256,
+                "Height": 35,
+                "Width": 122
+              },
+              {
+                "WordText": "Departamento",
+                "Left": 1646,
+                "Top": 1256,
+                "Height": 35,
+                "Width": 202
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 1256
+          },
+          {
+            "LineText": "Consumos",
+            "Words": [
+              {
+                "WordText": "Consumos",
+                "Left": 1505,
+                "Top": 1339,
+                "Height": 31,
+                "Width": 152
+              }
+            ],
+            "MaxHeight": 31,
+            "MinTop": 1339
+          },
+          {
+            "LineText": "4,290000",
+            "Words": [
+              {
+                "WordText": "4,290000",
+                "Left": 1583,
+                "Top": 1372,
+                "Height": 37,
+                "Width": 143
+              }
+            ],
+            "MaxHeight": 37,
+            "MinTop": 1372
+          },
+          {
+            "LineText": "Subtotal Consumo",
+            "Words": [
+              {
+                "WordText": "Subtotal",
+                "Left": 1544,
+                "Top": 1413,
+                "Height": 30,
+                "Width": 128
+              },
+              {
+                "WordText": "Consumo",
+                "Left": 1675,
+                "Top": 1413,
+                "Height": 30,
+                "Width": 138
+              }
+            ],
+            "MaxHeight": 30,
+            "MinTop": 1413
+          },
+          {
+            "LineText": "Valor",
+            "Words": [
+              {
+                "WordText": "Valor",
+                "Left": 1789,
+                "Top": 1334,
+                "Height": 29,
+                "Width": 78
+              }
+            ],
+            "MaxHeight": 29,
+            "MinTop": 1334
+          },
+          {
+            "LineText": "6.817,72",
+            "Words": [
+              {
+                "WordText": "6.817,72",
+                "Left": 1789,
+                "Top": 1364,
+                "Height": 44,
+                "Width": 127
+              }
+            ],
+            "MaxHeight": 44,
+            "MinTop": 1364
+          },
+          {
+            "LineText": "Gastos por Unidad",
+            "Words": [
+              {
+                "WordText": "Gastos",
+                "Left": 1358,
+                "Top": 1506,
+                "Height": 35,
+                "Width": 101
+              },
+              {
+                "WordText": "por",
+                "Left": 1463,
+                "Top": 1506,
+                "Height": 35,
+                "Width": 48
+              },
+              {
+                "WordText": "Unidad",
+                "Left": 1515,
+                "Top": 1506,
+                "Height": 35,
+                "Width": 97
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 1506
+          },
+          {
+            "LineText": "Cargo Fijo",
+            "Words": [
+              {
+                "WordText": "Cargo",
+                "Left": 1059,
+                "Top": 1565,
+                "Height": 44,
+                "Width": 83
+              },
+              {
+                "WordText": "Fijo",
+                "Left": 1147,
+                "Top": 1565,
+                "Height": 44,
+                "Width": 54
+              }
+            ],
+            "MaxHeight": 44,
+            "MinTop": 1565
+          },
+          {
+            "LineText": "Subtotal Recargos",
+            "Words": [
+              {
+                "WordText": "Subtotal",
+                "Left": 1353,
+                "Top": 1668,
+                "Height": 35,
+                "Width": 127
+              },
+              {
+                "WordText": "Recargos",
+                "Left": 1484,
+                "Top": 1668,
+                "Height": 35,
+                "Width": 138
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 1668
+          },
+          {
+            "LineText": "Total del mes",
+            "Words": [
+              {
+                "WordText": "Total",
+                "Left": 1387,
+                "Top": 1721,
+                "Height": 30,
+                "Width": 79
+              },
+              {
+                "WordText": "del",
+                "Left": 1469,
+                "Top": 1721,
+                "Height": 30,
+                "Width": 45
+              },
+              {
+                "WordText": "mes",
+                "Left": 1518,
+                "Top": 1721,
+                "Height": 30,
+                "Width": 65
+              }
+            ],
+            "MaxHeight": 30,
+            "MinTop": 1721
+          },
+          {
+            "LineText": "Total a pagar obligaciones económicas",
+            "Words": [
+              {
+                "WordText": "Total",
+                "Left": 1211,
+                "Top": 1829,
+                "Height": 40,
+                "Width": 75
+              },
+              {
+                "WordText": "a",
+                "Left": 1291,
+                "Top": 1829,
+                "Height": 40,
+                "Width": 15
+              },
+              {
+                "WordText": "pagar",
+                "Left": 1311,
+                "Top": 1829,
+                "Height": 40,
+                "Width": 85
+              },
+              {
+                "WordText": "obligaciones",
+                "Left": 1401,
+                "Top": 1829,
+                "Height": 40,
+                "Width": 180
+              },
+              {
+                "WordText": "económicas",
+                "Left": 1586,
+                "Top": 1829,
+                "Height": 40,
+                "Width": 178
+              }
+            ],
+            "MaxHeight": 40,
+            "MinTop": 1829
+          },
+          {
+            "LineText": "24-04-2026",
+            "Words": [
+              {
+                "WordText": "24",
+                "Left": 1897,
+                "Top": 877,
+                "Height": 31,
+                "Width": 157
+              },
+              {
+                "WordText": "-",
+                "Left": 1897,
+                "Top": 877,
+                "Height": 31,
+                "Width": 157
+              },
+              {
+                "WordText": "04",
+                "Left": 1897,
+                "Top": 877,
+                "Height": 31,
+                "Width": 157
+              },
+              {
+                "WordText": "-",
+                "Left": 1897,
+                "Top": 877,
+                "Height": 31,
+                "Width": 157
+              },
+              {
+                "WordText": "2026",
+                "Left": 1897,
+                "Top": 877,
+                "Height": 31,
+                "Width": 157
+              }
+            ],
+            "MaxHeight": 31,
+            "MinTop": 877
+          },
+          {
+            "LineText": "$ 190.757",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 1907,
+                "Top": 937,
+                "Height": 35,
+                "Width": 27
+              },
+              {
+                "WordText": "190.757",
+                "Left": 1938,
+                "Top": 937,
+                "Height": 35,
+                "Width": 106
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 937
+          },
+          {
+            "LineText": "45313",
+            "Words": [
+              {
+                "WordText": "45313",
+                "Left": 1931,
+                "Top": 1001,
+                "Height": 34,
+                "Width": 93
+              }
+            ],
+            "MaxHeight": 34,
+            "MinTop": 1001
+          },
+          {
+            "LineText": "* Monto a pagar",
+            "Words": [
+              {
+                "WordText": "*",
+                "Left": 1936,
+                "Top": 1133,
+                "Height": 25,
+                "Width": 12
+              },
+              {
+                "WordText": "Monto",
+                "Left": 1951,
+                "Top": 1134,
+                "Height": 24,
+                "Width": 90
+              },
+              {
+                "WordText": "a",
+                "Left": 2044,
+                "Top": 1134,
+                "Height": 24,
+                "Width": 21
+              },
+              {
+                "WordText": "pagar",
+                "Left": 2068,
+                "Top": 1133,
+                "Height": 25,
+                "Width": 84
+              }
+            ],
+            "MaxHeight": 25,
+            "MinTop": 1133
+          },
+          {
+            "LineText": "$132.113",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2088,
+                "Top": 1163,
+                "Height": 39,
+                "Width": 137
+              },
+              {
+                "WordText": "132.113",
+                "Left": 2088,
+                "Top": 1163,
+                "Height": 39,
+                "Width": 137
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 1163
+          },
+          {
+            "LineText": "$ 6.606",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2117,
+                "Top": 1202,
+                "Height": 34,
+                "Width": 26
+              },
+              {
+                "WordText": "6.606",
+                "Left": 2147,
+                "Top": 1202,
+                "Height": 35,
+                "Width": 78
+              }
+            ],
+            "MaxHeight": 35,
+            "MinTop": 1202
+          },
+          {
+            "LineText": "$ 138.719",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2083,
+                "Top": 1241,
+                "Height": 39,
+                "Width": 25
+              },
+              {
+                "WordText": "138.719",
+                "Left": 2112,
+                "Top": 1241,
+                "Height": 40,
+                "Width": 123
+              }
+            ],
+            "MaxHeight": 40,
+            "MinTop": 1241
+          },
+          {
+            "LineText": "Total",
+            "Words": [
+              {
+                "WordText": "Total",
+                "Left": 2039,
+                "Top": 1324,
+                "Height": 29,
+                "Width": 78
+              }
+            ],
+            "MaxHeight": 29,
+            "MinTop": 1324
+          },
+          {
+            "LineText": "$29.248",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2098,
+                "Top": 1359,
+                "Height": 39,
+                "Width": 123
+              },
+              {
+                "WordText": "29.248",
+                "Left": 2098,
+                "Top": 1359,
+                "Height": 39,
+                "Width": 123
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 1359
+          },
+          {
+            "LineText": "$29.248",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2098,
+                "Top": 1398,
+                "Height": 39,
+                "Width": 132
+              },
+              {
+                "WordText": "29.248",
+                "Left": 2098,
+                "Top": 1398,
+                "Height": 39,
+                "Width": 132
+              }
+            ],
+            "MaxHeight": 39,
+            "MinTop": 1398
+          },
+          {
+            "LineText": "Monto",
+            "Words": [
+              {
+                "WordText": "Monto",
+                "Left": 2029,
+                "Top": 1496,
+                "Height": 29,
+                "Width": 93
+              }
+            ],
+            "MaxHeight": 29,
+            "MinTop": 1496
+          },
+          {
+            "LineText": "$11.223",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2093,
+                "Top": 1550,
+                "Height": 34,
+                "Width": 118
+              },
+              {
+                "WordText": "11.223",
+                "Left": 2093,
+                "Top": 1550,
+                "Height": 34,
+                "Width": 118
+              }
+            ],
+            "MaxHeight": 34,
+            "MinTop": 1550
+          },
+          {
+            "LineText": "$ 11.223",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2093,
+                "Top": 1658,
+                "Height": 34,
+                "Width": 21
+              },
+              {
+                "WordText": "11.223",
+                "Left": 2119,
+                "Top": 1658,
+                "Height": 34,
+                "Width": 97
+              }
+            ],
+            "MaxHeight": 34,
+            "MinTop": 1658
+          },
+          {
+            "LineText": "$ 179.190",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2068,
+                "Top": 1706,
+                "Height": 44,
+                "Width": 28
+              },
+              {
+                "WordText": "179.190",
+                "Left": 2101,
+                "Top": 1707,
+                "Height": 45,
+                "Width": 115
+              }
+            ],
+            "MaxHeight": 46,
+            "MinTop": 1706
+          },
+          {
+            "LineText": "$ 179.190",
+            "Words": [
+              {
+                "WordText": "$",
+                "Left": 2063,
+                "Top": 1821,
+                "Height": 40,
+                "Width": 35
+              },
+              {
+                "WordText": "179.190",
+                "Left": 2102,
+                "Top": 1819,
+                "Height": 41,
+                "Width": 109
+              }
+            ],
+            "MaxHeight": 41,
+            "MinTop": 1819
+          },
+          {
+            "LineText": "Administracion",
+            "Words": [
+              {
+                "WordText": "Administracion",
+                "Left": 1137,
+                "Top": 2177,
+                "Height": 42,
+                "Width": 206
+              }
+            ],
+            "MaxHeight": 42,
+            "MinTop": 2177
+          }
+        ],
+        "HasOverlay": true
+      },
+      "FileParseExitCode": 1,
+      "TextOrientation": "0",
+      "ParsedText": "¡Paga tu Gasto Común en lineal\nIngresa a: https://pagos.kastor.cl\nCodigo cliente: D5EO5F-34AF6\nCOE\nADMINISTRACIONES\nFecha Emisión:\n21-05-2026\nPagar Hasta:\n31-05-2026\nEdificio Jose Miguel\nRUT: 56080400-8\nCurico 380 - Santiago\nSantiago\nFono: +56359280\n44121821052026\nCopropietario\nAlicuota Total\nGasto común a Prorratear\nNota de Cobro Abril 2026\nJORGE CORDERO ORELLANA\n0,95110 %\n$ 13.890.556\nConcepto\nGasto Común\nPROVISION DE FONDOS 5% DEL GASTO MENSUAL\nConsumos Generales\nAqua Caliente\nLectura Anterior\n594,996000\nLectura Actual\n599,286000\nDepto. 515\nFecha ultimo Pago\nMonto ultimo Pago\nFollo ultimo Pago\nDetalle\n0,95110%\n5,00%\nSubtotal Departamento\nConsumos\n4,290000\nSubtotal Consumo\nValor\n6.817,72\nGastos por Unidad\nCargo Fijo\nSubtotal Recargos\nTotal del mes\nTotal a pagar obligaciones económicas\n24-04-2026\n$ 190.757\n45313\n* Monto a pagar\n$132.113\n$ 6.606\n$ 138.719\nTotal\n$29.248\n$29.248\nMonto\n$11.223\n$ 11.223\n$ 179.190\n$ 179.190\nAdministracion",
+      "ErrorMessage": "",
+      "ErrorDetails": ""
+    }
+  ],
+  "OCRExitCode": 1,
+  "IsErroredOnProcessing": false,
+  "ProcessingTimeInMilliseconds": 0.937,
+  "SearchablePDFURL": "Searchable PDF not generated as it was not requested."
+}
