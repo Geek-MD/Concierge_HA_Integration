@@ -750,6 +750,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "anchor_coverage_pct": mismatch.get("anchor_coverage_pct"),
                     "missing_anchor_keys": mismatch.get("missing_anchor_keys", []),
                     "value_gap_keys": mismatch.get("value_gap_keys", []),
+                    "unexpected_json_lines": mismatch.get("unexpected_json_lines", []),
                     "ocr_json_overlay_excerpt": mismatch.get(
                         "ocr_json_overlay_excerpt", []
                     ),
@@ -828,11 +829,14 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             coverage_label = f"{coverage}%" if coverage is not None else "unknown"
             missing = report.get("missing_anchor_keys", [])
             gaps = report.get("value_gap_keys", [])
+            unexpected = report.get("unexpected_json_lines", [])
             excerpt = report.get("ocr_json_overlay_excerpt", [])
             if not isinstance(missing, list):
                 missing = []
             if not isinstance(gaps, list):
                 gaps = []
+            if not isinstance(unexpected, list):
+                unexpected = []
             if not isinstance(excerpt, list):
                 excerpt = []
 
@@ -843,6 +847,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         f"- Anchor coverage: **{coverage_label}**",
                         f"- Missing anchors: `{', '.join(str(v) for v in missing) if missing else 'none'}`",
                         f"- Anchors without extracted values: `{', '.join(str(v) for v in gaps) if gaps else 'none'}`",
+                        "- Unexpected OCR JSON lines not in template: `"
+                        + (
+                            ", ".join(str(v) for v in unexpected)
+                            if unexpected
+                            else "none"
+                        )
+                        + "`",
                     ]
                 )
             )
@@ -862,6 +873,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     + "`",
                     "  - Anchors without extracted values: `"
                     + (", ".join(str(v) for v in gaps) if gaps else "none")
+                    + "`",
+                    "  - Unexpected OCR JSON lines not in template: `"
+                    + (", ".join(str(v) for v in unexpected) if unexpected else "none")
                     + "`",
                 ]
             )

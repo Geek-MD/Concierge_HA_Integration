@@ -1619,7 +1619,29 @@ _GC_TEMPLATE_MISMATCH_MIN_MISSING_ANCHORS = 4  # absolute floor to ignore small 
 _GC_TEMPLATE_MISMATCH_MIN_MISSING_RATIO = 0.35  # approximately one third of anchors missing
 _GC_TEMPLATE_MISMATCH_MIN_VALUE_GAPS = 4  # absolute floor to avoid one-off extraction misses
 _GC_TEMPLATE_MISMATCH_MIN_VALUE_GAP_RATIO = 0.35  # approximately one third without values
+_GC_TEMPLATE_MISMATCH_MIN_UNEXPECTED_LINES = 1
 _GC_TEMPLATE_MISMATCH_EXCERPT_LINES = 10
+_GC_TEMPLATE_PLACEHOLDER_TOKENS = frozenset(
+    {
+        "dd",
+        "mm",
+        "aaaa",
+        "xx",
+        "xxx",
+        "xxxx",
+        "xxxxxxxxx",
+        "referencial",
+        "nombre",
+        "apellido",
+        "mes",
+    }
+)
+_GC_OPTIONAL_JSON_IGNORE_TOKEN_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("paga", "tu", "gasto", "comun"),
+    ("ingresa", "a"),
+    ("codigo", "cliente"),
+    ("pagos", "kastor"),
+)
 
 _GC_DATE_RE = re.compile(r"(\d{2}[/-]\d{2}[/-]\d{4})")
 _GC_AMOUNT_CAPTURE_RE = re.compile(
@@ -1680,6 +1702,62 @@ def _find_gc_template_anchor(
     return None
 
 
+def _gc_template_line_skeleton(norm_line: str) -> str:
+    """Return a stable template-comparison skeleton for *norm_line*."""
+    tokens: list[str] = []
+    for token in norm_line.split():
+        if token in _GC_TEMPLATE_PLACEHOLDER_TOKENS:
+            continue
+        if token in _MONTH_NAME_TO_NUM:
+            continue
+        if token.isdigit():
+            continue
+        tokens.append(token)
+    return " ".join(tokens).strip()
+
+
+def _gc_line_matches_template(
+    norm_line: str,
+    template_line_skeletons: list[str],
+) -> bool:
+    """Return whether an OCR line is represented by the markdown template."""
+    line_skeleton = _gc_template_line_skeleton(norm_line)
+    if not line_skeleton:
+        return False
+    for template_skeleton in template_line_skeletons:
+        if (
+            line_skeleton == template_skeleton
+            or line_skeleton.startswith(template_skeleton)
+            or template_skeleton.startswith(line_skeleton)
+        ):
+            return True
+    return False
+
+
+def _gc_is_ignorable_optional_json_line(
+    raw_line: str,
+    norm_line: str,
+    prev_norm_line: str,
+) -> bool:
+    """Return whether an unexpected OCR line belongs to a known optional block."""
+    compact_norm = re.sub(r"\s+", " ", norm_line).strip()
+    for token_group in _GC_OPTIONAL_JSON_IGNORE_TOKEN_GROUPS:
+        if all(token in compact_norm for token in token_group):
+            return True
+    if "fono" in compact_norm:
+        return True
+    if "fono" in prev_norm_line and re.fullmatch(r"[+\d().\-\s]{6,}", raw_line.strip()):
+        return True
+    return False
+
+
+def _gc_is_potential_unexpected_json_line(raw_line: str, norm_line: str) -> bool:
+    """Return whether line shape suggests a structural OCR JSON addition."""
+    if ":" in raw_line:
+        return True
+    return "http" in norm_line or "www" in norm_line
+
+
 def _extract_common_expenses_from_ocr_json(
     ocr_raw_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -1706,6 +1784,13 @@ def _extract_common_expenses_from_ocr_json(
     template_lines = _load_gc_template_lines()
     if not template_lines:
         return {}
+    template_line_skeletons = sorted(
+        {
+            skeleton
+            for line in template_lines
+            if (skeleton := _gc_template_line_skeleton(line))
+        }
+    )
 
     norm_lines = [_normalize_gc_anchor_text(line) for line in best_lines]
     attrs: dict[str, Any] = {}
@@ -1989,6 +2074,20 @@ def _extract_common_expenses_from_ocr_json(
     value_gap_ratio = (
         value_gap_count / found_anchor_count if found_anchor_count else 0.0
     )
+    unexpected_line_entries: list[tuple[int, str]] = []
+    for idx, (raw_line, norm_line) in enumerate(zip(best_lines, norm_lines, strict=False)):
+        if not norm_line:
+            continue
+        if not _gc_is_potential_unexpected_json_line(raw_line, norm_line):
+            continue
+        prev_norm_line = norm_lines[idx - 1] if idx > 0 else ""
+        if _gc_is_ignorable_optional_json_line(raw_line, norm_line, prev_norm_line):
+            continue
+        if _gc_line_matches_template(norm_line, template_line_skeletons):
+            continue
+        unexpected_line_entries.append((idx, raw_line.strip()[:200]))
+    unexpected_json_lines = [line for _, line in unexpected_line_entries]
+    unexpected_line_count = len(unexpected_json_lines)
     anchor_coverage_pct = round(
         (found_anchor_count / total_anchor_count) * 100.0, 1
     ) if total_anchor_count else 0.0
@@ -2001,7 +2100,12 @@ def _extract_common_expenses_from_ocr_json(
         value_gap_count >= _GC_TEMPLATE_MISMATCH_MIN_VALUE_GAPS
         and value_gap_ratio >= _GC_TEMPLATE_MISMATCH_MIN_VALUE_GAP_RATIO
     )
-    is_significant = significant_missing or significant_value_gaps
+    significant_unexpected_lines = (
+        unexpected_line_count >= _GC_TEMPLATE_MISMATCH_MIN_UNEXPECTED_LINES
+    )
+    is_significant = (
+        significant_missing or significant_value_gaps or significant_unexpected_lines
+    )
 
     if is_significant:
         excerpt_index_set: set[int] = set()
@@ -2013,6 +2117,8 @@ def _extract_common_expenses_from_ocr_json(
                 candidate = anchor_idx + off
                 if 0 <= candidate < len(best_lines):
                     excerpt_index_set.add(candidate)
+        for idx, _line in unexpected_line_entries:
+            excerpt_index_set.add(idx)
         excerpt_indices = sorted(excerpt_index_set)
         if not excerpt_indices:
             excerpt_indices = list(
@@ -2032,6 +2138,7 @@ def _extract_common_expenses_from_ocr_json(
             "missing_anchor_keys": missing_anchor_keys,
             "value_gap_keys": value_gap_keys,
             "matched_anchor_keys": found_anchor_keys,
+            "unexpected_json_lines": unexpected_json_lines,
             "ocr_json_overlay_excerpt": excerpt_lines,
         }
 

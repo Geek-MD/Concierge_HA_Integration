@@ -14,7 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The common-expenses OCR extractor now evaluates template-anchor coverage and
   flags significant mismatches (missing anchors / anchors without extracted
-  values). When detected, the integration shows a persistent Home Assistant
+  values), and also detects unexpected OCR JSON structural lines not represented
+  in the markdown template. Known optional OCR-only content stays excluded from
+  this trigger (`Paga tu Gasto Común en línea` block and the phone value under
+  `Fono`). When detected, the integration shows a persistent Home Assistant
   notification with a direct link to the repository issues page and a ready-to-
   copy markdown report body so users can create the issue manually.
 

@@ -327,10 +327,14 @@ For every Gastos Comunes bill that arrives, the integration:
    snapshots are retained automatically.
 5. **Template mismatch watchdog (v1.3.3)** — if OCR JSON content differs
    significantly from expected markdown anchors (missing/inconsistent anchor
-   coverage), a persistent Home Assistant notification is raised with:
+   coverage) **or** includes unexpected structural lines that are not present in
+   the markdown template, a persistent Home Assistant notification is raised
+   with:
    - a direct link to
      <https://github.com/Geek-MD/Concierge_HA_Integration/issues>
    - a ready-to-copy markdown report body for manual issue creation.
+   Known optional OCR-only content remains ignored (the "Paga tu Gasto Común en
+   línea" block and the phone number under "Fono").
 6. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
