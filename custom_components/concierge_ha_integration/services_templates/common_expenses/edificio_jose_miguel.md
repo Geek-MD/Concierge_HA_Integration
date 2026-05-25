@@ -1,15 +1,10 @@
-**¡Paga tu Gasto Común en línea!**
-Ingresa a: https://pagos.kastor.cl
-Código cliente: **CODIGO-CLIENTE**
-
 Fecha Emisión:	dd-mm-aaaa
 Pagar Hasta:	dd-mm-aaaa
 
 Edificio Nombre Referencial
-RUT: 00.000.000-0
+RUT: XX.XXX.XXX-X
 Dirección Referencial 000 - Comuna
-Fono: +56000000000
-00000000000000
+Fono: +56XXXXXXXXX
 
 || **Nota de Cobro Mes aaaa** | **Depto. 000** ||
 |---|---|---|---|

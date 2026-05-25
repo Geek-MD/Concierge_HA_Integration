@@ -320,7 +320,8 @@ For every Gastos Comunes bill that arrives, the integration:
    at `custom_components/concierge_ha_integration/services_templates/common_expenses/edificio_jose_miguel.md`
    as a structural reference. The template uses generic placeholders (for
    example `dd-mm-aaaa`, `$ 0.000.000`) and guides field positions/anchors
-   only; values are always extracted from OCR/PDF data.
+   only; optional/non-critical header lines (e.g. online-payment client code)
+   are intentionally omitted. Values are always extracted from OCR/PDF data.
    The raw OCR.space JSON payload is also stored under
    `config/concierge_ha_integration/pdfs/ocrspace_json/`; only the 5 latest
    snapshots are retained automatically.

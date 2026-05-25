@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Older PDF files are removed automatically during refresh cycles and after
   each successful/confirmed download.
 
+- **Common-expenses markdown template cleanup**
+  (`services_templates/common_expenses/edificio_jose_miguel.md`):
+
+  Removed the optional "Paga tu Gasto Común en línea" / client-code header from
+  the template and replaced RUT/phone values with neutral placeholders so that
+  non-critical building-specific metadata is not part of the reference sample.
+
 ## [1.3.1] - 2026-05-25
 
 ### Changed
