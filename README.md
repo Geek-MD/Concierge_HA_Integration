@@ -317,8 +317,9 @@ For every Gastos Comunes bill that arrives, the integration:
 4. **Template-guided mapping (v1.3.0)** — for **Gastos Comunes**, OCR JSON
    (`ParsedResults` overlay lines) is interpreted using the markdown template
    at `custom_components/concierge_ha_integration/services_templates/common_expenses/edificio_jose_miguel.md`
-   as a structural reference. The template guides field positions/anchors only;
-   values are always extracted from OCR/PDF data.
+   as a structural reference. The template uses generic placeholders (for
+   example `dd-mm-aaaa`, `$ 0.000.000`) and guides field positions/anchors
+   only; values are always extracted from OCR/PDF data.
 5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
