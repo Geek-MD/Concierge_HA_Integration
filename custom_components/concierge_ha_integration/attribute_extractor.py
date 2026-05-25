@@ -70,6 +70,8 @@ CONF_SCORE_OVERRIDE: float = 100.0
 # a persistent Repair issue and notification that guides users to configure
 # an OCR.space API key.
 _ocr_available: bool | None = None
+_OCRSPACE_JSON_DIRNAME = "ocrspace_json"
+_OCRSPACE_JSON_MAX_FILES = 5
 
 
 def is_ocr_available() -> bool | None:
@@ -80,6 +82,40 @@ def is_ocr_available() -> bool | None:
     ``False`` – OCR engine unavailable (no API key or runtime failure).
     """
     return _ocr_available
+
+
+def _store_ocrspace_json_snapshot(pdf_path: str, payload: dict[str, Any]) -> None:
+    """Store OCR.space raw JSON payload and keep only the latest snapshots."""
+    import json
+    from datetime import datetime, timezone
+
+    if not pdf_path:
+        return
+
+    try:
+        pdf_file = Path(pdf_path).resolve()
+        out_dir = pdf_file.parent / _OCRSPACE_JSON_DIRNAME
+        out_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        out_path = out_dir / f"{pdf_file.stem}_ocrspace_{timestamp}.json"
+        out_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as err:
+        _LOGGER.debug("Could not store OCR.space JSON snapshot for '%s': %s", pdf_path, err)
+        return
+
+    snapshots = sorted(
+        out_dir.glob("*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for old_path in snapshots[_OCRSPACE_JSON_MAX_FILES:]:
+        try:
+            old_path.unlink()
+        except OSError as err:
+            _LOGGER.debug("Could not delete old OCR snapshot '%s': %s", old_path, err)
 
 
 # Patterns for billing period dates (start and end)
@@ -2002,8 +2038,10 @@ def _try_ocr_pdf_via_ocrspace(
         img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
-    def _call_ocrspace(img: "Image.Image") -> tuple[str, list[dict[str, Any]]]:
-        """POST *img* to OCR.space and return extracted text + raw parsed results."""
+    def _call_ocrspace(
+        img: "Image.Image",
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
+        """POST *img* to OCR.space and return text, ParsedResults and raw JSON."""
         payload = urllib.parse.urlencode(
             {
                 "apikey": api_key,
@@ -2027,10 +2065,10 @@ def _try_ocr_pdf_via_ocrspace(
                 pdf_path,
                 data.get("ErrorMessage"),
             )
-            return "", []
+            return "", [], data
         results = data.get("ParsedResults") or []
         typed_results = [r for r in results if isinstance(r, dict)]
-        return "\n".join(r.get("ParsedText", "") for r in typed_results), typed_results
+        return "\n".join(r.get("ParsedText", "") for r in typed_results), typed_results, data
 
     try:
         doc = pdfium.PdfDocument(pdf_path)
@@ -2041,7 +2079,7 @@ def _try_ocr_pdf_via_ocrspace(
         img_full = bitmap.to_pil()
 
         # Pass 1 — full page
-        text_full, raw_full = _call_ocrspace(img_full)
+        text_full, raw_full, full_resp = _call_ocrspace(img_full)
 
         # Pass 2 — agua caliente area crop (≈ 30–55 % from top), enlarged 2×
         img_width = img_full.width
@@ -2055,7 +2093,20 @@ def _try_ocr_pdf_via_ocrspace(
             ),
             _lanczos,
         )
-        text_crop2, raw_crop2 = _call_ocrspace(crop2)
+        text_crop2, raw_crop2, crop_resp = _call_ocrspace(crop2)
+
+        if full_resp or crop_resp:
+            _store_ocrspace_json_snapshot(
+                pdf_path,
+                {
+                    "pdf_path": pdf_path,
+                    "ocr_provider": "ocr.space",
+                    "passes": {
+                        "full_page": full_resp,
+                        "agua_caliente_crop": crop_resp,
+                    },
+                },
+            )
 
         return text_full + "\n" + text_crop2, [*raw_full, *raw_crop2]
 

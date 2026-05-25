@@ -37,6 +37,7 @@ from .const import (
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
     DOMAIN,
+    PDF_MAX_FILES,
     PDF_MAX_AGE_DAYS,
     PDF_SUBDIR,
     SERVICE_TYPE_COMMON_EXPENSES,
@@ -899,7 +900,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Purge PDFs older than the configured retention period once per cycle
             try:
-                purge_old_pdfs(self._pdf_dir, PDF_MAX_AGE_DAYS)
+                purge_old_pdfs(self._pdf_dir, PDF_MAX_AGE_DAYS, PDF_MAX_FILES)
             except Exception as err:
                 _LOGGER.debug("Error purging old PDFs: %s", err)
 
@@ -1046,6 +1047,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         service_id,
                                         email_date,
                                         latest_attributes,
+                                        max_files=PDF_MAX_FILES,
                                     )
                                     if pdf_path:
                                         latest_attributes["pdf_path"] = pdf_path

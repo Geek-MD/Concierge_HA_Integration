@@ -132,6 +132,7 @@
   - If the email has a PDF attachment it is saved directly
   - Otherwise the HTML body is scanned for billing links (*"ver boleta"*, *"descargue su boleta"*, etc.) and the first valid PDF URL is downloaded
   - Files are saved as `{service_id}_{YYYY-MM}_{folio}.pdf` under `config/concierge_ha_integration/pdfs/`
+  - The cache keeps the **5 most recent PDFs** (all services combined), deleting older files automatically
   - PDFs older than one year are purged automatically
   - The reconstructed bill download URL is also exposed as the `pdf_url` sensor attribute (electricity and gas sensors)
 - 🔧 **Device Architecture**: Each service appears as a separate device
@@ -320,6 +321,9 @@ For every Gastos Comunes bill that arrives, the integration:
    as a structural reference. The template uses generic placeholders (for
    example `dd-mm-aaaa`, `$ 0.000.000`) and guides field positions/anchors
    only; values are always extracted from OCR/PDF data.
+   The raw OCR.space JSON payload is also stored under
+   `config/concierge_ha_integration/pdfs/ocrspace_json/`; only the 5 latest
+   snapshots are retained automatically.
 5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
@@ -485,6 +489,7 @@ with five entities:
 - ✅ Automatic discovery (v0.5.2): inbox is scanned periodically; new services surface in the integration card for one-click confirmation (requires HA 2025.4+)
 - ✅ Heuristic PDF download: attachment → billing link in HTML → plain-text URL
 - ✅ Deterministic PDF filename: `{service_id}_{YYYY-MM}_{folio}.pdf`
+- ✅ PDF cache retention: keeps only the 5 newest PDFs (all services combined)
 - ✅ Automatic purge of PDFs older than 1 year
 - ✅ Billing attribute extraction from email body and PDF (folio, billing period, amounts, consumption, customer number, address, due date, etc.)
 - ✅ PDF content analysis: extracts structured billing data from downloaded PDFs (Enel, Metrogas)
@@ -568,7 +573,7 @@ configured service.  The strategy name appears in the `INFO` match log line:
 - The integration currently detects services automatically from your inbox
 - Services are identified using targeted pattern matching on billing emails
 - Works with both emails that carry a PDF attachment and emails that only contain a download link in the HTML body
-- Bill PDFs are downloaded automatically to `config/concierge_ha_integration/pdfs/` and purged after one year
+- Bill PDFs are downloaded automatically to `config/concierge_ha_integration/pdfs/`, keeping only the 5 newest files and purging files older than one year
 - All credentials are stored securely in Home Assistant
 - It is recommended to use app passwords instead of your main password
 - Only one instance is allowed per Home Assistant installation — use the **CONFIGURE** button to change the monitored email account
