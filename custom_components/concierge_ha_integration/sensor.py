@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import email
+import hashlib
 import imaplib
+import json
 import logging
+from pathlib import Path
 import re
 from datetime import datetime, timedelta
 from email.header import decode_header
@@ -37,6 +40,7 @@ from .const import (
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
     DOMAIN,
+    PDF_MAX_FILES,
     PDF_MAX_AGE_DAYS,
     PDF_SUBDIR,
     SERVICE_TYPE_COMMON_EXPENSES,
@@ -65,6 +69,18 @@ _LOGGER = logging.getLogger(__name__)
 
 # Notification ID for the persistent OCR-unavailable notification.
 _OCR_NOTIFICATION_ID = "concierge_ocr_unavailable"
+_GC_TEMPLATE_MISMATCH_NOTIFICATION_ID = "concierge_gc_template_mismatch"
+_GITHUB_ISSUES_URL = "https://github.com/Geek-MD/Concierge_HA_Integration/issues"
+_INTEGRATION_VERSION = "unknown"
+try:
+    _manifest = json.loads(
+        (
+            Path(__file__).resolve().parent / "manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    _INTEGRATION_VERSION = str(_manifest.get("version", "unknown"))
+except (OSError, ValueError, TypeError):
+    pass
 
 # Update interval for checking mail server connection
 SCAN_INTERVAL = timedelta(minutes=30)
@@ -377,6 +393,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_entry = config_entry
         self._cfg = effective_cfg
         self._pdf_dir: str = hass.config.path(PDF_SUBDIR)
+        self._gc_template_alert_fingerprint: str | None = None
 
     async def async_set_learning_override(
         self, subentry_id: str, attribute: str, value: Any
@@ -646,6 +663,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             raise UpdateFailed(f"Error communicating with IMAP server: {err}") from err
         self._manage_ocr_repair_issue()
+        self._manage_gc_template_mismatch_notification(result)
         return result
 
     def _manage_ocr_repair_issue(self) -> None:
@@ -691,6 +709,196 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             persistent_notification.async_dismiss(
                 self.hass, _OCR_NOTIFICATION_ID
             )
+
+    def _manage_gc_template_mismatch_notification(
+        self, coordinator_data: dict[str, Any]
+    ) -> None:
+        """Create/dismiss template-mismatch notification for common-expenses OCR drift."""
+        services = coordinator_data.get("services", {})
+        if not isinstance(services, dict):
+            return
+
+        reports: list[dict[str, Any]] = []
+        for subentry_id, service_data in services.items():
+            if not isinstance(service_data, dict):
+                continue
+            attrs = service_data.get("attributes", {})
+            if not isinstance(attrs, dict):
+                continue
+            mismatch = attrs.get("_gc_template_mismatch")
+            if not isinstance(mismatch, dict) or not mismatch.get("is_significant"):
+                continue
+
+            subentry = self.config_entry.subentries.get(subentry_id)  # type: ignore[attr-defined,union-attr]
+            service_type = (
+                subentry.data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
+                if subentry
+                else SERVICE_TYPE_UNKNOWN
+            )
+            if service_type != SERVICE_TYPE_COMMON_EXPENSES:
+                continue
+
+            service_name = (
+                subentry.data.get(CONF_SERVICE_NAME, subentry_id)
+                if subentry
+                else subentry_id
+            )
+            reports.append(
+                {
+                    "subentry_id": subentry_id,
+                    "service_name": service_name,
+                    "anchor_coverage_pct": mismatch.get("anchor_coverage_pct"),
+                    "missing_anchor_keys": mismatch.get("missing_anchor_keys", []),
+                    "value_gap_keys": mismatch.get("value_gap_keys", []),
+                    "unexpected_json_lines": mismatch.get("unexpected_json_lines", []),
+                    "ocr_json_overlay_excerpt": mismatch.get(
+                        "ocr_json_overlay_excerpt", []
+                    ),
+                }
+            )
+
+        if not reports:
+            if self._gc_template_alert_fingerprint is not None:
+                _LOGGER.info(
+                    "Concierge Services: common-expenses template mismatch notification dismissed"
+                )
+                persistent_notification.async_dismiss(
+                    self.hass, _GC_TEMPLATE_MISMATCH_NOTIFICATION_ID
+                )
+                self._gc_template_alert_fingerprint = None
+            return
+
+        reports.sort(key=lambda item: str(item.get("subentry_id", "")))
+        payload = json.dumps(reports, ensure_ascii=False, sort_keys=True)
+        fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        if fingerprint == self._gc_template_alert_fingerprint:
+            _LOGGER.debug(
+                "Concierge Services: common-expenses template mismatch notification unchanged; skipping update"
+            )
+            return
+
+        detected_at = dt_util.utcnow().isoformat()
+        message = self._build_gc_template_mismatch_message(reports, detected_at)
+        _LOGGER.warning(
+            "Concierge Services: significant common-expenses OCR/template mismatch detected "
+            "(services=%d, detected_at=%s)",
+            len(reports),
+            detected_at,
+        )
+        persistent_notification.async_create(
+            self.hass,
+            title="Concierge — Potential template mismatch detected",
+            message=message,
+            notification_id=_GC_TEMPLATE_MISMATCH_NOTIFICATION_ID,
+        )
+        self._gc_template_alert_fingerprint = fingerprint
+
+    def _build_gc_template_mismatch_message(
+        self, reports: list[dict[str, Any]], detected_at: str
+    ) -> str:
+        """Build notification markdown with copy/paste GitHub issue content.
+
+        Args:
+            reports: List of mismatch reports, each containing:
+                ``subentry_id``, ``service_name``, ``anchor_coverage_pct``,
+                ``missing_anchor_keys``, ``value_gap_keys``, and
+                ``ocr_json_overlay_excerpt``.
+            detected_at: UTC ISO timestamp for when mismatch detection ran.
+
+        Returns:
+            A markdown string for Home Assistant persistent notifications,
+            including per-service diagnostics plus a code block ready to paste
+            into a manually created GitHub issue.
+        """
+        details_sections: list[str] = []
+        issue_report_lines: list[str] = [
+            "### Summary",
+            "Potential mismatch between OCR JSON content and the Gastos Comunes markdown template anchors.",
+            "",
+            "### Environment",
+            f"- Integration version: `{_INTEGRATION_VERSION}`",
+            f"- Detected at (UTC): `{detected_at}`",
+            "",
+            "### Affected services",
+        ]
+
+        for report in reports:
+            subentry_id = str(report.get("subentry_id", "unknown"))
+            service_name = str(report.get("service_name", subentry_id))
+            coverage = report.get("anchor_coverage_pct")
+            coverage_label = f"{coverage}%" if coverage is not None else "unknown"
+            missing = report.get("missing_anchor_keys", [])
+            gaps = report.get("value_gap_keys", [])
+            unexpected = report.get("unexpected_json_lines", [])
+            excerpt = report.get("ocr_json_overlay_excerpt", [])
+            if not isinstance(missing, list):
+                missing = []
+            if not isinstance(gaps, list):
+                gaps = []
+            if not isinstance(unexpected, list):
+                unexpected = []
+            if not isinstance(excerpt, list):
+                excerpt = []
+
+            details_sections.append(
+                "\n".join(
+                    [
+                        f"### Service `{service_name}` (`{subentry_id}`)",
+                        f"- Anchor coverage: **{coverage_label}**",
+                        f"- Missing anchors: `{', '.join(str(v) for v in missing) if missing else 'none'}`",
+                        f"- Anchors without extracted values: `{', '.join(str(v) for v in gaps) if gaps else 'none'}`",
+                        "- Unexpected OCR JSON lines not in template: `"
+                        + (
+                            ", ".join(str(v) for v in unexpected)
+                            if unexpected
+                            else "none"
+                        )
+                        + "`",
+                    ]
+                )
+            )
+            if excerpt:
+                details_sections.append(
+                    "OCR JSON Overlay excerpt:\n```text\n"
+                    + "\n".join(str(line) for line in excerpt[:10])
+                    + "\n```"
+                )
+
+            issue_report_lines.extend(
+                [
+                    f"- `{service_name}` (`{subentry_id}`)",
+                    f"  - Anchor coverage: `{coverage_label}`",
+                    "  - Missing anchors: `"
+                    + (", ".join(str(v) for v in missing) if missing else "none")
+                    + "`",
+                    "  - Anchors without extracted values: `"
+                    + (", ".join(str(v) for v in gaps) if gaps else "none")
+                    + "`",
+                    "  - Unexpected OCR JSON lines not in template: `"
+                    + (", ".join(str(v) for v in unexpected) if unexpected else "none")
+                    + "`",
+                ]
+            )
+            if excerpt:
+                issue_report_lines.extend(
+                    [
+                        "  - OCR JSON Overlay excerpt:",
+                        "    ```text",
+                        *[f"    {str(line)}" for line in excerpt[:10]],
+                        "    ```",
+                    ]
+                )
+
+        issue_body = "\n".join(issue_report_lines)
+        return (
+            "A significant difference was detected between OCR JSON overlay lines and the "
+            "Gastos Comunes markdown template anchors.\n\n"
+            f"Open GitHub issues: {_GITHUB_ISSUES_URL}\n\n"
+            + "\n\n".join(details_sections)
+            + "\n\nCopy and paste this issue body:\n```markdown\n"
+            + issue_body
+            + "\n```"
+        )
 
     async def async_refresh_service(self, subentry_id: str) -> None:
         """Force an immediate email scan and PDF analysis for a single service subentry.
@@ -817,6 +1025,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         current.setdefault("services", {})[subentry_id] = result
         self.async_set_updated_data(current)
+        self._manage_gc_template_mismatch_notification(current)
 
         # ------------------------------------------------------------------
         # Step 4 — Recompute formula-derived attributes (e.g. gc_total).
@@ -899,7 +1108,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Purge PDFs older than the configured retention period once per cycle
             try:
-                purge_old_pdfs(self._pdf_dir, PDF_MAX_AGE_DAYS)
+                purge_old_pdfs(self._pdf_dir, PDF_MAX_AGE_DAYS, PDF_MAX_FILES)
             except Exception as err:
                 _LOGGER.debug("Error purging old PDFs: %s", err)
 
@@ -1046,6 +1255,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         service_id,
                                         email_date,
                                         latest_attributes,
+                                        max_files=PDF_MAX_FILES,
                                     )
                                     if pdf_path:
                                         latest_attributes["pdf_path"] = pdf_path

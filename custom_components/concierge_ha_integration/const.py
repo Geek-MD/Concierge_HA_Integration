@@ -30,6 +30,7 @@ SERVICE_TYPE_UNKNOWN = "unknown"
 # PDF storage — subdirectory (relative to the HA config dir) and retention
 PDF_SUBDIR = "concierge_ha_integration/pdfs"
 PDF_MAX_AGE_DAYS = 365
+PDF_MAX_FILES = 5
 
 # OCR.space API — optional free API key for the OCR.space cloud OCR service
 # (https://ocr.space/OCRAPI). The free tier key is "helloworld" (rate-limited);

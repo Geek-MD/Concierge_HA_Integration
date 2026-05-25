@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-05-25
+
+### Added
+
+- **Manual GitHub issue guidance for significant OCR/template mismatch**
+  (`attribute_extractor.py`, `sensor.py`, `README.md`):
+
+  The common-expenses OCR extractor now evaluates template-anchor coverage and
+  flags significant mismatches (missing anchors / anchors without extracted
+  values), and also detects unexpected OCR JSON structural lines not represented
+  in the markdown template. Known optional OCR-only content stays excluded from
+  this trigger (`Paga tu Gasto Común en línea` block and the phone value under
+  `Fono`). When detected, the integration shows a persistent Home Assistant
+  notification with a direct link to the repository issues page and a ready-to-
+  copy markdown report body so users can create the issue manually.
+
+## [1.3.2] - 2026-05-25
+
+### Added
+
+- **OCR.space raw JSON snapshot retention (last 5 files)**
+  (`attribute_extractor.py`):
+
+  Every OCR.space analysis now stores a raw JSON snapshot under
+  `config/concierge_ha_integration/pdfs/ocrspace_json/`.
+  The integration keeps only the 5 most recent JSON files and deletes older
+  snapshots automatically.
+
+### Changed
+
+- **PDF cache retention now enforces latest 5 files globally**
+  (`pdf_downloader.py`, `sensor.py`, `const.py`):
+
+  In addition to age-based cleanup, the PDF cache now keeps only the 5 newest
+  PDF files in `config/concierge_ha_integration/pdfs/` across all services.
+  Older PDF files are removed automatically during refresh cycles and after
+  each successful/confirmed download.
+
+- **Common-expenses markdown template cleanup**
+  (`services_templates/common_expenses/edificio_jose_miguel.md`):
+
+  Removed the optional "Paga tu Gasto Común en línea" / client-code header from
+  the template and replaced RUT/phone values with neutral placeholders so that
+  non-critical building-specific metadata is not part of the reference sample.
+
+## [1.3.1] - 2026-05-25
+
+### Changed
+
+- **Gastos Comunes markdown template generalized with placeholders**
+  (`services_templates/common_expenses/edificio_jose_miguel.md`):
+
+  Replaced building-specific sample values with generic placeholders
+  (`dd-mm-aaaa`, `$ 0.000.000`, `0,00000`, `0,00 %`, generic owner/property
+  fields) while preserving anchor labels and table structure used by the
+  template-guided OCR mapping introduced in v1.3.0.
+
+  This release does not change extraction logic; it only updates the template
+  reference content to be reusable across buildings.
+
 ## [1.3.0] - 2026-05-24
 
 ### Changed

@@ -43,8 +43,8 @@ extractor already found it; otherwise it falls back to the email's ``Date``
 header.
 
 A ``purge_old_pdfs()`` helper removes files older than *max_age_days*
-(default: 365) from the download directory so storage does not grow
-unbounded.
+(default: 365) and enforces a max-file retention window (latest N PDFs)
+from the download directory so storage does not grow unbounded.
 """
 from __future__ import annotations
 
@@ -1475,6 +1475,7 @@ def download_pdf_from_email(
     service_id: str,
     email_date: datetime | None = None,
     attributes: dict[str, Any] | None = None,
+    max_files: int | None = None,
 ) -> str | None:
     """Heuristic PDF downloader — attachment first, then HTML/text links.
 
@@ -1572,6 +1573,8 @@ def download_pdf_from_email(
             _LOGGER.debug("No HTML body in email for service '%s'", service_id)
 
     if os.path.exists(dest_path):
+        if max_files is not None and max_files > 0:
+            _enforce_pdf_count_retention(pdf_dir, max_files)
         _LOGGER.info("PDF already present, skipping download: %s", dest_path)
         return dest_path
 
@@ -1583,6 +1586,8 @@ def download_pdf_from_email(
         try:
             with open(dest_path, "wb") as fh:
                 fh.write(pdf_bytes)
+            if max_files is not None and max_files > 0:
+                _enforce_pdf_count_retention(pdf_dir, max_files)
             _LOGGER.info("Saved PDF attachment → %s", dest_path)
             return dest_path
         except OSError as err:
@@ -1590,7 +1595,13 @@ def download_pdf_from_email(
 
     # --- Strategy 2: Link in HTML body (or fidelizador plain-text URL) ---
     if fidelizador_href_url:
-        result = _download_first_valid_pdf([fidelizador_href_url], dest_path, service_id, attributes)
+        result = _download_first_valid_pdf(
+            [fidelizador_href_url],
+            dest_path,
+            service_id,
+            attributes,
+            max_files=max_files,
+        )
         if result:
             return result
     elif html_body:
@@ -1600,7 +1611,13 @@ def download_pdf_from_email(
                 len(html_candidate_urls),
                 service_id,
             )
-            result = _download_first_valid_pdf(html_candidate_urls, dest_path, service_id, attributes)
+            result = _download_first_valid_pdf(
+                html_candidate_urls,
+                dest_path,
+                service_id,
+                attributes,
+                max_files=max_files,
+            )
             if result:
                 return result
         else:
@@ -1624,7 +1641,13 @@ def download_pdf_from_email(
                 len(candidate_urls),
                 service_id,
             )
-            result = _download_first_valid_pdf(candidate_urls, dest_path, service_id, attributes)
+            result = _download_first_valid_pdf(
+                candidate_urls,
+                dest_path,
+                service_id,
+                attributes,
+                max_files=max_files,
+            )
             if result:
                 return result
 
@@ -1637,6 +1660,7 @@ def _download_first_valid_pdf(
     dest_path: str,
     service_id: str,
     attributes: dict[str, Any] | None = None,
+    max_files: int | None = None,
 ) -> str | None:
     """Try each URL in *candidate_urls* until a valid PDF is saved.
 
@@ -1666,6 +1690,8 @@ def _download_first_valid_pdf(
             if "application/pdf" in content_type or pdf_data[:4] == _PDF_MAGIC:
                 with open(dest_path, "wb") as fh:
                     fh.write(pdf_data)
+                if max_files is not None and max_files > 0:
+                    _enforce_pdf_count_retention(os.path.dirname(dest_path), max_files)
                 _LOGGER.info("Downloaded PDF %s → %s", url, dest_path)
                 if attributes is not None:
                     attributes["pdf_url"] = url
@@ -1682,6 +1708,8 @@ def _download_first_valid_pdf(
                     final_url, pdf_data, content_type, dest_path
                 )
                 if result:
+                    if max_files is not None and max_files > 0:
+                        _enforce_pdf_count_retention(os.path.dirname(dest_path), max_files)
                     if attributes is not None:
                         attributes["pdf_url"] = url
                     return result
@@ -1767,7 +1795,11 @@ def delete_service_pdfs(pdf_dir: str, service_id: str) -> list[str]:
     return deleted
 
 
-def purge_old_pdfs(pdf_dir: str, max_age_days: int = 365) -> int:
+def purge_old_pdfs(
+    pdf_dir: str,
+    max_age_days: int = 365,
+    max_files: int | None = None,
+) -> int:
     """Delete ``.pdf`` files in *pdf_dir* that are older than *max_age_days*.
 
     Args:
@@ -1795,7 +1827,41 @@ def purge_old_pdfs(pdf_dir: str, max_age_days: int = 365) -> int:
         except OSError as err:
             _LOGGER.debug("Could not check/remove %s: %s", fpath, err)
 
-    if deleted:
-        _LOGGER.info("Purged %d old PDF(s) from %s", deleted, pdf_dir)
+    count_deleted = 0
+    if max_files is not None and max_files > 0:
+        count_deleted = _enforce_pdf_count_retention(pdf_dir, max_files)
 
+    total_deleted = deleted + count_deleted
+    if total_deleted:
+        _LOGGER.info("Purged %d PDF(s) from %s", total_deleted, pdf_dir)
+
+    return total_deleted
+
+
+def _enforce_pdf_count_retention(pdf_dir: str, max_files: int) -> int:
+    """Keep only the newest *max_files* PDFs in *pdf_dir* by modification time."""
+    if max_files <= 0 or not os.path.isdir(pdf_dir):
+        return 0
+
+    pdf_paths: list[str] = []
+    for fname in os.listdir(pdf_dir):
+        if not fname.lower().endswith(".pdf"):
+            continue
+        fpath = os.path.join(pdf_dir, fname)
+        if os.path.isfile(fpath):
+            pdf_paths.append(fpath)
+
+    if len(pdf_paths) <= max_files:
+        return 0
+
+    pdf_paths.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+    to_delete = pdf_paths[max_files:]
+    deleted = 0
+    for fpath in to_delete:
+        try:
+            os.remove(fpath)
+            _LOGGER.info("Purged old PDF by count retention: %s", fpath)
+            deleted += 1
+        except OSError as err:
+            _LOGGER.debug("Could not remove retained-overflow PDF %s: %s", fpath, err)
     return deleted

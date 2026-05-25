@@ -132,6 +132,7 @@
   - If the email has a PDF attachment it is saved directly
   - Otherwise the HTML body is scanned for billing links (*"ver boleta"*, *"descargue su boleta"*, etc.) and the first valid PDF URL is downloaded
   - Files are saved as `{service_id}_{YYYY-MM}_{folio}.pdf` under `config/concierge_ha_integration/pdfs/`
+  - The cache keeps the **5 most recent PDFs** (all services combined), deleting older files automatically
   - PDFs older than one year are purged automatically
   - The reconstructed bill download URL is also exposed as the `pdf_url` sensor attribute (electricity and gas sensors)
 - 🔧 **Device Architecture**: Each service appears as a separate device
@@ -317,9 +318,24 @@ For every Gastos Comunes bill that arrives, the integration:
 4. **Template-guided mapping (v1.3.0)** — for **Gastos Comunes**, OCR JSON
    (`ParsedResults` overlay lines) is interpreted using the markdown template
    at `custom_components/concierge_ha_integration/services_templates/common_expenses/edificio_jose_miguel.md`
-   as a structural reference. The template guides field positions/anchors only;
-   values are always extracted from OCR/PDF data.
-5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
+   as a structural reference. The template uses generic placeholders (for
+   example `dd-mm-aaaa`, `$ 0.000.000`) and guides field positions/anchors
+   only; optional/non-critical header lines (e.g. online-payment client code)
+   are intentionally omitted. Values are always extracted from OCR/PDF data.
+   The raw OCR.space JSON payload is also stored under
+   `config/concierge_ha_integration/pdfs/ocrspace_json/`; only the 5 latest
+   snapshots are retained automatically.
+5. **Template mismatch watchdog (v1.3.3)** — if OCR JSON content differs
+   significantly from expected markdown anchors (missing/inconsistent anchor
+   coverage) **or** includes unexpected structural lines that are not present in
+   the markdown template, a persistent Home Assistant notification is raised
+   with:
+   - a direct link to
+     <https://github.com/Geek-MD/Concierge_HA_Integration/issues>
+   - a ready-to-copy markdown report body for manual issue creation.
+   Known optional OCR-only content remains ignored (the "Paga tu Gasto Común en
+   línea" block and the phone number under "Fono").
+6. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
 
@@ -484,6 +500,7 @@ with five entities:
 - ✅ Automatic discovery (v0.5.2): inbox is scanned periodically; new services surface in the integration card for one-click confirmation (requires HA 2025.4+)
 - ✅ Heuristic PDF download: attachment → billing link in HTML → plain-text URL
 - ✅ Deterministic PDF filename: `{service_id}_{YYYY-MM}_{folio}.pdf`
+- ✅ PDF cache retention: keeps only the 5 newest PDFs (all services combined)
 - ✅ Automatic purge of PDFs older than 1 year
 - ✅ Billing attribute extraction from email body and PDF (folio, billing period, amounts, consumption, customer number, address, due date, etc.)
 - ✅ PDF content analysis: extracts structured billing data from downloaded PDFs (Enel, Metrogas)
@@ -567,7 +584,7 @@ configured service.  The strategy name appears in the `INFO` match log line:
 - The integration currently detects services automatically from your inbox
 - Services are identified using targeted pattern matching on billing emails
 - Works with both emails that carry a PDF attachment and emails that only contain a download link in the HTML body
-- Bill PDFs are downloaded automatically to `config/concierge_ha_integration/pdfs/` and purged after one year
+- Bill PDFs are downloaded automatically to `config/concierge_ha_integration/pdfs/`, keeping only the 5 newest files and purging files older than one year
 - All credentials are stored securely in Home Assistant
 - It is recommended to use app passwords instead of your main password
 - Only one instance is allowed per Home Assistant installation — use the **CONFIGURE** button to change the monitored email account

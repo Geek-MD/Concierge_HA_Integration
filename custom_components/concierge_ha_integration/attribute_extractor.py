@@ -70,6 +70,8 @@ CONF_SCORE_OVERRIDE: float = 100.0
 # a persistent Repair issue and notification that guides users to configure
 # an OCR.space API key.
 _ocr_available: bool | None = None
+_OCRSPACE_JSON_DIRNAME = "ocrspace_json"
+_OCRSPACE_JSON_MAX_FILES = 5
 
 
 def is_ocr_available() -> bool | None:
@@ -80,6 +82,40 @@ def is_ocr_available() -> bool | None:
     ``False`` – OCR engine unavailable (no API key or runtime failure).
     """
     return _ocr_available
+
+
+def _store_ocrspace_json_snapshot(pdf_path: str, payload: dict[str, Any]) -> None:
+    """Store OCR.space raw JSON payload and keep only the latest snapshots."""
+    import json
+    from datetime import datetime, timezone
+
+    if not pdf_path:
+        return
+
+    try:
+        pdf_file = Path(pdf_path).resolve()
+        out_dir = pdf_file.parent / _OCRSPACE_JSON_DIRNAME
+        out_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        out_path = out_dir / f"{pdf_file.stem}_ocrspace_{timestamp}.json"
+        out_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as err:
+        _LOGGER.debug("Could not store OCR.space JSON snapshot for '%s': %s", pdf_path, err)
+        return
+
+    snapshots = sorted(
+        out_dir.glob("*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for old_path in snapshots[_OCRSPACE_JSON_MAX_FILES:]:
+        try:
+            old_path.unlink()
+        except OSError as err:
+            _LOGGER.debug("Could not delete old OCR snapshot '%s': %s", old_path, err)
 
 
 # Patterns for billing period dates (start and end)
@@ -1553,6 +1589,60 @@ _GC_TEMPLATE_ANCHOR_TOKENS: dict[str, tuple[str, ...]] = {
     "last_payment_folio": ("folio", "ultimo", "pago"),
 }
 
+_GC_TEMPLATE_ANCHOR_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
+    "emission_date": ("emission_date",),
+    "due_date": ("due_date",),
+    "owner_name": ("owner_name",),
+    "alicuota": ("alicuota",),
+    "building_total_expense": ("building_total_expense",),
+    "concepto": ("gastos_comunes_amount",),
+    "fondos_amount": ("fondos_amount",),
+    "subtotal_departamento": ("subtotal_departamento",),
+    "hot_water_prev": ("hot_water_reading_prev",),
+    "hot_water_curr": ("hot_water_reading_curr",),
+    "hot_water_consumption": ("hot_water_consumption",),
+    "hot_water_cost": ("hot_water_cost_per_m3",),
+    "hot_water_amount": ("hot_water_amount", "subtotal_consumo"),
+    "cargo_fijo": ("cargo_fijo",),
+    "subtotal_recargos": ("subtotal_recargos",),
+    "total_amount": ("total_amount",),
+    "last_payment_date": ("last_payment_date",),
+    "last_payment_amount": ("last_payment_amount",),
+    "last_payment_folio": ("last_payment_folio",),
+}
+
+# Thresholds used to decide whether template/JSON drift is significant enough
+# to notify users. They are intentionally conservative: at least ~1/3 of
+# anchors must be missing (or missing values) and the absolute floor is 4 keys,
+# which avoids alerts for small OCR glitches while still surfacing layout drift.
+_GC_TEMPLATE_MISMATCH_MIN_MISSING_ANCHORS = 4  # absolute floor to ignore small OCR noise
+_GC_TEMPLATE_MISMATCH_MIN_MISSING_RATIO = 0.35  # approximately one third of anchors missing
+_GC_TEMPLATE_MISMATCH_MIN_VALUE_GAPS = 4  # absolute floor to avoid one-off extraction misses
+_GC_TEMPLATE_MISMATCH_MIN_VALUE_GAP_RATIO = 0.35  # approximately one third without values
+_GC_TEMPLATE_MISMATCH_MIN_UNEXPECTED_LINES = 1
+_GC_TEMPLATE_MISMATCH_EXCERPT_LINES = 10
+_GC_TEMPLATE_PLACEHOLDER_TOKENS = frozenset(
+    {
+        "dd",
+        "mm",
+        "aaaa",
+        "xx",
+        "xxx",
+        "xxxx",
+        "xxxxxxxxx",
+        "referencial",
+        "nombre",
+        "apellido",
+        "mes",
+    }
+)
+_GC_OPTIONAL_JSON_IGNORE_TOKEN_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("paga", "tu", "gasto", "comun"),
+    ("ingresa", "a"),
+    ("codigo", "cliente"),
+    ("pagos", "kastor"),
+)
+
 _GC_DATE_RE = re.compile(r"(\d{2}[/-]\d{2}[/-]\d{4})")
 _GC_AMOUNT_CAPTURE_RE = re.compile(
     r"\$?\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
@@ -1612,6 +1702,62 @@ def _find_gc_template_anchor(
     return None
 
 
+def _gc_template_line_skeleton(norm_line: str) -> str:
+    """Return a stable template-comparison skeleton for *norm_line*."""
+    tokens: list[str] = []
+    for token in norm_line.split():
+        if token in _GC_TEMPLATE_PLACEHOLDER_TOKENS:
+            continue
+        if token in _MONTH_NAME_TO_NUM:
+            continue
+        if token.isdigit():
+            continue
+        tokens.append(token)
+    return " ".join(tokens).strip()
+
+
+def _gc_line_matches_template(
+    norm_line: str,
+    template_line_skeletons: list[str],
+) -> bool:
+    """Return whether an OCR line is represented by the markdown template."""
+    line_skeleton = _gc_template_line_skeleton(norm_line)
+    if not line_skeleton:
+        return False
+    for template_skeleton in template_line_skeletons:
+        if (
+            line_skeleton == template_skeleton
+            or line_skeleton.startswith(template_skeleton)
+            or template_skeleton.startswith(line_skeleton)
+        ):
+            return True
+    return False
+
+
+def _gc_is_ignorable_optional_json_line(
+    raw_line: str,
+    norm_line: str,
+    prev_norm_line: str,
+) -> bool:
+    """Return whether an unexpected OCR line belongs to a known optional block."""
+    compact_norm = re.sub(r"\s+", " ", norm_line).strip()
+    for token_group in _GC_OPTIONAL_JSON_IGNORE_TOKEN_GROUPS:
+        if all(token in compact_norm for token in token_group):
+            return True
+    if "fono" in compact_norm:
+        return True
+    if "fono" in prev_norm_line and re.fullmatch(r"[+\d().\-\s]{6,}", raw_line.strip()):
+        return True
+    return False
+
+
+def _gc_is_potential_unexpected_json_line(raw_line: str, norm_line: str) -> bool:
+    """Return whether line shape suggests a structural OCR JSON addition."""
+    if ":" in raw_line:
+        return True
+    return "http" in norm_line or "www" in norm_line
+
+
 def _extract_common_expenses_from_ocr_json(
     ocr_raw_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -1638,9 +1784,18 @@ def _extract_common_expenses_from_ocr_json(
     template_lines = _load_gc_template_lines()
     if not template_lines:
         return {}
+    template_line_skeletons = sorted(
+        {
+            skeleton
+            for line in template_lines
+            if (skeleton := _gc_template_line_skeleton(line))
+        }
+    )
 
     norm_lines = [_normalize_gc_anchor_text(line) for line in best_lines]
     attrs: dict[str, Any] = {}
+
+    anchor_indices: dict[str, int | None] = {}
 
     def _find_anchor_index(anchor_key: str) -> int | None:
         anchor = _find_gc_template_anchor(template_lines, anchor_key)
@@ -1655,6 +1810,11 @@ def _extract_common_expenses_from_ocr_json(
                     return idx
         return None
 
+    def _anchor_index(anchor_key: str) -> int | None:
+        if anchor_key not in anchor_indices:
+            anchor_indices[anchor_key] = _find_anchor_index(anchor_key)
+        return anchor_indices[anchor_key]
+
     def _scan_after(start_idx: int, pattern: re.Pattern[str], max_lines: int = 8) -> str | None:
         end = min(len(best_lines), start_idx + max_lines + 1)
         for idx in range(start_idx, end):
@@ -1665,7 +1825,7 @@ def _extract_common_expenses_from_ocr_json(
 
     billing_year = ""
 
-    emission_idx = _find_anchor_index("emission_date")
+    emission_idx = _anchor_index("emission_date")
     if emission_idx is not None:
         emission = _scan_after(emission_idx, _GC_DATE_RE, max_lines=4)
         if emission:
@@ -1675,7 +1835,7 @@ def _extract_common_expenses_from_ocr_json(
             if year_match:
                 billing_year = year_match.group(1)
 
-    due_idx = _find_anchor_index("due_date")
+    due_idx = _anchor_index("due_date")
     if due_idx is not None:
         due = _scan_after(due_idx, _GC_DATE_RE, max_lines=4)
         if due:
@@ -1703,13 +1863,13 @@ def _extract_common_expenses_from_ocr_json(
             attrs["apartment"] = apt_match.group(1)
             break
 
-    owner_idx = _find_anchor_index("owner_name")
+    owner_idx = _anchor_index("owner_name")
     if owner_idx is not None:
         owner = _scan_after(owner_idx + 1, _GC_OWNER_RE, max_lines=6)
         if owner:
             attrs["owner_name"] = owner
 
-    alicuota_idx = _find_anchor_index("alicuota")
+    alicuota_idx = _anchor_index("alicuota")
     if alicuota_idx is not None:
         ali_raw = _scan_after(
             alicuota_idx,
@@ -1722,7 +1882,7 @@ def _extract_common_expenses_from_ocr_json(
             except ValueError:
                 pass
 
-    bld_total_idx = _find_anchor_index("building_total_expense")
+    bld_total_idx = _anchor_index("building_total_expense")
     if bld_total_idx is not None:
         bld_total_raw = _scan_after(
             bld_total_idx,
@@ -1756,7 +1916,7 @@ def _extract_common_expenses_from_ocr_json(
             attrs["subtotal_recargos"] = amount_values[6]
             attrs["total_amount"] = amount_values[7]
 
-    concepto_idx = _find_anchor_index("concepto")
+    concepto_idx = _anchor_index("concepto")
     gasto_idx = None
     if concepto_idx is not None:
         for idx in range(concepto_idx + 1, min(len(norm_lines), concepto_idx + 10)):
@@ -1768,7 +1928,7 @@ def _extract_common_expenses_from_ocr_json(
         if gasto_raw:
             attrs["gastos_comunes_amount"] = _parse_amount_to_int(gasto_raw)
 
-    fondos_idx = _find_anchor_index("fondos_amount")
+    fondos_idx = _anchor_index("fondos_amount")
     if fondos_idx is not None and "fondos_amount" not in attrs:
         fondos_raw = _scan_after(fondos_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=6)
         if fondos_raw:
@@ -1781,7 +1941,7 @@ def _extract_common_expenses_from_ocr_json(
         if pct_match:
             attrs["fondos_pct"] = int(pct_match.group(1))
 
-    sub_depto_idx = _find_anchor_index("subtotal_departamento")
+    sub_depto_idx = _anchor_index("subtotal_departamento")
     if sub_depto_idx is not None and "subtotal_departamento" not in attrs:
         sub_depto_raw = _scan_after(
             sub_depto_idx,
@@ -1791,19 +1951,19 @@ def _extract_common_expenses_from_ocr_json(
         if sub_depto_raw:
             attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
 
-    prev_idx = _find_anchor_index("hot_water_prev")
+    prev_idx = _anchor_index("hot_water_prev")
     if prev_idx is not None:
         prev_raw = _scan_after(prev_idx, _GC_METER_VALUE_RE, max_lines=4)
         if prev_raw:
             attrs["hot_water_reading_prev"] = _parse_meter_reading(prev_raw)
 
-    curr_idx = _find_anchor_index("hot_water_curr")
+    curr_idx = _anchor_index("hot_water_curr")
     if curr_idx is not None:
         curr_raw = _scan_after(curr_idx, _GC_METER_VALUE_RE, max_lines=4)
         if curr_raw:
             attrs["hot_water_reading_curr"] = _parse_meter_reading(curr_raw)
 
-    consumo_idx = _find_anchor_index("hot_water_consumption")
+    consumo_idx = _anchor_index("hot_water_consumption")
     consumo_candidates = [
         idx
         for idx, line in enumerate(norm_lines)
@@ -1817,13 +1977,13 @@ def _extract_common_expenses_from_ocr_json(
             attrs["hot_water_consumption"] = _parse_meter_reading(consumo_raw)
             attrs["hot_water_consumption_unit"] = "m³"
 
-    valor_idx = _find_anchor_index("hot_water_cost")
+    valor_idx = _anchor_index("hot_water_cost")
     if valor_idx is not None:
         cost_raw = _scan_after(valor_idx, re.compile(r"([\d.]+,\d{2}|[\d,]+\.\d{2})"), max_lines=5)
         if cost_raw:
             attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_raw)
 
-    hw_amount_idx = _find_anchor_index("hot_water_amount")
+    hw_amount_idx = _anchor_index("hot_water_amount")
     if hw_amount_idx is not None and "hot_water_amount" not in attrs:
         hw_amount_raw = _scan_after(
             hw_amount_idx,
@@ -1835,13 +1995,13 @@ def _extract_common_expenses_from_ocr_json(
             attrs["subtotal_consumo"] = subtotal_consumo
             attrs["hot_water_amount"] = subtotal_consumo
 
-    cargo_idx = _find_anchor_index("cargo_fijo")
+    cargo_idx = _anchor_index("cargo_fijo")
     if cargo_idx is not None and "cargo_fijo" not in attrs:
         cargo_raw = _scan_after(cargo_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=4)
         if cargo_raw:
             attrs["cargo_fijo"] = _parse_amount_to_int(cargo_raw)
 
-    recargos_idx = _find_anchor_index("subtotal_recargos")
+    recargos_idx = _anchor_index("subtotal_recargos")
     if recargos_idx is not None and "subtotal_recargos" not in attrs:
         recargos_raw = _scan_after(
             recargos_idx,
@@ -1851,20 +2011,20 @@ def _extract_common_expenses_from_ocr_json(
         if recargos_raw:
             attrs["subtotal_recargos"] = _parse_amount_to_int(recargos_raw)
 
-    total_idx = _find_anchor_index("total_amount")
+    total_idx = _anchor_index("total_amount")
     if total_idx is not None and "total_amount" not in attrs:
         total_raw = _scan_after(total_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=5)
         if total_raw:
             attrs["total_amount"] = _parse_amount_to_int(total_raw)
 
-    lp_date_idx = _find_anchor_index("last_payment_date")
+    lp_date_idx = _anchor_index("last_payment_date")
     if lp_date_idx is not None:
         lp_date = _scan_after(lp_date_idx, _GC_DATE_RE, max_lines=20)
         if lp_date:
             lp_norm = lp_date.replace("/", "-")
             attrs["last_payment_date"] = _gc_fix_year(lp_norm, billing_year) if billing_year else lp_norm
 
-    lp_amount_idx = _find_anchor_index("last_payment_amount")
+    lp_amount_idx = _anchor_index("last_payment_amount")
     if lp_amount_idx is not None:
         lp_amount_raw = _scan_after(
             lp_amount_idx,
@@ -1874,11 +2034,113 @@ def _extract_common_expenses_from_ocr_json(
         if lp_amount_raw:
             attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_raw)
 
-    lp_folio_idx = _find_anchor_index("last_payment_folio")
+    lp_folio_idx = _anchor_index("last_payment_folio")
     if lp_folio_idx is not None:
         lp_folio = _scan_after(lp_folio_idx, re.compile(r"(\d{5,6})"), max_lines=20)
         if lp_folio:
             attrs["last_payment_folio"] = lp_folio
+
+    for anchor_key in _GC_TEMPLATE_ANCHOR_TOKENS:
+        _anchor_index(anchor_key)
+
+    total_anchor_count = len(_GC_TEMPLATE_ANCHOR_TOKENS)
+    found_anchor_keys = sorted(
+        [key for key, idx in anchor_indices.items() if idx is not None]
+    )
+    missing_anchor_keys = sorted(
+        [key for key, idx in anchor_indices.items() if idx is None]
+    )
+    found_anchor_count = len(found_anchor_keys)
+    missing_anchor_count = len(missing_anchor_keys)
+    missing_anchor_ratio = (
+        missing_anchor_count / total_anchor_count if total_anchor_count else 0.0
+    )
+
+    def _anchor_has_value(anchor_key: str) -> bool:
+        output_keys = _GC_TEMPLATE_ANCHOR_OUTPUT_KEYS.get(anchor_key, ())
+        return any(
+            key in attrs and attrs[key] not in ("", None)
+            for key in output_keys
+        )
+
+    value_gap_keys = sorted(
+        [
+            key
+            for key in found_anchor_keys
+            if _GC_TEMPLATE_ANCHOR_OUTPUT_KEYS.get(key) and not _anchor_has_value(key)
+        ]
+    )
+    value_gap_count = len(value_gap_keys)
+    value_gap_ratio = (
+        value_gap_count / found_anchor_count if found_anchor_count else 0.0
+    )
+    unexpected_line_entries: list[tuple[int, str]] = []
+    for idx, (raw_line, norm_line) in enumerate(zip(best_lines, norm_lines, strict=True)):
+        if not norm_line:
+            continue
+        if not _gc_is_potential_unexpected_json_line(raw_line, norm_line):
+            continue
+        prev_norm_line = norm_lines[idx - 1] if idx > 0 else ""
+        if _gc_is_ignorable_optional_json_line(raw_line, norm_line, prev_norm_line):
+            continue
+        if _gc_line_matches_template(norm_line, template_line_skeletons):
+            continue
+        unexpected_line_entries.append((idx, raw_line.strip()[:200]))
+    unexpected_json_lines = [line for _, line in unexpected_line_entries]
+    unexpected_line_count = len(unexpected_json_lines)
+    anchor_coverage_pct = round(
+        (found_anchor_count / total_anchor_count) * 100.0, 1
+    ) if total_anchor_count else 0.0
+
+    significant_missing = (
+        missing_anchor_count >= _GC_TEMPLATE_MISMATCH_MIN_MISSING_ANCHORS
+        and missing_anchor_ratio >= _GC_TEMPLATE_MISMATCH_MIN_MISSING_RATIO
+    )
+    significant_value_gaps = (
+        value_gap_count >= _GC_TEMPLATE_MISMATCH_MIN_VALUE_GAPS
+        and value_gap_ratio >= _GC_TEMPLATE_MISMATCH_MIN_VALUE_GAP_RATIO
+    )
+    significant_unexpected_lines = (
+        unexpected_line_count >= _GC_TEMPLATE_MISMATCH_MIN_UNEXPECTED_LINES
+    )
+    is_significant = (
+        significant_missing or significant_value_gaps or significant_unexpected_lines
+    )
+
+    if is_significant:
+        excerpt_index_set: set[int] = set()
+        for key in value_gap_keys:
+            anchor_idx = anchor_indices.get(key)
+            if anchor_idx is None:
+                continue
+            for off in (0, 1):
+                candidate = anchor_idx + off
+                if 0 <= candidate < len(best_lines):
+                    excerpt_index_set.add(candidate)
+        for idx, _line in unexpected_line_entries:
+            excerpt_index_set.add(idx)
+        excerpt_indices = sorted(excerpt_index_set)
+        if not excerpt_indices:
+            excerpt_indices = list(
+                range(min(len(best_lines), _GC_TEMPLATE_MISMATCH_EXCERPT_LINES))
+            )
+        excerpt_lines = [
+            best_lines[idx].strip()[:200]
+            for idx in excerpt_indices[:_GC_TEMPLATE_MISMATCH_EXCERPT_LINES]
+            if best_lines[idx].strip()
+        ]
+
+        attrs["_gc_template_mismatch"] = {
+            "is_significant": True,
+            "anchor_coverage_pct": anchor_coverage_pct,
+            "total_anchors": total_anchor_count,
+            "found_anchors": found_anchor_count,
+            "missing_anchor_keys": missing_anchor_keys,
+            "value_gap_keys": value_gap_keys,
+            "matched_anchor_keys": found_anchor_keys,
+            "unexpected_json_lines": unexpected_json_lines,
+            "ocr_json_overlay_excerpt": excerpt_lines,
+        }
 
     return attrs
 
@@ -2002,8 +2264,10 @@ def _try_ocr_pdf_via_ocrspace(
         img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
-    def _call_ocrspace(img: "Image.Image") -> tuple[str, list[dict[str, Any]]]:
-        """POST *img* to OCR.space and return extracted text + raw parsed results."""
+    def _call_ocrspace(
+        img: "Image.Image",
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
+        """POST *img* to OCR.space and return text, ParsedResults and raw JSON."""
         payload = urllib.parse.urlencode(
             {
                 "apikey": api_key,
@@ -2027,10 +2291,10 @@ def _try_ocr_pdf_via_ocrspace(
                 pdf_path,
                 data.get("ErrorMessage"),
             )
-            return "", []
+            return "", [], data
         results = data.get("ParsedResults") or []
         typed_results = [r for r in results if isinstance(r, dict)]
-        return "\n".join(r.get("ParsedText", "") for r in typed_results), typed_results
+        return "\n".join(r.get("ParsedText", "") for r in typed_results), typed_results, data
 
     try:
         doc = pdfium.PdfDocument(pdf_path)
@@ -2041,7 +2305,7 @@ def _try_ocr_pdf_via_ocrspace(
         img_full = bitmap.to_pil()
 
         # Pass 1 — full page
-        text_full, raw_full = _call_ocrspace(img_full)
+        text_full, raw_full, full_resp = _call_ocrspace(img_full)
 
         # Pass 2 — agua caliente area crop (≈ 30–55 % from top), enlarged 2×
         img_width = img_full.width
@@ -2055,7 +2319,20 @@ def _try_ocr_pdf_via_ocrspace(
             ),
             _lanczos,
         )
-        text_crop2, raw_crop2 = _call_ocrspace(crop2)
+        text_crop2, raw_crop2, crop_resp = _call_ocrspace(crop2)
+
+        if full_resp or crop_resp:
+            _store_ocrspace_json_snapshot(
+                pdf_path,
+                {
+                    "pdf_path": pdf_path,
+                    "ocr_provider": "ocr.space",
+                    "passes": {
+                        "full_page": full_resp,
+                        "agua_caliente_crop": crop_resp,
+                    },
+                },
+            )
 
         return text_full + "\n" + text_crop2, [*raw_full, *raw_crop2]
 
