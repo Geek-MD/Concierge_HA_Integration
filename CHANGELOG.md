@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-05-25
+
+### Added
+
+- **Manual GitHub issue guidance for significant OCR/template mismatch**
+  (`attribute_extractor.py`, `sensor.py`, `README.md`):
+
+  The common-expenses OCR extractor now evaluates template-anchor coverage and
+  flags significant mismatches (missing anchors / anchors without extracted
+  values). When detected, the integration shows a persistent Home Assistant
+  notification with a direct link to the repository issues page and a ready-to-
+  copy markdown report body so users can create the issue manually.
+
 ## [1.3.2] - 2026-05-25
 
 ### Added
