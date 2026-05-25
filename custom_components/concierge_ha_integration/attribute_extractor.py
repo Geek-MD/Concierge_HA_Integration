@@ -2075,7 +2075,7 @@ def _extract_common_expenses_from_ocr_json(
         value_gap_count / found_anchor_count if found_anchor_count else 0.0
     )
     unexpected_line_entries: list[tuple[int, str]] = []
-    for idx, (raw_line, norm_line) in enumerate(zip(best_lines, norm_lines, strict=False)):
+    for idx, (raw_line, norm_line) in enumerate(zip(best_lines, norm_lines, strict=True)):
         if not norm_line:
             continue
         if not _gc_is_potential_unexpected_json_line(raw_line, norm_line):
