@@ -26,6 +26,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from .const import (
+    JSON_MAX_FILES,
     SERVICE_TYPE_COMMON_EXPENSES,
     SERVICE_TYPE_ELECTRICITY,
     SERVICE_TYPE_GAS,
@@ -70,8 +71,6 @@ CONF_SCORE_OVERRIDE: float = 100.0
 # a persistent Repair issue and notification that guides users to configure
 # an OCR.space API key.
 _ocr_available: bool | None = None
-_OCRSPACE_JSON_DIRNAME = "ocrspace_json"
-_OCRSPACE_JSON_MAX_FILES = 5
 
 
 def is_ocr_available() -> bool | None:
@@ -84,38 +83,67 @@ def is_ocr_available() -> bool | None:
     return _ocr_available
 
 
-def _store_ocrspace_json_snapshot(pdf_path: str, payload: dict[str, Any]) -> None:
-    """Store OCR.space raw JSON payload and keep only the latest snapshots."""
+def _store_ocrspace_json_snapshot(
+    pdf_path: str,
+    payload: dict[str, Any],
+    json_dir: str = "",
+) -> None:
+    """Store the OCR.space raw JSON payload for *pdf_path* in *json_dir*.
+
+    The output file is named after the PDF stem (e.g. ``gc_2026-04_45313.json``)
+    so each new OCR run naturally overwrites the previous result for the same
+    billing PDF.  Up to :data:`JSON_MAX_FILES` files are kept in *json_dir*;
+    older files are deleted when the limit is exceeded.
+
+    Args:
+        pdf_path: Absolute path to the source PDF (used to derive the filename).
+        payload:  OCR.space API response dict to serialise as JSON.
+        json_dir: Directory where the JSON file is written.  Defaults to a
+                  ``json/`` sibling directory next to the PDF's parent when
+                  not supplied (backward-compatible fallback).
+    """
     import json
-    from datetime import datetime, timezone
 
     if not pdf_path:
         return
 
     try:
         pdf_file = Path(pdf_path).resolve()
-        out_dir = pdf_file.parent / _OCRSPACE_JSON_DIRNAME
+        if json_dir:
+            out_dir = Path(json_dir)
+        else:
+            # Fallback: place json/ next to the pdfs/ directory
+            out_dir = pdf_file.parent.parent / "json"
         out_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        out_path = out_dir / f"{pdf_file.stem}_ocrspace_{timestamp}.json"
+        out_path = out_dir / f"{pdf_file.stem}.json"
         out_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        _LOGGER.debug("OCR.space JSON snapshot saved to '%s'", out_path)
     except OSError as err:
-        _LOGGER.debug("Could not store OCR.space JSON snapshot for '%s': %s", pdf_path, err)
+        _LOGGER.warning(
+            "Could not store OCR.space JSON snapshot for '%s': %s", pdf_path, err
+        )
         return
 
-    snapshots = sorted(
-        out_dir.glob("*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for old_path in snapshots[_OCRSPACE_JSON_MAX_FILES:]:
-        try:
-            old_path.unlink()
-        except OSError as err:
-            _LOGGER.debug("Could not delete old OCR snapshot '%s': %s", old_path, err)
+    try:
+        snapshots = sorted(
+            out_dir.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for old_path in snapshots[JSON_MAX_FILES:]:
+            try:
+                old_path.unlink()
+            except OSError as err:
+                _LOGGER.debug(
+                    "Could not delete old OCR JSON snapshot '%s': %s", old_path, err
+                )
+    except OSError as err:
+        _LOGGER.debug(
+            "Could not apply retention to OCR JSON dir '%s': %s", out_dir, err
+        )
 
 
 # Patterns for billing period dates (start and end)
@@ -2215,6 +2243,7 @@ def _parse_meter_reading(raw: str) -> float:
 def _try_ocr_pdf_via_ocrspace(
     pdf_path: str,
     api_key: str,
+    json_dir: str = "",
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render the first page of *pdf_path* and OCR it via the OCR.space cloud API.
 
@@ -2231,6 +2260,9 @@ def _try_ocr_pdf_via_ocrspace(
     Args:
         pdf_path: Absolute path to the PDF file.
         api_key:  OCR.space API key (``"helloworld"`` for the free demo tier).
+        json_dir: Directory where the OCR JSON snapshot is saved.  When empty
+                  the snapshot is placed in a ``json/`` sibling next to
+                  the PDF's parent directory.
 
     Returns:
         ``(ocr_text, parsed_results)`` where *ocr_text* is the combined plain
@@ -2332,6 +2364,7 @@ def _try_ocr_pdf_via_ocrspace(
                         "agua_caliente_crop": crop_resp,
                     },
                 },
+                json_dir=json_dir,
             )
 
         return text_full + "\n" + text_crop2, [*raw_full, *raw_crop2]
@@ -2352,6 +2385,7 @@ def _try_ocr_pdf_via_ocrspace(
 def _try_ocr_pdf(
     pdf_path: str,
     ocrspace_api_key: str = "",
+    json_dir: str = "",
 ) -> tuple[str, list]:
     """OCR the first page of *pdf_path* using the OCR.space cloud API.
 
@@ -2363,6 +2397,7 @@ def _try_ocr_pdf(
         ocrspace_api_key: OCR.space API key (``"helloworld"`` for the free
                           demo tier; register at https://ocr.space/OCRAPI
                           for a higher-quota free key).
+        json_dir:         Directory where the OCR JSON snapshot is saved.
 
     Returns:
         ``(ocr_text, parsed_results)`` where *ocr_text* is the extracted text
@@ -2381,7 +2416,9 @@ def _try_ocr_pdf(
     # specific PDF yields any text (transient API errors or PDFs without
     # hot-water content must not trigger the "key not configured" notification).
     _ocr_available = True
-    space_text, space_raw = _try_ocr_pdf_via_ocrspace(pdf_path, ocrspace_api_key)
+    space_text, space_raw = _try_ocr_pdf_via_ocrspace(
+        pdf_path, ocrspace_api_key, json_dir=json_dir
+    )
     if space_text:
         return space_text, space_raw
     _LOGGER.debug("OCR.space returned no text for '%s'", pdf_path)
@@ -2389,7 +2426,7 @@ def _try_ocr_pdf(
 
 
 def _extract_common_expenses_pdf_attributes(
-    text: str, pdf_path: str = "", ocrspace_api_key: str = ""
+    text: str, pdf_path: str = "", ocrspace_api_key: str = "", json_dir: str = ""
 ) -> dict[str, Any]:
     """Extract Gastos Comunes (and optional Agua Caliente) attributes from a PDF.
 
@@ -2705,7 +2742,7 @@ def _extract_common_expenses_pdf_attributes(
     # so future pdfminer reads can extract all fields without OCR.
     # ------------------------------------------------------------------
     if pdf_path:
-        ocr_text, _ocr_raw = _try_ocr_pdf(pdf_path, ocrspace_api_key)
+        ocr_text, _ocr_raw = _try_ocr_pdf(pdf_path, ocrspace_api_key, json_dir=json_dir)
         if ocr_text:
             # Hot-water row — use meter-reading-aware parser for readings
             hw_m = _GC_OCR_HOT_WATER_ROW_RE.search(ocr_text)
@@ -3146,7 +3183,11 @@ def _extract_type_specific_attributes(text: str, service_type: str) -> dict[str,
 
 
 def _extract_pdf_type_specific_attributes(
-    text: str, service_type: str, pdf_path: str = "", ocrspace_api_key: str = ""
+    text: str,
+    service_type: str,
+    pdf_path: str = "",
+    ocrspace_api_key: str = "",
+    json_dir: str = "",
 ) -> dict[str, Any]:
     """Dispatch to the **PDF** extractor for *service_type* and return its results.
 
@@ -3161,6 +3202,7 @@ def _extract_pdf_type_specific_attributes(
         pdf_path:         Optional absolute path to the PDF file.  Passed to the
                           common-expenses extractor to enable optional OCR.
         ocrspace_api_key: Optional OCR.space API key used for OCR extraction.
+        json_dir:         Directory where the OCR JSON snapshot is saved.
     """
     if service_type == SERVICE_TYPE_WATER:
         return _extract_water_pdf_attributes(text)
@@ -3171,7 +3213,9 @@ def _extract_pdf_type_specific_attributes(
     if service_type in (SERVICE_TYPE_COMMON_EXPENSES, SERVICE_TYPE_HOT_WATER):
         # Both devices are fed by the same PDF; the caller can differentiate
         # by service_type when consuming the returned dictionary.
-        return _extract_common_expenses_pdf_attributes(text, pdf_path, ocrspace_api_key)
+        return _extract_common_expenses_pdf_attributes(
+            text, pdf_path, ocrspace_api_key, json_dir=json_dir
+        )
     return {}
 
 
@@ -3342,6 +3386,7 @@ def extract_attributes_from_pdf(
     pdf_path: str,
     service_type: str = SERVICE_TYPE_UNKNOWN,
     ocrspace_api_key: str = "",
+    json_dir: str = "",
 ) -> dict[str, Any]:
     """Extract billing attributes from a downloaded PDF file.
 
@@ -3396,6 +3441,9 @@ def extract_attributes_from_pdf(
         ocrspace_api_key: Optional OCR.space API key (``"helloworld"`` for the
                           free demo tier; register at https://ocr.space/OCRAPI
                           for a higher-quota free key).
+        json_dir:         Directory where the OCR JSON snapshot is saved.
+                          Defaults to a ``json/`` sibling next to the PDF's
+                          parent directory when not supplied.
 
     Returns:
         Dictionary with attributes extracted from the PDF, or an empty dict
@@ -3438,7 +3486,7 @@ def extract_attributes_from_pdf(
         # Each service type has its own PDF extractor tuned to that issuer's
         # PDF layout (separate from the email extractor).
         pdf_attrs = _extract_pdf_type_specific_attributes(
-            pdf_text, service_type, pdf_path, ocrspace_api_key
+            pdf_text, service_type, pdf_path, ocrspace_api_key, json_dir=json_dir
         )
         attrs.update(pdf_attrs)
 

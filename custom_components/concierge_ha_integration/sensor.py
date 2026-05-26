@@ -40,6 +40,7 @@ from .const import (
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
     DOMAIN,
+    JSON_SUBDIR,
     PDF_MAX_FILES,
     PDF_MAX_AGE_DAYS,
     PDF_SUBDIR,
@@ -393,6 +394,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_entry = config_entry
         self._cfg = effective_cfg
         self._pdf_dir: str = hass.config.path(PDF_SUBDIR)
+        self._json_dir: str = hass.config.path(JSON_SUBDIR)
         self._gc_template_alert_fingerprint: str | None = None
 
     async def async_set_learning_override(
@@ -1272,6 +1274,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             pdf_path,
                                             service_type,
                                             self._cfg.get(CONF_OCRSPACE_API_KEY, ""),
+                                            json_dir=self._json_dir,
                                         )
                                         latest_attributes.update(pdf_attrs)
 

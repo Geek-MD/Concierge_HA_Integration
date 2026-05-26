@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-05-26
+
+### Changed
+
+- **OCR JSON snapshots moved to dedicated `json/` directory**
+  (`attribute_extractor.py`, `sensor.py`, `const.py`):
+
+  OCR.space raw JSON responses are now stored under
+  `config/concierge_ha_integration/json/` (a sibling directory of `pdfs/`)
+  instead of the previous `config/concierge_ha_integration/pdfs/ocrspace_json/`
+  subdirectory.  The filename now matches the source PDF stem exactly (e.g.
+  `gastos_comunes_2026-04_45313.json`), so each OCR run overwrites the previous
+  snapshot for the same billing document.  Up to 5 JSON files are retained; the
+  oldest is removed when the limit is exceeded.  A `JSON_SUBDIR` constant is
+  added to `const.py` and the `json_dir` parameter is threaded through the
+  entire extraction call chain so the coordinator can supply the correct path.
+
 ## [1.3.3] - 2026-05-25
 
 ### Added

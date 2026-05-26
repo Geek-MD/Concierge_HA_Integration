@@ -32,6 +32,10 @@ PDF_SUBDIR = "concierge_ha_integration/pdfs"
 PDF_MAX_AGE_DAYS = 365
 PDF_MAX_FILES = 5
 
+# OCR JSON storage — parallel directory next to pdfs/, same retention limit
+JSON_SUBDIR = "concierge_ha_integration/json"
+JSON_MAX_FILES = 5
+
 # OCR.space API — optional free API key for the OCR.space cloud OCR service
 # (https://ocr.space/OCRAPI). The free tier key is "helloworld" (rate-limited);
 # register at https://ocr.space/OCRAPI for a higher-quota free key.
