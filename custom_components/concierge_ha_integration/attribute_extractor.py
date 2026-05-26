@@ -1796,20 +1796,19 @@ def _build_gc_ocr_pages(
             line_height = max(line["bottom"] - line["top"], _OCR_MIN_DIMENSION)
             if rows:
                 last_row = rows[-1]
-                row_height = max(
-                    last_row["bottom"] - last_row["top"], _OCR_MIN_DIMENSION
+                last_line = last_row["lines"][-1]
+                last_line_height = max(
+                    last_line["bottom"] - last_line["top"], _OCR_MIN_DIMENSION
                 )
                 if abs(center_y - last_row["center_y"]) <= max(
-                    line_height, row_height
+                    line_height, last_line_height
                 ) * _OCR_ROW_GROUPING_FACTOR:
                     last_row["lines"].append(line)
                     last_row["top"] = min(last_row["top"], line["top"])
                     last_row["bottom"] = max(last_row["bottom"], line["bottom"])
                     last_row["left"] = min(last_row["left"], line["left"])
                     last_row["right"] = max(last_row["right"], line["right"])
-                    last_row["center_y"] = (
-                        last_row["top"] + last_row["bottom"]
-                    ) / 2.0
+                    last_row["center_y"] = center_y
                     continue
 
             rows.append(
@@ -1919,11 +1918,16 @@ def _extract_regex_near_gc_anchor(
     candidate_texts: list[str] = []
 
     current_row = rows[row_idx]
+    anchor_center_y = (anchor_line["top"] + anchor_line["bottom"]) / 2.0
+    same_row_candidates: list[tuple[float, str]] = []
     for idx, line in enumerate(current_row["lines"]):
         if idx == line_idx:
             continue
         if line["left"] >= anchor_line["left"] - _OCR_HORIZONTAL_PROXIMITY_TOLERANCE:
-            candidate_texts.append(line["text"])
+            line_center_y = (line["top"] + line["bottom"]) / 2.0
+            same_row_candidates.append((abs(line_center_y - anchor_center_y), line["text"]))
+    same_row_candidates.sort(key=lambda t: t[0])
+    candidate_texts.extend(t[1] for t in same_row_candidates)
     candidate_texts.append(anchor_line["text"])
     candidate_texts.append(current_row["text"])
 
@@ -2153,21 +2157,25 @@ def _extract_common_expenses_from_ocr_json(
     if bld_total_raw:
         attrs["building_total_expense"] = _parse_amount_to_int(bld_total_raw)
 
-    gasto_row = _find_gc_row_by_tokens(pages, ("gasto", "comun"))
-    if gasto_row is not None and gasto_row["row"]["lines"]:
-        gasto_raw = _extract_regex_near_gc_anchor(
-            pages,
-            {
-                "page_idx": gasto_row["page_idx"],
-                "row_idx": gasto_row["row_idx"],
-                "line_idx": 0,
-                "line": gasto_row["row"]["lines"][0],
-            },
-            _GC_AMOUNT_CAPTURE_RE,
-            max_row_gap=1,
-        )
-        if gasto_raw:
-            attrs["gastos_comunes_amount"] = _parse_amount_to_int(gasto_raw)
+    gasto_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("concepto"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if not gasto_raw:
+        gasto_row = _find_gc_row_by_tokens(pages, ("gasto", "comun"))
+        if gasto_row is not None and gasto_row["row"]["lines"]:
+            gasto_raw = _extract_regex_near_gc_anchor(
+                pages,
+                {
+                    "page_idx": gasto_row["page_idx"],
+                    "row_idx": gasto_row["row_idx"],
+                    "line_idx": 0,
+                    "line": gasto_row["row"]["lines"][0],
+                },
+                _GC_AMOUNT_CAPTURE_RE,
+                max_row_gap=1,
+            )
+    if gasto_raw:
+        attrs["gastos_comunes_amount"] = _parse_amount_to_int(gasto_raw)
 
     fondos_raw = _extract_regex_near_gc_anchor(
         pages, anchor_matches.get("fondos_amount"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
@@ -2189,7 +2197,7 @@ def _extract_common_expenses_from_ocr_json(
     if sub_depto_raw:
         attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
 
-    hot_water_row = _find_gc_row_by_tokens(pages, ("agua", "caliente"))
+    hot_water_row = _find_gc_row_by_tokens(pages, ("agua", "caliente")) or _find_gc_row_by_tokens(pages, ("aqua", "caliente"))
     if hot_water_row is not None and hot_water_row["row"].get("text"):
         row_text = hot_water_row["row"]["text"]
         meter_matches = _GC_METER_VALUE_RE.findall(row_text)
@@ -2207,7 +2215,7 @@ def _extract_common_expenses_from_ocr_json(
             )
         if "hot_water_consumption" in attrs:
             attrs["hot_water_consumption_unit"] = "m³"
-        cost_match = re.search(r"([\d.]+,\d{2}|[\d,]+\.\d{2})", row_text)
+        cost_match = re.search(r"([\d.]+,\d{2}|[\d,]+\.\d{2})(?!\d)", row_text)
         if cost_match:
             attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_match.group(1))
         amount_match = _GC_AMOUNT_CAPTURE_RE.search(row_text)
@@ -2504,6 +2512,20 @@ def _finalize_common_expenses_attrs(
         if sub_depto is not None and fondos is not None:
             attrs["gastos_comunes_amount"] = sub_depto - fondos
             confidence["gastos_comunes_amount"] = CONF_SCORE_DERIVED
+
+    # Reverse derivation: if fondos_amount is inconsistent with the known
+    # subtotal − gastos breakdown, re-derive it from the two reliable values.
+    sub_depto_val = attrs.get("subtotal_departamento")
+    gasto_val = attrs.get("gastos_comunes_amount")
+    fondos_val = attrs.get("fondos_amount")
+    if sub_depto_val is not None and gasto_val is not None and sub_depto_val >= gasto_val:
+        expected_fondos = sub_depto_val - gasto_val
+        if fondos_val is None or fondos_val != expected_fondos:
+            attrs["fondos_amount"] = expected_fondos
+            confidence["fondos_amount"] = CONF_SCORE_DERIVED
+            if "funds_provision" in attrs:
+                attrs["funds_provision"] = expected_fondos
+                confidence["funds_provision"] = CONF_SCORE_DERIVED
 
     if "subtotal_consumo" not in attrs or attrs.get("subtotal_consumo") is None:
         total = attrs.get("total_amount")

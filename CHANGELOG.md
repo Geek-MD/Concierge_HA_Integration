@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.8] - 2026-05-26
+
+### Fixed
+
+- **OCR row grouping no longer collapses all lines into one giant row**
+  (`attribute_extractor.py`):
+
+  The row-grouping algorithm in `_build_gc_ocr_pages` previously accumulated
+  row height with each merged line ("snowball" effect), causing the logo line
+  height (≈113 px) to grow the threshold until all 62 subsequent lines fell
+  into one row. The fix uses the last added line's own height as tolerance,
+  so each new line is compared to its immediate predecessor only. The 65-line
+  OCR result for a typical bill now produces ≈13 logical rows instead of 2.
+
+- **Value-cell selection now uses Y-proximity instead of left-to-right order**
+  (`attribute_extractor.py`):
+
+  `_extract_regex_near_gc_anchor` previously iterated same-row candidates in
+  X-order (leftmost first), which caused values in the left column to be
+  chosen over the correct right-column amounts. Candidates are now sorted by
+  absolute Y-distance to the anchor line, so the geometrically closest match
+  is always tried first.
+
+- **Gastos Comunes extraction uses "Concepto" as the primary anchor**
+  (`attribute_extractor.py`):
+
+  The Detalle section always occupies a single merged row. Using the first
+  X-ordered line (PROVISION DE FONDOS) as the anchor pointed to the wrong
+  amount. The extractor now retrieves the "Concepto" anchor from
+  `anchor_matches` and falls back to the row's first line only if the anchor
+  is absent.
+
+- **Provisión de Fondos derived from subtotal when proximity extraction fails**
+  (`attribute_extractor.py`):
+
+  `$138.719` (Subtotal) is geometrically closer in Y to PROVISION DE FONDOS
+  than `$6.606` is, so direct Y-proximity always extracts the wrong value.
+  `_finalize_common_expenses_attrs` now re-derives `fondos_amount` as
+  `subtotal_departamento − gastos_comunes_amount` whenever the extracted value
+  is missing or inconsistent with the financial identity.
+
+- **Hot-water cost regex no longer matches meter-reading decimal prefixes**
+  (`attribute_extractor.py`):
+
+  The pattern `[\d.]+,\d{2}` matched `594,99` inside the reading `594,996000`
+  (which occurs earlier in the row text than the real unit cost `6.817,72`).
+  A negative-lookahead `(?!\d)` prevents the pattern from matching mid-number,
+  so `6.817,72` is now extracted correctly as the cost per m³.
+
+- **"Aqua Caliente" OCR typo handled as accepted spelling**
+  (`attribute_extractor.py`):
+
+  OCR.space consistently reads the bill heading as "Aqua Caliente" instead of
+  "Agua Caliente". The hot-water row lookup now tries both spellings so the
+  section is always found regardless of which variant OCR returns.
+
 ## [1.3.7] - 2026-05-26
 
 ### Fixed
