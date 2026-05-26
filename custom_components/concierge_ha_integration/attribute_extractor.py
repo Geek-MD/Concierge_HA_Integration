@@ -2713,6 +2713,18 @@ def _try_ocr_pdf_via_ocrspace(
         return text_full + "\n" + text_crop2, [*raw_full, *raw_crop2]
 
     except urllib.error.URLError as exc:
+        _store_ocrspace_json_snapshot(
+            pdf_path,
+            {
+                "pdf_path": pdf_path,
+                "ocr_provider": "ocr.space",
+                "error": "url_error",
+                "error_message": str(exc),
+                "parsed_results_count": 0,
+                "has_ocr_text": False,
+            },
+            json_dir=json_dir,
+        )
         _LOGGER.debug(
             "OCR.space API unreachable for '%s': %s. "
             "Check your internet connection or verify the API key.",
@@ -2721,6 +2733,18 @@ def _try_ocr_pdf_via_ocrspace(
         )
         return "", []
     except Exception as err:  # noqa: BLE001
+        _store_ocrspace_json_snapshot(
+            pdf_path,
+            {
+                "pdf_path": pdf_path,
+                "ocr_provider": "ocr.space",
+                "error": "unexpected_exception",
+                "error_message": str(err),
+                "parsed_results_count": 0,
+                "has_ocr_text": False,
+            },
+            json_dir=json_dir,
+        )
         _LOGGER.debug("OCR.space failed for '%s': %s", pdf_path, err)
         return "", []
 
@@ -2762,9 +2786,9 @@ def _try_ocr_pdf(
     space_text, space_raw = _try_ocr_pdf_via_ocrspace(
         pdf_path, ocrspace_api_key, json_dir=json_dir
     )
-    if space_text:
+    if space_text or space_raw:
         return space_text, space_raw
-    _LOGGER.debug("OCR.space returned no text for '%s'", pdf_path)
+    _LOGGER.debug("OCR.space returned no usable output for '%s'", pdf_path)
     return "", []
 
 
