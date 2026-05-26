@@ -3079,7 +3079,7 @@ def _extract_common_expenses_pdf_attributes(
     if "gastos_comunes_amount" not in attrs or attrs.get("gastos_comunes_amount") is None:
         sub_depto = attrs.get("subtotal_departamento")
         fondos = attrs.get("fondos_amount")
-        if sub_depto is not None and fondos is not None and sub_depto >= fondos:
+        if sub_depto is not None and fondos is not None:
             attrs["gastos_comunes_amount"] = sub_depto - fondos
             _confidence["gastos_comunes_amount"] = CONF_SCORE_DERIVED
 
@@ -3145,12 +3145,15 @@ def _extract_common_expenses_pdf_attributes(
         # sensor doesn't show "Unknown" when at least the main component exists.
         attrs["gc_total"] = subtotal_val
         _confidence["gc_total"] = CONF_SCORE_DERIVED
-    elif "total_amount" in attrs and "subtotal_consumo" in attrs:
+    elif (
+        attrs.get("total_amount") is not None
+        and attrs.get("subtotal_consumo") is not None
+    ):
         # Fallback: gc_total = total_amount − subtotal_consumo (hot water).
         # This removes the hot-water portion from the grand total.
         attrs["gc_total"] = attrs["total_amount"] - attrs["subtotal_consumo"]
         _confidence["gc_total"] = CONF_SCORE_DERIVED
-    elif "total_amount" in attrs:
+    elif attrs.get("total_amount") is not None:
         # Last resort: use the grand total as gc_total so the sensor is not
         # "Unknown".  This may include hot-water but is better than no value.
         attrs["gc_total"] = attrs["total_amount"]
