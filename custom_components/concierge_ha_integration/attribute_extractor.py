@@ -2051,7 +2051,6 @@ def _extract_common_expenses_from_ocr_json(
         }
     )
     attrs: dict[str, Any] = {}
-    norm_lines = [_normalize_gc_anchor_text(line) for line in best_lines]
     anchor_matches: dict[str, dict[str, Any] | None] = {
         key: _find_gc_anchor_line(pages, key, template_lines)
         for key in _GC_TEMPLATE_ANCHOR_TOKENS
@@ -2092,13 +2091,10 @@ def _extract_common_expenses_from_ocr_json(
             attrs["building_name"] = line.strip()
             break
 
-    rut_anchor = anchor_matches.get("owner_name")
-    rut_row_idx = 0
     for idx, row in enumerate(best_rows):
         rut_match = _GC_RUT_RE.search(row["text"])
         if rut_match:
             attrs["building_rut"] = rut_match.group(1)
-            rut_row_idx = idx
             for nxt in range(idx + 1, min(len(best_rows), idx + 4)):
                 next_text = best_rows[nxt]["text"].strip()
                 if next_text and "fono" not in _normalize_gc_anchor_text(next_text):
@@ -2286,12 +2282,14 @@ def _extract_common_expenses_from_ocr_json(
         value_gap_count / found_anchor_count if found_anchor_count else 0.0
     )
     unexpected_line_entries: list[tuple[int, str]] = []
-    for idx, (raw_line, norm_line) in enumerate(zip(best_lines, norm_lines, strict=True)):
+    row_norms = [_normalize_gc_anchor_text(row["text"]) for row in best_rows]
+    for idx, (row, norm_line) in enumerate(zip(best_rows, row_norms, strict=True)):
+        raw_line = row["text"]
         if not norm_line:
             continue
         if not _gc_is_potential_unexpected_json_line(raw_line, norm_line):
             continue
-        prev_norm_line = norm_lines[idx - 1] if idx > 0 else ""
+        prev_norm_line = row_norms[idx - 1] if idx > 0 else ""
         if _gc_is_ignorable_optional_json_line(raw_line, norm_line, prev_norm_line):
             continue
         if _gc_line_matches_template(norm_line, template_line_skeletons):
@@ -2321,24 +2319,24 @@ def _extract_common_expenses_from_ocr_json(
     if is_significant:
         excerpt_index_set: set[int] = set()
         for key in value_gap_keys:
-            anchor_idx = anchor_indices.get(key)
-            if anchor_idx is None:
+            anchor_match = anchor_matches.get(key)
+            if anchor_match is None:
                 continue
             for off in (0, 1):
-                candidate = anchor_idx + off
-                if 0 <= candidate < len(best_lines):
+                candidate = anchor_match["row_idx"] + off
+                if 0 <= candidate < len(best_rows):
                     excerpt_index_set.add(candidate)
         for idx, _line in unexpected_line_entries:
             excerpt_index_set.add(idx)
         excerpt_indices = sorted(excerpt_index_set)
         if not excerpt_indices:
             excerpt_indices = list(
-                range(min(len(best_lines), _GC_TEMPLATE_MISMATCH_EXCERPT_LINES))
+                range(min(len(best_rows), _GC_TEMPLATE_MISMATCH_EXCERPT_LINES))
             )
         excerpt_lines = [
-            best_lines[idx].strip()[:200]
+            best_rows[idx]["text"].strip()[:200]
             for idx in excerpt_indices[:_GC_TEMPLATE_MISMATCH_EXCERPT_LINES]
-            if best_lines[idx].strip()
+            if best_rows[idx]["text"].strip()
         ]
 
         attrs["_gc_template_mismatch"] = {
