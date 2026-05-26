@@ -3060,7 +3060,11 @@ def _extract_common_expenses_pdf_attributes(
         attrs["subtotal"] = attrs["subtotal_departamento"]
         _confidence["subtotal"] = _confidence.get("subtotal_departamento", CONF_SCORE_PDFMINER)
     # Fixed charge (Cargo Fijo) — prefer cargo_fijo; fall back to subtotal_recargos
-    if not attrs.get("cargo_fijo") and attrs.get("subtotal_recargos"):
+    if (
+        ("cargo_fijo" not in attrs or attrs.get("cargo_fijo") is None)
+        and "subtotal_recargos" in attrs
+        and attrs.get("subtotal_recargos") is not None
+    ):
         attrs["cargo_fijo"] = attrs["subtotal_recargos"]
         _confidence["cargo_fijo"] = _confidence.get("subtotal_recargos", CONF_SCORE_PDFMINER)
     if "cargo_fijo" in attrs:
@@ -3075,7 +3079,7 @@ def _extract_common_expenses_pdf_attributes(
     if "gastos_comunes_amount" not in attrs or attrs.get("gastos_comunes_amount") is None:
         sub_depto = attrs.get("subtotal_departamento")
         fondos = attrs.get("fondos_amount")
-        if sub_depto is not None and fondos is not None and sub_depto > fondos:
+        if sub_depto is not None and fondos is not None and sub_depto >= fondos:
             attrs["gastos_comunes_amount"] = sub_depto - fondos
             _confidence["gastos_comunes_amount"] = CONF_SCORE_DERIVED
 
@@ -3090,24 +3094,29 @@ def _extract_common_expenses_pdf_attributes(
     # ($9.638); without OCR the pdfminer text layer may misread it ($9.838
     # due to font garbling), making the derived figure slightly off (~$200).
     # ------------------------------------------------------------------
-    if not attrs.get("subtotal_consumo"):
-        total = attrs.get("total_amount", 0)
-        sub_depto = attrs.get("subtotal_departamento", 0)
-        cargo = attrs.get("cargo_fijo", 0)
+    if "subtotal_consumo" not in attrs or attrs.get("subtotal_consumo") is None:
+        total = attrs.get("total_amount")
+        sub_depto = attrs.get("subtotal_departamento")
+        cargo = attrs.get("cargo_fijo")
         # Primary derivation: all three components available.
-        if total and sub_depto and cargo and total > sub_depto + cargo:
+        if (
+            total is not None
+            and sub_depto is not None
+            and cargo is not None
+            and total > sub_depto + cargo
+        ):
             derived_consumo = total - sub_depto - cargo
             attrs["subtotal_consumo"] = derived_consumo
             _confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
-            if not attrs.get("hot_water_amount"):
+            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
                 attrs["hot_water_amount"] = derived_consumo
                 _confidence["hot_water_amount"] = CONF_SCORE_DERIVED
         # Relaxed derivation: cargo_fijo missing/zero but total > sub_depto.
-        elif total and sub_depto and not cargo and total > sub_depto:
+        elif total is not None and sub_depto is not None and cargo is None and total > sub_depto:
             derived_consumo = total - sub_depto
             attrs["subtotal_consumo"] = derived_consumo
             _confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
-            if not attrs.get("hot_water_amount"):
+            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
                 attrs["hot_water_amount"] = derived_consumo
                 _confidence["hot_water_amount"] = CONF_SCORE_DERIVED
 

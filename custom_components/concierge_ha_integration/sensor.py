@@ -484,12 +484,20 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # --- Formula: gc_total = subtotal_departamento + cargo_fijo ---
         subtotal_val = attrs.get("subtotal_departamento")
         cargo_val = attrs.get("cargo_fijo")
+        total_val = attrs.get("total_amount")
+        subtotal_consumo_val = attrs.get("subtotal_consumo")
         if not _is_overridden("gc_total"):
             if subtotal_val is not None and cargo_val is not None:
                 attrs["gc_total"] = subtotal_val + cargo_val
                 confidence["gc_total"] = CONF_SCORE_DERIVED
             elif subtotal_val is not None and cargo_val is None:
                 attrs["gc_total"] = subtotal_val
+                confidence["gc_total"] = CONF_SCORE_DERIVED
+            elif total_val is not None and subtotal_consumo_val is not None:
+                attrs["gc_total"] = total_val - subtotal_consumo_val
+                confidence["gc_total"] = CONF_SCORE_DERIVED
+            elif total_val is not None:
+                attrs["gc_total"] = total_val
                 confidence["gc_total"] = CONF_SCORE_DERIVED
 
     def _recompute_water_derived_attrs(self, attrs: dict[str, Any]) -> None:
