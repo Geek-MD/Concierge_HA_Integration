@@ -2974,9 +2974,12 @@ def _extract_common_expenses_pdf_attributes(
                 attrs["last_payment_folio"] = lp_folio_ocr_m.group(1)
                 _confidence["last_payment_folio"] = CONF_SCORE_OCR
 
-            # Template-guided OCR JSON extraction (v1.3.0):
-            # Use the markdown structure as anchor reference to read OCR-space
-            # JSON overlay lines and override any OCR-text regex misreads.
+        # Template-guided OCR JSON extraction (v1.3.0):
+        # Use the markdown structure as anchor reference to read OCR-space
+        # JSON overlay lines and override any OCR-text regex misreads.
+        # Run this whenever raw OCR overlay results are present, even when
+        # ParsedText is empty.
+        if _ocr_raw:
             template_json_attrs = _extract_common_expenses_from_ocr_json(_ocr_raw)
             for key, value in template_json_attrs.items():
                 attrs[key] = value

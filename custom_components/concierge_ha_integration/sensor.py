@@ -1220,135 +1220,150 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             subject,
                             date_header,
                         )
+                        email_date: datetime | None = None
                         if date_header:
                             try:
                                 email_date = parsedate_to_datetime(date_header)
                                 latest_date = email_date
-                                latest_attributes = extract_attributes_from_email_body(
-                                    subject, body, service_type
+                            except (TypeError, ValueError) as err:
+                                _LOGGER.debug(
+                                    "Concierge Services [%s]: could not parse email Date "
+                                    "header '%s' (continuing with extraction): %s",
+                                    service_name,
+                                    date_header,
+                                    err,
                                 )
 
-                                # Log attributes extracted from the email body
-                                body_attr_keys = [
-                                    k for k in latest_attributes if not k.startswith("_")
+                        latest_attributes = extract_attributes_from_email_body(
+                            subject, body, service_type
+                        )
+
+                        # Log attributes extracted from the email body
+                        body_attr_keys = [
+                            k for k in latest_attributes if not k.startswith("_")
+                        ]
+                        if body_attr_keys:
+                            _LOGGER.info(
+                                "Concierge Services [%s]: attributes extracted from "
+                                "email body — %s",
+                                service_name,
+                                ", ".join(
+                                    f"{k}={latest_attributes[k]!r}"
+                                    for k in body_attr_keys
+                                ),
+                            )
+                        else:
+                            _LOGGER.debug(
+                                "Concierge Services [%s]: no attributes extracted "
+                                "from email body",
+                                service_name,
+                            )
+
+                        # Attempt to download (or locate) the bill PDF
+                        try:
+                            pdf_path = download_pdf_from_email(
+                                msg,
+                                self._pdf_dir,
+                                service_id,
+                                email_date,
+                                latest_attributes,
+                                max_files=PDF_MAX_FILES,
+                            )
+                            if pdf_path:
+                                latest_attributes["pdf_path"] = pdf_path
+                                _LOGGER.info(
+                                    "Concierge Services [%s]: PDF found at '%s' — "
+                                    "extracting additional attributes",
+                                    service_name,
+                                    pdf_path,
+                                )
+                                # Extract additional attributes from the
+                                # PDF (e.g. consumption for Metrogas).
+                                # PDF values override email-derived values.
+                                pdf_attrs = extract_attributes_from_pdf(
+                                    pdf_path,
+                                    service_type,
+                                    self._cfg.get(CONF_OCRSPACE_API_KEY, ""),
+                                    json_dir=self._json_dir,
+                                )
+                                latest_attributes.update(pdf_attrs)
+
+                                pdf_attr_keys = [
+                                    k for k in pdf_attrs if not k.startswith("_")
                                 ]
-                                if body_attr_keys:
+                                if pdf_attr_keys:
                                     _LOGGER.info(
-                                        "Concierge Services [%s]: attributes extracted from "
-                                        "email body — %s",
+                                        "Concierge Services [%s]: attributes extracted "
+                                        "from PDF — %s",
                                         service_name,
                                         ", ".join(
-                                            f"{k}={latest_attributes[k]!r}"
-                                            for k in body_attr_keys
+                                            f"{k}={pdf_attrs[k]!r}"
+                                            for k in pdf_attr_keys
                                         ),
                                     )
                                 else:
                                     _LOGGER.debug(
-                                        "Concierge Services [%s]: no attributes extracted "
-                                        "from email body",
+                                        "Concierge Services [%s]: no attributes "
+                                        "extracted from PDF",
                                         service_name,
                                     )
 
-                                # Attempt to download (or locate) the bill PDF
-                                try:
-                                    pdf_path = download_pdf_from_email(
-                                        msg,
-                                        self._pdf_dir,
-                                        service_id,
-                                        email_date,
-                                        latest_attributes,
-                                        max_files=PDF_MAX_FILES,
+                                # For PDF-only services (common_expenses,
+                                # hot_water) the email Date header reflects
+                                # when the administrator forwarded the bill,
+                                # not the bill issue date.  Override
+                                # last_updated with the bill's Fecha Emisión
+                                # extracted from the PDF when available.
+                                if service_type in (
+                                    SERVICE_TYPE_COMMON_EXPENSES,
+                                    SERVICE_TYPE_HOT_WATER,
+                                ):
+                                    emission_str = latest_attributes.get(
+                                        "emission_date"
                                     )
-                                    if pdf_path:
-                                        latest_attributes["pdf_path"] = pdf_path
-                                        _LOGGER.info(
-                                            "Concierge Services [%s]: PDF found at '%s' — "
-                                            "extracting additional attributes",
-                                            service_name,
-                                            pdf_path,
-                                        )
-                                        # Extract additional attributes from the
-                                        # PDF (e.g. consumption for Metrogas).
-                                        # PDF values override email-derived values.
-                                        pdf_attrs = extract_attributes_from_pdf(
-                                            pdf_path,
-                                            service_type,
-                                            self._cfg.get(CONF_OCRSPACE_API_KEY, ""),
-                                            json_dir=self._json_dir,
-                                        )
-                                        latest_attributes.update(pdf_attrs)
-
-                                        pdf_attr_keys = [
-                                            k for k in pdf_attrs if not k.startswith("_")
-                                        ]
-                                        if pdf_attr_keys:
+                                    if emission_str:
+                                        try:
+                                            parsed = datetime.strptime(
+                                                emission_str, "%d-%m-%Y"
+                                            )
+                                            # Use the HA-configured local
+                                            # timezone at noon so the sensor
+                                            # displays the correct local date
+                                            # (avoids UTC-midnight rollover to
+                                            # the previous day in negative-offset
+                                            # timezones such as America/Santiago).
+                                            latest_date = parsed.replace(
+                                                hour=12,
+                                                minute=0,
+                                                second=0,
+                                                tzinfo=dt_util.DEFAULT_TIME_ZONE,
+                                            )
                                             _LOGGER.info(
-                                                "Concierge Services [%s]: attributes extracted "
-                                                "from PDF — %s",
+                                                "Concierge Services [%s]: last_updated "
+                                                "overridden with PDF emission date '%s'",
                                                 service_name,
-                                                ", ".join(
-                                                    f"{k}={pdf_attrs[k]!r}"
-                                                    for k in pdf_attr_keys
-                                                ),
+                                                emission_str,
                                             )
-                                        else:
-                                            _LOGGER.debug(
-                                                "Concierge Services [%s]: no attributes "
-                                                "extracted from PDF",
-                                                service_name,
-                                            )
-
-                                        # For PDF-only services (common_expenses,
-                                        # hot_water) the email Date header reflects
-                                        # when the administrator forwarded the bill,
-                                        # not the bill issue date.  Override
-                                        # last_updated with the bill's Fecha Emisión
-                                        # extracted from the PDF when available.
-                                        if service_type in (
-                                            SERVICE_TYPE_COMMON_EXPENSES,
-                                            SERVICE_TYPE_HOT_WATER,
-                                        ):
-                                            emission_str = latest_attributes.get(
-                                                "emission_date"
-                                            )
-                                            if emission_str:
-                                                try:
-                                                    parsed = datetime.strptime(
-                                                        emission_str, "%d-%m-%Y"
-                                                    )
-                                                    # Use the HA-configured local
-                                                    # timezone at noon so the sensor
-                                                    # displays the correct local date
-                                                    # (avoids UTC-midnight rollover to
-                                                    # the previous day in negative-offset
-                                                    # timezones such as America/Santiago).
-                                                    latest_date = parsed.replace(
-                                                        hour=12,
-                                                        minute=0,
-                                                        second=0,
-                                                        tzinfo=dt_util.DEFAULT_TIME_ZONE,
-                                                    )
-                                                    _LOGGER.info(
-                                                        "Concierge Services [%s]: last_updated "
-                                                        "overridden with PDF emission date '%s'",
-                                                        service_name,
-                                                        emission_str,
-                                                    )
-                                                except ValueError:
-                                                    pass
-                                    else:
-                                        _LOGGER.debug(
-                                            "Concierge Services [%s]: no PDF attachment found "
-                                            "in matching email",
-                                            service_name,
-                                        )
-                                except Exception as pdf_err:
-                                    _LOGGER.warning(
-                                        "PDF download failed for service '%s': %s",
-                                        service_id, pdf_err,
-                                    )
-                            except Exception:
-                                pass
+                                        except ValueError:
+                                            pass
+                            else:
+                                _LOGGER.debug(
+                                    "Concierge Services [%s]: no PDF attachment found "
+                                    "in matching email",
+                                    service_name,
+                                )
+                        except Exception as pdf_err:
+                            _LOGGER.warning(
+                                "PDF download failed for service '%s': %s",
+                                service_id, pdf_err,
+                            )
+                        if latest_date is None:
+                            latest_date = dt_util.now()
+                            _LOGGER.debug(
+                                "Concierge Services [%s]: using current timestamp "
+                                "as last_updated fallback",
+                                service_name,
+                            )
                     else:
                         _LOGGER.debug(
                             "Concierge Services [%s]: email did not match — "
