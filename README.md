@@ -316,9 +316,19 @@ For every Gastos Comunes bill that arrives, the integration:
    at `custom_components/concierge_ha_integration/services_templates/common_expenses/edificio_jose_miguel.md`
    as a structural reference. The template uses generic placeholders (for
    example `dd-mm-aaaa`, `$ 0.000.000`) and contributes semantic labels and
-   table structure, while the extractor matches values by OCR proximity within
-   the detected layout instead of relying on the raw JSON line order. All
-   Gastos Comunes and Agua Caliente values now come exclusively from Tier 2
+   table structure, while the extractor:
+   - Groups overlay lines into logical rows using **per-line height tolerance**
+     (avoids the "snowball" collapse where one tall logo line drags all content
+     into a single row).
+   - Resolves values by **Y-proximity** to their anchor label (closest line
+     in the same row wins), not by left-to-right text order.
+   - Uses `Concepto` as the primary anchor for Gastos Comunes and derives
+     Provisión de Fondos via `subtotal − gastos_comunes` when direct proximity
+     would pick the wrong cell.
+   - Accepts both *Agua Caliente* and the OCR-common variant *Aqua Caliente*
+     as the hot-water section heading.
+
+   All Gastos Comunes and Agua Caliente values come exclusively from Tier 2
    OCR data. The raw OCR.space JSON payload is always stored under
    `config/concierge_ha_integration/json/`; only the 5 latest snapshots are
    retained automatically.
