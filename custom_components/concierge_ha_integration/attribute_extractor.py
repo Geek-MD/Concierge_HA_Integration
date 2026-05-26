@@ -1679,6 +1679,13 @@ _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE = re.compile(
     r"\$\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
 )
 _GC_METER_VALUE_RE = re.compile(r"(\d{1,3}[,.]\d{6})")
+_OCR_MIN_DIMENSION = 1.0
+_OCR_FALLBACK_CHAR_WIDTH = 8.0
+_OCR_ROW_GROUPING_FACTOR = 0.9
+_OCR_HORIZONTAL_PROXIMITY_TOLERANCE = 25.0
+_GC_ANCHOR_SCORE_TOKEN_WEIGHT = 10.0
+_GC_ANCHOR_SCORE_COMPLETE_BONUS = 10.0
+_GC_ROW_LINES_SCORE_DIVISOR = 10.0
 
 
 def _normalize_gc_anchor_text(value: str) -> str:
@@ -1688,6 +1695,254 @@ def _normalize_gc_anchor_text(value: str) -> str:
     value = value.lower()
     value = re.sub(r"[^a-z0-9]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _safe_ocr_float(value: Any) -> float:
+    """Return *value* converted to float, defaulting to 0.0."""
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _gc_anchor_score(token_hits: int, total_tokens: int, similarity: float = 0.0) -> float:
+    """Return a semantic score for an OCR/template anchor match."""
+    score = token_hits * _GC_ANCHOR_SCORE_TOKEN_WEIGHT
+    if token_hits == total_tokens:
+        score += _GC_ANCHOR_SCORE_COMPLETE_BONUS
+    return score + similarity
+
+
+def _build_gc_ocr_pages(
+    ocr_raw_results: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """Return OCR overlay pages grouped into visual rows sorted by proximity."""
+    pages: list[list[dict[str, Any]]] = []
+
+    for parsed_idx, parsed in enumerate(ocr_raw_results):
+        overlay = parsed.get("Overlay")
+        if not isinstance(overlay, dict):
+            continue
+        overlay_lines = overlay.get("Lines")
+        if not isinstance(overlay_lines, list):
+            continue
+
+        raw_lines: list[dict[str, Any]] = []
+        for line_idx, line in enumerate(overlay_lines):
+            if not isinstance(line, dict):
+                continue
+            text = str(line.get("LineText", "")).strip()
+            if not text:
+                continue
+
+            words_raw = line.get("Words")
+            words: list[dict[str, Any]] = []
+            if isinstance(words_raw, list):
+                for word in words_raw:
+                    if not isinstance(word, dict):
+                        continue
+                    word_text = str(word.get("WordText", "")).strip()
+                    if not word_text:
+                        continue
+                    left = _safe_ocr_float(word.get("Left"))
+                    top = _safe_ocr_float(word.get("Top"))
+                    width = _safe_ocr_float(word.get("Width"))
+                    height = _safe_ocr_float(word.get("Height")) or _OCR_MIN_DIMENSION
+                    words.append(
+                        {
+                            "text": word_text,
+                            "left": left,
+                            "top": top,
+                            "right": left + max(width, _OCR_MIN_DIMENSION),
+                            "bottom": top + height,
+                        }
+                    )
+
+            if words:
+                left = min(word["left"] for word in words)
+                top = min(word["top"] for word in words)
+                right = max(word["right"] for word in words)
+                bottom = max(word["bottom"] for word in words)
+            else:
+                left = _safe_ocr_float(line.get("MinLeft"))
+                top = _safe_ocr_float(line.get("MinTop"))
+                height = _safe_ocr_float(line.get("MaxHeight")) or _OCR_MIN_DIMENSION
+                width = _safe_ocr_float(line.get("Width")) or max(
+                    len(text) * _OCR_FALLBACK_CHAR_WIDTH, _OCR_MIN_DIMENSION
+                )
+                right = left + width
+                bottom = top + height
+
+            raw_lines.append(
+                {
+                    "page_idx": parsed_idx,
+                    "line_idx": line_idx,
+                    "text": text,
+                    "norm": _normalize_gc_anchor_text(text),
+                    "left": left,
+                    "top": top,
+                    "right": right,
+                    "bottom": bottom,
+                }
+            )
+
+        raw_lines.sort(key=lambda item: (item["top"], item["left"]))
+        if not raw_lines:
+            continue
+
+        rows: list[dict[str, Any]] = []
+        for line in raw_lines:
+            center_y = (line["top"] + line["bottom"]) / 2.0
+            line_height = max(line["bottom"] - line["top"], _OCR_MIN_DIMENSION)
+            if rows:
+                last_row = rows[-1]
+                row_height = max(
+                    last_row["bottom"] - last_row["top"], _OCR_MIN_DIMENSION
+                )
+                if abs(center_y - last_row["center_y"]) <= max(
+                    line_height, row_height
+                ) * _OCR_ROW_GROUPING_FACTOR:
+                    last_row["lines"].append(line)
+                    last_row["top"] = min(last_row["top"], line["top"])
+                    last_row["bottom"] = max(last_row["bottom"], line["bottom"])
+                    last_row["left"] = min(last_row["left"], line["left"])
+                    last_row["right"] = max(last_row["right"], line["right"])
+                    last_row["center_y"] = (
+                        last_row["top"] + last_row["bottom"]
+                    ) / 2.0
+                    continue
+
+            rows.append(
+                {
+                    "page_idx": parsed_idx,
+                    "lines": [line],
+                    "top": line["top"],
+                    "bottom": line["bottom"],
+                    "left": line["left"],
+                    "right": line["right"],
+                    "center_y": center_y,
+                }
+            )
+
+        for row in rows:
+            row["lines"].sort(key=lambda item: item["left"])
+            row["text"] = " | ".join(line["text"] for line in row["lines"])
+            row["norm"] = _normalize_gc_anchor_text(row["text"])
+        pages.append(rows)
+
+    return pages
+
+
+def _find_gc_anchor_line(
+    pages: list[list[dict[str, Any]]],
+    anchor_key: str,
+    template_lines: list[str],
+) -> dict[str, Any] | None:
+    """Return the best OCR line candidate for *anchor_key*."""
+    tokens = _GC_TEMPLATE_ANCHOR_TOKENS.get(anchor_key, ())
+    if not tokens:
+        return None
+
+    anchor_ref = _find_gc_template_anchor(template_lines, anchor_key) or ""
+    best_match: dict[str, Any] | None = None
+    best_score = 0.0
+
+    for page_idx, rows in enumerate(pages):
+        for row_idx, row in enumerate(rows):
+            for line_idx, line in enumerate(row["lines"]):
+                token_hits = sum(token in line["norm"] for token in tokens)
+                if token_hits == 0:
+                    continue
+                if len(tokens) > 1 and token_hits < len(tokens) - 1:
+                    continue
+                similarity = (
+                    difflib.SequenceMatcher(None, line["norm"], anchor_ref).ratio()
+                    if anchor_ref
+                    else 0.0
+                )
+                score = _gc_anchor_score(token_hits, len(tokens), similarity)
+                if score > best_score:
+                    best_score = score
+                    best_match = {
+                        "page_idx": page_idx,
+                        "row_idx": row_idx,
+                        "line_idx": line_idx,
+                        "line": line,
+                    }
+
+    return best_match
+
+
+def _find_gc_row_by_tokens(
+    pages: list[list[dict[str, Any]]], tokens: tuple[str, ...]
+) -> dict[str, Any] | None:
+    """Return the best OCR row whose text matches *tokens* semantically."""
+    best_match: dict[str, Any] | None = None
+    best_score = 0.0
+
+    for page_idx, rows in enumerate(pages):
+        for row_idx, row in enumerate(rows):
+            token_hits = sum(token in row["norm"] for token in tokens)
+            if token_hits == 0:
+                continue
+            if len(tokens) > 1 and token_hits < len(tokens) - 1:
+                continue
+            score = _gc_anchor_score(token_hits, len(tokens)) + (
+                len(row["lines"]) / _GC_ROW_LINES_SCORE_DIVISOR
+            )
+            if score > best_score:
+                best_score = score
+                best_match = {
+                    "page_idx": page_idx,
+                    "row_idx": row_idx,
+                    "row": row,
+                }
+
+    return best_match
+
+
+def _extract_regex_near_gc_anchor(
+    pages: list[list[dict[str, Any]]],
+    anchor_match: dict[str, Any] | None,
+    pattern: re.Pattern[str],
+    *,
+    max_row_gap: int = 2,
+) -> str | None:
+    """Extract a regex value using semantic proximity to an OCR anchor line."""
+    if anchor_match is None:
+        return None
+
+    rows = pages[anchor_match["page_idx"]]
+    row_idx = anchor_match["row_idx"]
+    line_idx = anchor_match["line_idx"]
+    anchor_line = anchor_match["line"]
+    candidate_texts: list[str] = []
+
+    current_row = rows[row_idx]
+    for idx, line in enumerate(current_row["lines"]):
+        if idx == line_idx:
+            continue
+        if line["left"] >= anchor_line["left"] - _OCR_HORIZONTAL_PROXIMITY_TOLERANCE:
+            candidate_texts.append(line["text"])
+    candidate_texts.append(anchor_line["text"])
+    candidate_texts.append(current_row["text"])
+
+    for row_gap in range(1, max_row_gap + 1):
+        if row_idx + row_gap < len(rows):
+            candidate_texts.append(rows[row_idx + row_gap]["text"])
+        if row_idx - row_gap >= 0:
+            candidate_texts.append(rows[row_idx - row_gap]["text"])
+
+    seen: set[str] = set()
+    for text in candidate_texts:
+        if text in seen:
+            continue
+        seen.add(text)
+        match = pattern.search(text)
+        if match:
+            return (match.group(1) if match.lastindex else match.group(0)).strip()
+
+    return None
 
 
 def _load_gc_template_lines() -> list[str]:
@@ -1789,25 +2044,19 @@ def _gc_is_potential_unexpected_json_line(raw_line: str, norm_line: str) -> bool
 def _extract_common_expenses_from_ocr_json(
     ocr_raw_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Extract attributes from OCR.space JSON using markdown-template anchors."""
-    best_lines: list[str] = []
-    for parsed in ocr_raw_results:
-        overlay = parsed.get("Overlay")
-        if not isinstance(overlay, dict):
-            continue
-        overlay_lines = overlay.get("Lines")
-        if not isinstance(overlay_lines, list):
-            continue
-        current_lines = [
-            str(line.get("LineText", "")).strip()
-            for line in overlay_lines
-            if isinstance(line, dict) and str(line.get("LineText", "")).strip()
-        ]
-        if len(current_lines) > len(best_lines):
-            best_lines = current_lines
-
-    if not best_lines:
+    """Extract attributes from OCR.space JSON using structure and proximity."""
+    pages = _build_gc_ocr_pages(ocr_raw_results)
+    if not pages:
         return {}
+
+    best_rows = max(pages, key=len)
+    best_lines = [
+        line["text"]
+        for row in best_rows
+        for line in row["lines"]
+        if line["text"].strip()
+    ]
+    best_text = "\n".join(row["text"] for row in best_rows if row["text"].strip())
 
     template_lines = _load_gc_template_lines()
     if not template_lines:
@@ -1819,69 +2068,55 @@ def _extract_common_expenses_from_ocr_json(
             if (skeleton := _gc_template_line_skeleton(line))
         }
     )
-
-    norm_lines = [_normalize_gc_anchor_text(line) for line in best_lines]
     attrs: dict[str, Any] = {}
-
-    anchor_indices: dict[str, int | None] = {}
-
-    def _find_anchor_index(anchor_key: str) -> int | None:
-        anchor = _find_gc_template_anchor(template_lines, anchor_key)
-        if anchor:
-            for idx, line in enumerate(norm_lines):
-                if anchor in line or line in anchor:
-                    return idx
-        tokens = _GC_TEMPLATE_ANCHOR_TOKENS.get(anchor_key, ())
-        if tokens:
-            for idx, line in enumerate(norm_lines):
-                if all(token in line for token in tokens):
-                    return idx
-        return None
-
-    def _anchor_index(anchor_key: str) -> int | None:
-        if anchor_key not in anchor_indices:
-            anchor_indices[anchor_key] = _find_anchor_index(anchor_key)
-        return anchor_indices[anchor_key]
-
-    def _scan_after(start_idx: int, pattern: re.Pattern[str], max_lines: int = 8) -> str | None:
-        end = min(len(best_lines), start_idx + max_lines + 1)
-        for idx in range(start_idx, end):
-            match = pattern.search(best_lines[idx])
-            if match:
-                return (match.group(1) if match.lastindex else match.group(0)).strip()
-        return None
+    anchor_matches: dict[str, dict[str, Any] | None] = {
+        key: _find_gc_anchor_line(pages, key, template_lines)
+        for key in _GC_TEMPLATE_ANCHOR_TOKENS
+    }
 
     billing_year = ""
+    period_m = _GC_BILLING_PERIOD_RE.search(best_text)
+    if period_m:
+        month_name = period_m.group(1).lower()
+        billing_year = period_m.group(2)
+        attrs["billing_period_month"] = period_m.group(1).capitalize()
+        attrs["billing_period_year"] = billing_year
+        month_num = _MONTH_NAME_TO_NUM.get(month_name[:3], 0)
+        if month_num:
+            attrs["billing_period_start"] = f"01-{month_num:02d}-{billing_year}"
+            last_day = calendar.monthrange(int(billing_year), month_num)[1]
+            attrs["billing_period_end"] = f"{last_day:02d}-{month_num:02d}-{billing_year}"
 
-    emission_idx = _anchor_index("emission_date")
-    if emission_idx is not None:
-        emission = _scan_after(emission_idx, _GC_DATE_RE, max_lines=4)
-        if emission:
-            emission_norm = emission.replace("/", "-")
-            attrs["emission_date"] = emission_norm
-            year_match = re.search(r"(\d{4})$", emission_norm)
-            if year_match:
-                billing_year = year_match.group(1)
+    emission = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("emission_date"), _GC_DATE_RE, max_row_gap=2
+    )
+    if emission:
+        emission_norm = emission.replace("/", "-")
+        attrs["emission_date"] = emission_norm
+        year_match = re.search(r"(\d{4})$", emission_norm)
+        if year_match:
+            billing_year = year_match.group(1)
 
-    due_idx = _anchor_index("due_date")
-    if due_idx is not None:
-        due = _scan_after(due_idx, _GC_DATE_RE, max_lines=4)
-        if due:
-            due_norm = due.replace("/", "-")
-            attrs["due_date"] = _gc_fix_year(due_norm, billing_year) if billing_year else due_norm
+    due = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("due_date"), _GC_DATE_RE, max_row_gap=2
+    )
+    if due:
+        due_norm = due.replace("/", "-")
+        attrs["due_date"] = _gc_fix_year(due_norm, billing_year) if billing_year else due_norm
 
     for line in best_lines:
-        if line.lower().startswith("edificio "):
+        if _normalize_gc_anchor_text(line).startswith("edificio "):
             attrs["building_name"] = line.strip()
             break
 
-    for idx, line in enumerate(best_lines):
-        rut_match = _GC_RUT_RE.search(line)
+    for idx, row in enumerate(best_rows):
+        rut_match = _GC_RUT_RE.search(row["text"])
         if rut_match:
             attrs["building_rut"] = rut_match.group(1)
-            for nxt in range(idx + 1, min(len(best_lines), idx + 4)):
-                if best_lines[nxt].strip() and "fono" not in norm_lines[nxt]:
-                    attrs["address"] = best_lines[nxt].strip()
+            for nxt in range(idx + 1, min(len(best_rows), idx + 4)):
+                next_text = best_rows[nxt]["text"].strip()
+                if next_text and "fono" not in _normalize_gc_anchor_text(next_text):
+                    attrs["address"] = next_text
                     break
             break
 
@@ -1891,209 +2126,154 @@ def _extract_common_expenses_from_ocr_json(
             attrs["apartment"] = apt_match.group(1)
             break
 
-    owner_idx = _anchor_index("owner_name")
-    if owner_idx is not None:
-        owner = _scan_after(owner_idx + 1, _GC_OWNER_RE, max_lines=6)
-        if owner:
-            attrs["owner_name"] = owner
-
-    alicuota_idx = _anchor_index("alicuota")
-    if alicuota_idx is not None:
-        ali_raw = _scan_after(
-            alicuota_idx,
-            re.compile(r"(?:^|[^0-9])0[,.](\d{4,6})\s*%"),
-            max_lines=5,
-        )
-        if ali_raw:
-            try:
-                attrs["alicuota"] = round(float("0." + ali_raw), 4)
-            except ValueError:
-                pass
-
-    bld_total_idx = _anchor_index("building_total_expense")
-    if bld_total_idx is not None:
-        bld_total_raw = _scan_after(
-            bld_total_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=5,
-        )
-        if bld_total_raw:
-            attrs["building_total_expense"] = _parse_amount_to_int(bld_total_raw)
-
-    monto_pagar_idx = next(
-        (
-            idx
-            for idx, line in enumerate(norm_lines)
-            if "monto a pagar" in line
-        ),
-        None,
+    owner_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("owner_name"), _GC_OWNER_RE, max_row_gap=1
     )
-    if monto_pagar_idx is not None:
-        amount_values = [
-            _parse_amount_to_int(match.group(1))
-            for line in best_lines[monto_pagar_idx + 1 :]
-            if (match := _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE.search(line))
-        ]
-        if len(amount_values) >= 8:
-            attrs["gastos_comunes_amount"] = amount_values[0]
-            attrs["fondos_amount"] = amount_values[1]
-            attrs["subtotal_departamento"] = amount_values[2]
-            attrs["hot_water_amount"] = amount_values[3]
-            attrs["subtotal_consumo"] = amount_values[4]
-            attrs["cargo_fijo"] = amount_values[5]
-            attrs["subtotal_recargos"] = amount_values[6]
-            attrs["total_amount"] = amount_values[7]
-        elif len(amount_values) >= 3:
-            # Partial extraction: assign amounts by position where possible.
-            # Positions: 0=GC, 1=fondos, 2=subtotal_depto, 3=hw_amount,
-            #            4=subtotal_consumo, 5=cargo_fijo, 6=recargos, 7=total
-            _positional_keys = [
-                "gastos_comunes_amount",
-                "fondos_amount",
-                "subtotal_departamento",
-                "hot_water_amount",
-                "subtotal_consumo",
-                "cargo_fijo",
-                "subtotal_recargos",
-                "total_amount",
-            ]
-            for _pos, _val in enumerate(amount_values):
-                if _pos < len(_positional_keys) and _val is not None:
-                    attrs[_positional_keys[_pos]] = _val
+    if owner_raw:
+        attrs["owner_name"] = owner_raw
 
-    concepto_idx = _anchor_index("concepto")
-    gasto_idx = None
-    if concepto_idx is not None:
-        for idx in range(concepto_idx + 1, min(len(norm_lines), concepto_idx + 10)):
-            if "gasto comun" in norm_lines[idx]:
-                gasto_idx = idx
-                break
-    if gasto_idx is not None and "gastos_comunes_amount" not in attrs:
-        gasto_raw = _scan_after(gasto_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=6)
+    ali_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("alicuota"),
+        re.compile(r"(?:^|[^0-9])0[,.](\d{4,6})\s*%"),
+        max_row_gap=1,
+    )
+    if ali_raw:
+        try:
+            attrs["alicuota"] = round(float("0." + ali_raw), 4)
+        except ValueError:
+            pass
+
+    bld_total_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("building_total_expense"),
+        _GC_AMOUNT_CAPTURE_RE,
+        max_row_gap=1,
+    )
+    if bld_total_raw:
+        attrs["building_total_expense"] = _parse_amount_to_int(bld_total_raw)
+
+    gasto_row = _find_gc_row_by_tokens(pages, ("gasto", "comun"))
+    if gasto_row is not None and gasto_row["row"]["lines"]:
+        gasto_raw = _extract_regex_near_gc_anchor(
+            pages,
+            {
+                "page_idx": gasto_row["page_idx"],
+                "row_idx": gasto_row["row_idx"],
+                "line_idx": 0,
+                "line": gasto_row["row"]["lines"][0],
+            },
+            _GC_AMOUNT_CAPTURE_RE,
+            max_row_gap=1,
+        )
         if gasto_raw:
             attrs["gastos_comunes_amount"] = _parse_amount_to_int(gasto_raw)
 
-    fondos_idx = _anchor_index("fondos_amount")
-    if fondos_idx is not None and "fondos_amount" not in attrs:
-        fondos_raw = _scan_after(fondos_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=6)
-        if fondos_raw:
-            attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
-            pct_match = re.search(r"fondos\s+(\d+)", norm_lines[fondos_idx])
-            if pct_match:
-                attrs["fondos_pct"] = int(pct_match.group(1))
-    elif fondos_idx is not None:
-        pct_match = re.search(r"fondos\s+(\d+)", norm_lines[fondos_idx])
+    fondos_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("fondos_amount"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if fondos_raw:
+        attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
+    fondos_anchor = anchor_matches.get("fondos_amount")
+    if fondos_anchor is not None:
+        pct_match = re.search(r"fondos\s+(\d+)", fondos_anchor["line"]["norm"])
         if pct_match:
             attrs["fondos_pct"] = int(pct_match.group(1))
 
-    sub_depto_idx = _anchor_index("subtotal_departamento")
-    if sub_depto_idx is not None and "subtotal_departamento" not in attrs:
-        sub_depto_raw = _scan_after(
-            sub_depto_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=4,
-        )
-        if sub_depto_raw:
-            attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
+    sub_depto_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("subtotal_departamento"),
+        _GC_AMOUNT_CAPTURE_RE,
+        max_row_gap=1,
+    )
+    if sub_depto_raw:
+        attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
 
-    prev_idx = _anchor_index("hot_water_prev")
-    if prev_idx is not None:
-        prev_raw = _scan_after(prev_idx, _GC_METER_VALUE_RE, max_lines=4)
-        if prev_raw:
-            attrs["hot_water_reading_prev"] = _parse_meter_reading(prev_raw)
-
-    curr_idx = _anchor_index("hot_water_curr")
-    if curr_idx is not None:
-        curr_raw = _scan_after(curr_idx, _GC_METER_VALUE_RE, max_lines=4)
-        if curr_raw:
-            attrs["hot_water_reading_curr"] = _parse_meter_reading(curr_raw)
-
-    consumo_idx = _anchor_index("hot_water_consumption")
-    consumo_candidates = [
-        idx
-        for idx, line in enumerate(norm_lines)
-        if "consumos" in line and "generales" not in line
-    ]
-    if consumo_candidates:
-        consumo_idx = consumo_candidates[0]
-    if consumo_idx is not None:
-        consumo_raw = _scan_after(consumo_idx, _GC_METER_VALUE_RE, max_lines=6)
-        if consumo_raw:
-            attrs["hot_water_consumption"] = _parse_meter_reading(consumo_raw)
+    hot_water_row = _find_gc_row_by_tokens(pages, ("agua", "caliente"))
+    if hot_water_row is not None and hot_water_row["row"].get("text"):
+        row_text = hot_water_row["row"]["text"]
+        meter_matches = _GC_METER_VALUE_RE.findall(row_text)
+        if len(meter_matches) >= 2:
+            attrs["hot_water_reading_prev"] = _parse_meter_reading(meter_matches[0])
+            attrs["hot_water_reading_curr"] = _parse_meter_reading(meter_matches[1])
+        if len(meter_matches) >= 3:
+            attrs["hot_water_consumption"] = _parse_meter_reading(meter_matches[2])
+        elif (
+            attrs.get("hot_water_reading_prev") is not None
+            and attrs.get("hot_water_reading_curr") is not None
+        ):
+            attrs["hot_water_consumption"] = round(
+                attrs["hot_water_reading_curr"] - attrs["hot_water_reading_prev"], 6
+            )
+        if "hot_water_consumption" in attrs:
             attrs["hot_water_consumption_unit"] = "m³"
+        cost_match = re.search(r"([\d.]+,\d{2}|[\d,]+\.\d{2})", row_text)
+        if cost_match:
+            attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_match.group(1))
+        amount_match = _GC_AMOUNT_CAPTURE_RE.search(row_text)
+        if amount_match:
+            attrs["hot_water_amount"] = _parse_amount_to_int(amount_match.group(1))
 
-    valor_idx = _anchor_index("hot_water_cost")
-    if valor_idx is not None:
-        cost_raw = _scan_after(valor_idx, re.compile(r"([\d.]+,\d{2}|[\d,]+\.\d{2})"), max_lines=5)
-        if cost_raw:
-            attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_raw)
+    hw_amount_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("hot_water_amount"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if hw_amount_raw:
+        subtotal_consumo = _parse_amount_to_int(hw_amount_raw)
+        attrs["subtotal_consumo"] = subtotal_consumo
+        attrs["hot_water_amount"] = subtotal_consumo
 
-    hw_amount_idx = _anchor_index("hot_water_amount")
-    if hw_amount_idx is not None and "hot_water_amount" not in attrs:
-        hw_amount_raw = _scan_after(
-            hw_amount_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=4,
-        )
-        if hw_amount_raw:
-            subtotal_consumo = _parse_amount_to_int(hw_amount_raw)
-            attrs["subtotal_consumo"] = subtotal_consumo
-            attrs["hot_water_amount"] = subtotal_consumo
+    cargo_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("cargo_fijo"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if cargo_raw:
+        attrs["cargo_fijo"] = _parse_amount_to_int(cargo_raw)
 
-    cargo_idx = _anchor_index("cargo_fijo")
-    if cargo_idx is not None and "cargo_fijo" not in attrs:
-        cargo_raw = _scan_after(cargo_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=4)
-        if cargo_raw:
-            attrs["cargo_fijo"] = _parse_amount_to_int(cargo_raw)
+    recargos_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("subtotal_recargos"),
+        _GC_AMOUNT_CAPTURE_RE,
+        max_row_gap=1,
+    )
+    if recargos_raw:
+        attrs["subtotal_recargos"] = _parse_amount_to_int(recargos_raw)
 
-    recargos_idx = _anchor_index("subtotal_recargos")
-    if recargos_idx is not None and "subtotal_recargos" not in attrs:
-        recargos_raw = _scan_after(
-            recargos_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=4,
-        )
-        if recargos_raw:
-            attrs["subtotal_recargos"] = _parse_amount_to_int(recargos_raw)
+    total_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("total_amount"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if total_raw:
+        attrs["total_amount"] = _parse_amount_to_int(total_raw)
 
-    total_idx = _anchor_index("total_amount")
-    if total_idx is not None and "total_amount" not in attrs:
-        total_raw = _scan_after(total_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=5)
-        if total_raw:
-            attrs["total_amount"] = _parse_amount_to_int(total_raw)
+    lp_date = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("last_payment_date"), _GC_DATE_RE, max_row_gap=1
+    )
+    if lp_date:
+        lp_norm = lp_date.replace("/", "-")
+        attrs["last_payment_date"] = _gc_fix_year(lp_norm, billing_year) if billing_year else lp_norm
 
-    lp_date_idx = _anchor_index("last_payment_date")
-    if lp_date_idx is not None:
-        lp_date = _scan_after(lp_date_idx, _GC_DATE_RE, max_lines=20)
-        if lp_date:
-            lp_norm = lp_date.replace("/", "-")
-            attrs["last_payment_date"] = _gc_fix_year(lp_norm, billing_year) if billing_year else lp_norm
+    lp_amount_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("last_payment_amount"),
+        _GC_AMOUNT_CAPTURE_RE,
+        max_row_gap=1,
+    )
+    if lp_amount_raw:
+        attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_raw)
 
-    lp_amount_idx = _anchor_index("last_payment_amount")
-    if lp_amount_idx is not None:
-        lp_amount_raw = _scan_after(
-            lp_amount_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=20,
-        )
-        if lp_amount_raw:
-            attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_raw)
-
-    lp_folio_idx = _anchor_index("last_payment_folio")
-    if lp_folio_idx is not None:
-        lp_folio = _scan_after(lp_folio_idx, re.compile(r"(\d{5,6})"), max_lines=20)
-        if lp_folio:
-            attrs["last_payment_folio"] = lp_folio
-
-    for anchor_key in _GC_TEMPLATE_ANCHOR_TOKENS:
-        _anchor_index(anchor_key)
+    lp_folio = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("last_payment_folio"),
+        re.compile(r"(\d{5,6})"),
+        max_row_gap=1,
+    )
+    if lp_folio:
+        attrs["last_payment_folio"] = lp_folio
 
     total_anchor_count = len(_GC_TEMPLATE_ANCHOR_TOKENS)
     found_anchor_keys = sorted(
-        [key for key, idx in anchor_indices.items() if idx is not None]
+        [key for key, match in anchor_matches.items() if match is not None]
     )
     missing_anchor_keys = sorted(
-        [key for key, idx in anchor_indices.items() if idx is None]
+        [key for key, match in anchor_matches.items() if match is None]
     )
     found_anchor_count = len(found_anchor_keys)
     missing_anchor_count = len(missing_anchor_keys)
@@ -2120,12 +2300,14 @@ def _extract_common_expenses_from_ocr_json(
         value_gap_count / found_anchor_count if found_anchor_count else 0.0
     )
     unexpected_line_entries: list[tuple[int, str]] = []
-    for idx, (raw_line, norm_line) in enumerate(zip(best_lines, norm_lines, strict=True)):
+    row_norms = [_normalize_gc_anchor_text(row["text"]) for row in best_rows]
+    for idx, (row, norm_line) in enumerate(zip(best_rows, row_norms, strict=True)):
+        raw_line = row["text"]
         if not norm_line:
             continue
         if not _gc_is_potential_unexpected_json_line(raw_line, norm_line):
             continue
-        prev_norm_line = norm_lines[idx - 1] if idx > 0 else ""
+        prev_norm_line = row_norms[idx - 1] if idx > 0 else ""
         if _gc_is_ignorable_optional_json_line(raw_line, norm_line, prev_norm_line):
             continue
         if _gc_line_matches_template(norm_line, template_line_skeletons):
@@ -2155,24 +2337,24 @@ def _extract_common_expenses_from_ocr_json(
     if is_significant:
         excerpt_index_set: set[int] = set()
         for key in value_gap_keys:
-            anchor_idx = anchor_indices.get(key)
-            if anchor_idx is None:
+            anchor_match = anchor_matches.get(key)
+            if anchor_match is None:
                 continue
             for off in (0, 1):
-                candidate = anchor_idx + off
-                if 0 <= candidate < len(best_lines):
+                candidate = anchor_match["row_idx"] + off
+                if 0 <= candidate < len(best_rows):
                     excerpt_index_set.add(candidate)
         for idx, _line in unexpected_line_entries:
             excerpt_index_set.add(idx)
         excerpt_indices = sorted(excerpt_index_set)
         if not excerpt_indices:
             excerpt_indices = list(
-                range(min(len(best_lines), _GC_TEMPLATE_MISMATCH_EXCERPT_LINES))
+                range(min(len(best_rows), _GC_TEMPLATE_MISMATCH_EXCERPT_LINES))
             )
         excerpt_lines = [
-            best_lines[idx].strip()[:200]
+            best_rows[idx]["text"].strip()[:200]
             for idx in excerpt_indices[:_GC_TEMPLATE_MISMATCH_EXCERPT_LINES]
-            if best_lines[idx].strip()
+            if best_rows[idx]["text"].strip()
         ]
 
         attrs["_gc_template_mismatch"] = {
@@ -2255,6 +2437,143 @@ def _parse_meter_reading(raw: str) -> float:
             )
     # Fallback: standard consumption parser
     return _parse_consumption_to_float(raw)
+
+
+def _finalize_common_expenses_attrs(
+    attrs: dict[str, Any], confidence: dict[str, float]
+) -> dict[str, Any]:
+    """Apply aliases, derivations, and confidence metadata in-place."""
+    building = attrs.get("building_name", "")
+    raw_addr = attrs.get("address", "")
+    apt_str = attrs.get("apartment", "")
+    if building and raw_addr:
+        if " - " in raw_addr:
+            street_part, city_part = raw_addr.split(" - ", 1)
+        else:
+            street_part, city_part = raw_addr, ""
+        street_seg = street_part.strip()
+        if apt_str:
+            street_seg += f" Depto.{apt_str}"
+        combined_parts = [building]
+        if street_seg:
+            combined_parts.append(street_seg)
+        if city_part:
+            combined_parts.append(city_part.strip())
+        attrs["address"] = ", ".join(combined_parts)
+
+    if "building_total_expense" in attrs:
+        attrs["gross_common_expenses"] = attrs["building_total_expense"]
+    if "alicuota" in attrs:
+        attrs["gross_common_expenses_percentage"] = attrs["alicuota"]
+    if "hot_water_reading_prev" in attrs:
+        attrs["previous_measure"] = attrs["hot_water_reading_prev"]
+    if "hot_water_reading_curr" in attrs:
+        attrs["actual_measure"] = attrs["hot_water_reading_curr"]
+
+    if "fondos_pct" in attrs:
+        attrs["funds_provision_percentage"] = attrs["fondos_pct"]
+        confidence["funds_provision_percentage"] = confidence.get(
+            "fondos_pct", CONF_SCORE_OCR
+        )
+    if "fondos_amount" in attrs:
+        attrs["funds_provision"] = attrs["fondos_amount"]
+        confidence["funds_provision"] = confidence.get(
+            "fondos_amount", CONF_SCORE_OCR
+        )
+    if "subtotal_departamento" in attrs:
+        attrs["subtotal"] = attrs["subtotal_departamento"]
+        confidence["subtotal"] = confidence.get(
+            "subtotal_departamento", CONF_SCORE_OCR
+        )
+    if (
+        ("cargo_fijo" not in attrs or attrs.get("cargo_fijo") is None)
+        and "subtotal_recargos" in attrs
+        and attrs.get("subtotal_recargos") is not None
+    ):
+        attrs["cargo_fijo"] = attrs["subtotal_recargos"]
+        confidence["cargo_fijo"] = confidence.get(
+            "subtotal_recargos", CONF_SCORE_OCR
+        )
+    if "cargo_fijo" in attrs:
+        attrs["fixed_charge"] = attrs["cargo_fijo"]
+        confidence["fixed_charge"] = confidence.get("cargo_fijo", CONF_SCORE_OCR)
+
+    if "gastos_comunes_amount" not in attrs or attrs.get("gastos_comunes_amount") is None:
+        sub_depto = attrs.get("subtotal_departamento")
+        fondos = attrs.get("fondos_amount")
+        if sub_depto is not None and fondos is not None:
+            attrs["gastos_comunes_amount"] = sub_depto - fondos
+            confidence["gastos_comunes_amount"] = CONF_SCORE_DERIVED
+
+    if "subtotal_consumo" not in attrs or attrs.get("subtotal_consumo") is None:
+        total = attrs.get("total_amount")
+        sub_depto = attrs.get("subtotal_departamento")
+        cargo = attrs.get("cargo_fijo")
+        if (
+            total is not None
+            and sub_depto is not None
+            and cargo is not None
+            and total > sub_depto + cargo
+        ):
+            derived_consumo = total - sub_depto - cargo
+            attrs["subtotal_consumo"] = derived_consumo
+            confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
+            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
+                attrs["hot_water_amount"] = derived_consumo
+                confidence["hot_water_amount"] = CONF_SCORE_DERIVED
+        elif total is not None and sub_depto is not None and cargo is None and total > sub_depto:
+            derived_consumo = total - sub_depto
+            attrs["subtotal_consumo"] = derived_consumo
+            confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
+            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
+                attrs["hot_water_amount"] = derived_consumo
+                confidence["hot_water_amount"] = CONF_SCORE_DERIVED
+
+    subtotal_val = (
+        attrs["subtotal_departamento"]
+        if "subtotal_departamento" in attrs
+        else attrs.get("subtotal")
+    )
+    cargo_val = (
+        attrs["cargo_fijo"] if "cargo_fijo" in attrs else attrs.get("fixed_charge")
+    )
+    if subtotal_val is not None and cargo_val is not None:
+        attrs["gc_total"] = subtotal_val + cargo_val
+        confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif subtotal_val is not None and cargo_val is None:
+        attrs["gc_total"] = subtotal_val
+        confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif (
+        attrs.get("total_amount") is not None
+        and attrs.get("subtotal_consumo") is not None
+    ):
+        attrs["gc_total"] = attrs["total_amount"] - attrs["subtotal_consumo"]
+        confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif attrs.get("total_amount") is not None:
+        attrs["gc_total"] = attrs["total_amount"]
+        confidence["gc_total"] = CONF_SCORE_DERIVED
+
+    if "building_total_expense" in attrs:
+        confidence["gross_common_expenses"] = confidence.get(
+            "building_total_expense", CONF_SCORE_OCR
+        )
+    if "alicuota" in attrs:
+        confidence["gross_common_expenses_percentage"] = confidence.get(
+            "alicuota", CONF_SCORE_OCR
+        )
+    if "hot_water_reading_prev" in attrs:
+        confidence["previous_measure"] = confidence.get(
+            "hot_water_reading_prev", CONF_SCORE_OCR
+        )
+    if "hot_water_reading_curr" in attrs:
+        confidence["actual_measure"] = confidence.get(
+            "hot_water_reading_curr", CONF_SCORE_OCR
+        )
+
+    if confidence:
+        attrs["_confidence"] = confidence
+
+    return attrs
 
 
 def _try_ocr_pdf_via_ocrspace(
@@ -2370,19 +2689,26 @@ def _try_ocr_pdf_via_ocrspace(
         )
         text_crop2, raw_crop2, crop_resp = _call_ocrspace(crop2)
 
-        if full_resp or crop_resp:
-            _store_ocrspace_json_snapshot(
-                pdf_path,
-                {
-                    "pdf_path": pdf_path,
-                    "ocr_provider": "ocr.space",
-                    "passes": {
-                        "full_page": full_resp,
-                        "agua_caliente_crop": crop_resp,
-                    },
+        _store_ocrspace_json_snapshot(
+            pdf_path,
+            {
+                "pdf_path": pdf_path,
+                "ocr_provider": "ocr.space",
+                "passes": {
+                    "full_page": full_resp or {},
+                    "agua_caliente_crop": crop_resp or {},
                 },
-                json_dir=json_dir,
-            )
+                "parsed_results_count": len(raw_full) + len(raw_crop2),
+                "has_ocr_text": bool(text_full.strip() or text_crop2.strip()),
+            },
+            json_dir=json_dir,
+        )
+        _LOGGER.info(
+            "OCR.space JSON snapshot stored for '%s' (json_dir=%s, parsed_results=%d)",
+            pdf_path,
+            json_dir or "auto",
+            len(raw_full) + len(raw_crop2),
+        )
 
         return text_full + "\n" + text_crop2, [*raw_full, *raw_crop2]
 
@@ -2443,792 +2769,35 @@ def _try_ocr_pdf(
 
 
 def _extract_common_expenses_pdf_attributes(
-    text: str, pdf_path: str = "", ocrspace_api_key: str = "", json_dir: str = ""
+    _text: str, pdf_path: str = "", ocrspace_api_key: str = "", json_dir: str = ""
 ) -> dict[str, Any]:
-    """Extract Gastos Comunes (and optional Agua Caliente) attributes from a PDF.
-
-    This extractor handles the "Nota de Cobro" document issued by Chilean
-    building administrators.  The PDF uses a "sandwich" layout: a full-page
-    JPEG image as background, plus a partially complete text layer created by
-    a prior OCR pass (identifiable by the ``HiddenHorzOCR`` font embedded in
-    the PDF).  pdfminer reads that embedded text layer directly — no
-    additional OCR step is required for the fields it contains.  However, the
-    hot-water meter table was **not** included in the original OCR pass and
-    lives exclusively in the JPEG background; extracting it requires a second
-    OCR pass (optional tier-2).
-
-    **Tier 1 – embedded pdfminer text layer** (always attempted, no OCR):
-        ``billing_period_month``, ``billing_period_year``,
-        ``billing_period_start``, ``billing_period_end``,
-        ``emission_date``, ``due_date``,
-        ``building_name``, ``building_rut``, ``address``,
-        ``apartment``, ``owner_name``, ``alicuota``,
-        ``building_total_expense``,
-        ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
-        ``subtotal_recargos``, ``total_amount``,
-        ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``
-
-    **Tier 2 – OCR.space on JPEG background** (requires pdf_path and
-    a configured OCR.space API key):
-
-    *Exclusive to Tier 2* (absent from the embedded text layer):
-        ``hot_water_reading_prev``, ``hot_water_reading_curr``,
-        ``hot_water_consumption``, ``hot_water_consumption_unit``,
-        ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``
-
-    *Re-extracted from the JPEG* to override any pdfminer value with the
-    higher-confidence OCR score (85 vs 70).  OCR reads the printed image
-    directly; pdfminer may misread font-encoded glyphs (e.g. "6"→"8",
-    "Ú"→"l1", accented characters →  garbled ASCII):
-        ``billing_period_month``, ``billing_period_year``,
-        ``billing_period_start``, ``billing_period_end``,
-        ``emission_date``, ``due_date``,
-        ``building_name``, ``building_rut``, ``address``,
-        ``apartment``, ``owner_name``, ``alicuota``,
-        ``building_total_expense``, ``fondos_pct``,
-        ``gastos_comunes_amount``, ``fondos_amount``, ``subtotal_departamento``,
-        ``subtotal_recargos``, ``cargo_fijo``, ``total_amount``,
-        ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``
-
-    Reference PDF: "Gastos Comunes Enero 2026" (Edificio Jose Miguel, 1 page).
-    """
+    """Extract Gastos Comunes and Agua Caliente attributes using OCR Tier 2 only."""
     attrs: dict[str, Any] = {}
-    # Per-attribute confidence scores populated as each field is extracted.
-    # Merged into attrs["_confidence"] at the end of the function.
-    _confidence: dict[str, float] = {}
+    confidence: dict[str, float] = {}
 
-    # ------------------------------------------------------------------
-    # Billing period (month + year)
-    # ------------------------------------------------------------------
-    period_m = _GC_BILLING_PERIOD_RE.search(text)
-    if period_m:
-        month_name = period_m.group(1).lower()
-        year_str = period_m.group(2)
-        attrs["billing_period_month"] = period_m.group(1).capitalize()
-        attrs["billing_period_year"] = year_str
-        month_num = _MONTH_NAME_TO_NUM.get(month_name[:3], 0)
-        if month_num:
-            attrs["billing_period_start"] = f"01-{month_num:02d}-{year_str}"
-            # End = last day of billing month (approximate: next month day 0)
-            last_day = calendar.monthrange(int(year_str), month_num)[1]
-            attrs["billing_period_end"] = f"{last_day:02d}-{month_num:02d}-{year_str}"
-        for _k in ("billing_period_month", "billing_period_year",
-                   "billing_period_start", "billing_period_end"):
-            if _k in attrs:
-                _confidence[_k] = CONF_SCORE_PDFMINER
-    else:
-        year_str = ""
+    if not pdf_path:
+        return {}
 
-    # ------------------------------------------------------------------
-    # Emission date + due date (two dates extracted together)
-    # Both labels and their values appear in the same text-block region.
-    # The first date is the emission date; the second is the due date.
-    # ------------------------------------------------------------------
-    dates_m = _GC_DATES_BLOCK_RE.search(text)
-    if dates_m:
-        attrs["emission_date"] = dates_m.group(1).replace("/", "-")
-        raw_due = dates_m.group(2).replace("/", "-")
-        attrs["due_date"] = _gc_fix_year(raw_due, year_str) if year_str else raw_due
-        _confidence["emission_date"] = CONF_SCORE_PDFMINER
-        _confidence["due_date"] = CONF_SCORE_PDFMINER
+    ocr_text, ocr_raw = _try_ocr_pdf(pdf_path, ocrspace_api_key, json_dir=json_dir)
+    if not ocr_raw and not ocr_text.strip():
+        _LOGGER.info(
+            "Common-expenses OCR-only extraction skipped for '%s': no Tier 2 data available",
+            pdf_path,
+        )
+        return {}
 
-    # ------------------------------------------------------------------
-    # Building RUT and name
-    # ------------------------------------------------------------------
-    rut_m = _GC_RUT_RE.search(text)
-    if rut_m:
-        attrs["building_rut"] = rut_m.group(1)
-        _confidence["building_rut"] = CONF_SCORE_PDFMINER
+    template_json_attrs = _extract_common_expenses_from_ocr_json(ocr_raw)
+    for key, value in template_json_attrs.items():
+        attrs[key] = value
+        if not key.startswith("_"):
+            confidence[key] = CONF_SCORE_OCR
 
-    name_m = _GC_BUILDING_NAME_RE.search(text)
-    if name_m:
-        extracted_name = ("Edificio " + name_m.group(1).strip()).strip()
-        # Heuristic: pdfminer font-garbling can produce a slightly wrong
-        # building name (e.g. "Jon" instead of "Jose").  When the extracted
-        # name is very similar to the known-correct reference name, use the
-        # reference so the value stays stable from month to month.  Only
-        # accept the extracted name when it differs substantially (genuine
-        # building change).  The OCR tier (Tier 2) always overrides this
-        # with the accurately-read value when the optional libraries are
-        # available.
-        sim = difflib.SequenceMatcher(
-            None,
-            extracted_name.lower(),
-            _GC_KNOWN_BUILDING_NAME.lower(),
-        ).ratio()
-        if sim >= _GC_BUILDING_NAME_SIMILARITY_THRESHOLD:
-            attrs["building_name"] = _GC_KNOWN_BUILDING_NAME
-        else:
-            attrs["building_name"] = extracted_name
-        _confidence["building_name"] = CONF_SCORE_PDFMINER
-
-    # ------------------------------------------------------------------
-    # Address (line immediately after the RUT line)
-    # ------------------------------------------------------------------
-    addr_m = _GC_ADDRESS_RE.search(text)
-    if addr_m:
-        attrs["address"] = addr_m.group(1).strip()
-        _confidence["address"] = CONF_SCORE_PDFMINER
-
-    # ------------------------------------------------------------------
-    # Apartment number
-    # ------------------------------------------------------------------
-    apt_m = _GC_APARTMENT_RE.search(text)
-    if apt_m:
-        attrs["apartment"] = apt_m.group(1)
-        _confidence["apartment"] = CONF_SCORE_PDFMINER
-
-    # ------------------------------------------------------------------
-    # Owner name (UPPERCASE, 2–4 words)
-    # ------------------------------------------------------------------
-    owner_candidates = _GC_OWNER_RE.findall(text)
-    # Filter out short single-word matches (e.g. "SANTIAGO") and known labels
-    _OWNER_EXCLUDE = {"SANTIAGO", "RUT", "FONDOS", "MENSUAL", "ADMINISTRACIONES"}
-    for candidate in owner_candidates:
-        words = candidate.split()
-        if len(words) >= 2 and not _OWNER_EXCLUDE.issuperset(words):
-            attrs["owner_name"] = candidate.strip()
-            _confidence["owner_name"] = CONF_SCORE_PDFMINER
-            break
-
-    # ------------------------------------------------------------------
-    # Alícuota percentage
-    # ------------------------------------------------------------------
-    alicuota_m = _GC_ALICUOTA_RE.search(text)
-    if alicuota_m:
-        raw = "0." + (alicuota_m.group(1).lstrip("0") or "0")
-        try:
-            attrs["alicuota"] = round(float(raw), 4)
-            _confidence["alicuota"] = CONF_SCORE_PDFMINER
-        except ValueError:
-            pass
-
-    # ------------------------------------------------------------------
-    # Building total expense (e.g. $14.083.315)
-    # ------------------------------------------------------------------
-    bldg_total_m = _GC_BUILDING_TOTAL_RE.search(text)
-    if bldg_total_m:
-        raw = (bldg_total_m.group(1) or bldg_total_m.group(2) or "").replace(".", "")
-        if raw.isdigit():
-            attrs["building_total_expense"] = int(raw)
-            _confidence["building_total_expense"] = CONF_SCORE_PDFMINER
-
-    # ------------------------------------------------------------------
-    # Fondos provision percentage (integer, e.g. 5 from "FONDOS 5%")
-    # ------------------------------------------------------------------
-    fondos_pct_m = _GC_FONDOS_PCT_RE.search(text)
-    if fondos_pct_m:
-        try:
-            attrs["fondos_pct"] = int(fondos_pct_m.group(1))
-            _confidence["fondos_pct"] = CONF_SCORE_PDFMINER
-        except ValueError:
-            pass
-
-    # ------------------------------------------------------------------
-    # Cargo Fijo (fixed charge) — pdfminer tier
-    # The label may not appear clearly; rely on OCR for accuracy (see
-    # Tier 2 below).  This pattern is a best-effort attempt on the text
-    # layer so the value is available even without OCR libraries.
-    # ------------------------------------------------------------------
-    cargo_fijo_m = _GC_CARGO_FIJO_RE.search(text)
-    if cargo_fijo_m:
-        attrs["cargo_fijo"] = _parse_amount_to_int(cargo_fijo_m.group(1))
-        _confidence["cargo_fijo"] = CONF_SCORE_PDFMINER
-
-    # ------------------------------------------------------------------
-    # Breakdown table: GC amount / fondos / subtotal departamento
-    # First try individual patterns; fall back to the three-amount block.
-    # ------------------------------------------------------------------
-    gc_m = _GC_AMOUNT_RE.search(text)
-    if gc_m:
-        attrs["gastos_comunes_amount"] = _parse_amount_to_int(gc_m.group(1))
-        _confidence["gastos_comunes_amount"] = CONF_SCORE_PDFMINER
-
-    fondos_m = _GC_FONDOS_AMOUNT_RE.search(text)
-    if fondos_m:
-        attrs["fondos_amount"] = _parse_amount_to_int(fondos_m.group(1))
-        _confidence["fondos_amount"] = CONF_SCORE_PDFMINER
-
-    sub_depto_m = _GC_SUBTOTAL_DEPTO_RE.search(text)
-    if sub_depto_m:
-        attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_m.group(1))
-        _confidence["subtotal_departamento"] = CONF_SCORE_PDFMINER
-
-    # Fallback: three-consecutive-amounts block (GC / fondos / subtotal).
-    # Scope the search to the breakdown section — the slice of text from the
-    # first alícuota / fondos / "Gastos Comunes" anchor up to the "Subtotal
-    # Recargos" or "Cargo Fijo" label — to avoid accidentally matching a
-    # different group of three consecutive amounts elsewhere in the document
-    # (e.g. amounts in the last-payment section or the building summary).
-    if not (
-        attrs.get("gastos_comunes_amount")
-        and attrs.get("fondos_amount")
-        and attrs.get("subtotal_departamento")
-    ):
-        # Determine the search window: start at the earliest contextual anchor
-        # that precedes the breakdown amounts, end just after "Cargo Fijo" /
-        # "Subtotal Recargos" (whichever comes first).
-        _breakdown_start = len(text)
-        for _anchor in (
-            r"al[íif]cuota",
-            r"fondos\s+\d+\s*%",
-            r"gasto\s+com[uú]n",
-        ):
-            _am = re.search(_anchor, text, re.IGNORECASE)
-            if _am and _am.start() < _breakdown_start:
-                _breakdown_start = _am.start()
-        if _breakdown_start == len(text):
-            _breakdown_start = 0  # no anchor found — search full text
-
-        _breakdown_end = len(text)
-        for _end_anchor in (r"cargo\s+fijo", r"subtotal\s+recargos"):
-            _em = re.search(_end_anchor, text[_breakdown_start:], re.IGNORECASE)
-            if _em:
-                _candidate_end = _breakdown_start + _em.end() + 60
-                if _candidate_end < _breakdown_end:
-                    _breakdown_end = _candidate_end
-
-        three_m = _GC_THREE_AMOUNTS_RE.search(text[_breakdown_start:_breakdown_end])
-        if three_m:
-            a1 = _parse_amount_to_int(three_m.group(1))
-            a2 = _parse_amount_to_int(three_m.group(2))
-            a3 = _parse_amount_to_int(three_m.group(3))
-            if not attrs.get("gastos_comunes_amount") and a1:
-                attrs["gastos_comunes_amount"] = a1
-                _confidence["gastos_comunes_amount"] = CONF_SCORE_PDFMINER
-            if not attrs.get("fondos_amount") and a2:
-                attrs["fondos_amount"] = a2
-                _confidence["fondos_amount"] = CONF_SCORE_PDFMINER
-            if not attrs.get("subtotal_departamento") and a3:
-                attrs["subtotal_departamento"] = a3
-                _confidence["subtotal_departamento"] = CONF_SCORE_PDFMINER
-
-    # ------------------------------------------------------------------
-    # Subtotal recargos + total amount
-    # The totals block has three amounts: recargos, total del mes, total a pagar.
-    # We take the FIRST as recargos and the MAXIMUM as the grand total.
-    # ------------------------------------------------------------------
-    totals_m = _GC_TOTALS_SECTION_RE.search(text)
-    if totals_m:
-        section = totals_m.group(0)
-        all_amounts = re.findall(r"\$\s*([\d.,]+)", section)
-        parsed_amounts = [_parse_amount_to_int(a) for a in all_amounts]
-        if parsed_amounts:
-            attrs["subtotal_recargos"] = parsed_amounts[0]
-            _confidence["subtotal_recargos"] = CONF_SCORE_PDFMINER
-        if len(parsed_amounts) >= 2:
-            attrs["total_amount"] = max(parsed_amounts)
-            _confidence["total_amount"] = CONF_SCORE_PDFMINER
-    else:
-        # Fallback individual patterns
-        rec_m = _GC_SUBTOTAL_RECARGOS_RE.search(text)
-        if rec_m:
-            attrs["subtotal_recargos"] = _parse_amount_to_int(rec_m.group(1))
-            _confidence["subtotal_recargos"] = CONF_SCORE_PDFMINER
-        total_generic = _extract_total_amount(text)
-        if total_generic:
-            attrs["total_amount"] = total_generic
-            _confidence["total_amount"] = CONF_SCORE_PDFMINER
-
-    # ------------------------------------------------------------------
-    # Last payment information
-    # Three labels appear consecutively, then three values on separate lines.
-    # ------------------------------------------------------------------
-    lp_date_m = _GC_LAST_PAYMENT_DATE_RE.search(text)
-    if lp_date_m:
-        raw_lp = lp_date_m.group(1).replace("/", "-")
-        attrs["last_payment_date"] = _gc_fix_year(raw_lp, year_str) if year_str else raw_lp
-        _confidence["last_payment_date"] = CONF_SCORE_PDFMINER
-
-    lp_amount_m = _GC_LAST_PAYMENT_AMOUNT_RE.search(text)
-    if lp_amount_m:
-        attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_m.group(1))
-        _confidence["last_payment_amount"] = CONF_SCORE_PDFMINER
-
-    lp_folio_m = _GC_LAST_PAYMENT_FOLIO_RE.search(text)
-    if lp_folio_m:
-        attrs["last_payment_folio"] = lp_folio_m.group(1)
-        _confidence["last_payment_folio"] = CONF_SCORE_PDFMINER
-
-    # ------------------------------------------------------------------
-    # Tier 2: OCR-based hot-water extraction (optional)
-    # The OCR engine reads the JPEG image layer directly and extracts the
-    # hot-water table that was not included in the embedded text layer.
-    # The OCR output is also cross-validated against the pdfminer text
-    # and — on success — saved back as an invisible text layer in the PDF
-    # so future pdfminer reads can extract all fields without OCR.
-    # ------------------------------------------------------------------
-    if pdf_path:
-        ocr_text, _ocr_raw = _try_ocr_pdf(pdf_path, ocrspace_api_key, json_dir=json_dir)
-        if ocr_text:
-            # Hot-water row — use meter-reading-aware parser for readings
-            hw_m = _GC_OCR_HOT_WATER_ROW_RE.search(ocr_text)
-            if hw_m:
-                attrs["hot_water_reading_prev"] = _parse_meter_reading(hw_m.group(1))
-                attrs["hot_water_reading_curr"] = _parse_meter_reading(hw_m.group(2))
-                # group 3 (consumo) is optional — OCR sometimes omits the column
-                if hw_m.group(3):
-                    attrs["hot_water_consumption"] = _parse_meter_reading(hw_m.group(3))
-                else:
-                    # Derive consumption from meter readings when the OCR column
-                    # is missing: consumo = lectura_actual − lectura_anterior
-                    prev_r = attrs["hot_water_reading_prev"]
-                    curr_r = attrs["hot_water_reading_curr"]
-                    if prev_r is not None and curr_r is not None:
-                        attrs["hot_water_consumption"] = round(curr_r - prev_r, 6)
-                attrs["hot_water_consumption_unit"] = "m³"
-                attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(
-                    hw_m.group(4)
-                )
-                for _k in ("hot_water_reading_prev", "hot_water_reading_curr",
-                           "hot_water_consumption", "hot_water_cost_per_m3"):
-                    _confidence[_k] = CONF_SCORE_OCR
-                # Monto is optional in the regex (group 5 may be None)
-                if hw_m.group(5):
-                    attrs["hot_water_amount"] = _parse_amount_to_int(hw_m.group(5))
-                    _confidence["hot_water_amount"] = CONF_SCORE_OCR
-
-            # Subtotal Consumo (hot-water subtotal) — prefer this as hot-water
-            # total if individual monto was not captured.
-            sc_m = _GC_OCR_SUBTOTAL_CONSUMO_RE.search(ocr_text)
-            if sc_m:
-                subtotal_consumo = _parse_amount_to_int(sc_m.group(1))
-                attrs["subtotal_consumo"] = subtotal_consumo
-                _confidence["subtotal_consumo"] = CONF_SCORE_OCR
-                if not attrs.get("hot_water_amount") and subtotal_consumo:
-                    attrs["hot_water_amount"] = subtotal_consumo
-                    _confidence["hot_water_amount"] = CONF_SCORE_OCR
-
-            # OCR gives more accurate subtotal_recargos when the $ amount
-            # appears on the same line as the label (PSM modes that preserve
-            # columns). Use a tight pattern (≤ 20 chars) to avoid accidentally
-            # capturing the next line's total.
-            rec_ocr_m = re.search(
-                r"subtotal\s+recargos[\s|]{0,15}\$?\s*([\d.,]+)",
-                ocr_text,
-                re.IGNORECASE,
-            )
-            if rec_ocr_m:
-                candidate = _parse_amount_to_int(rec_ocr_m.group(1))
-                # Sanity: recargos should be smaller than the grand total
-                if candidate and candidate < attrs.get("total_amount", float("inf")):
-                    attrs["subtotal_recargos"] = candidate
-                    _confidence["subtotal_recargos"] = CONF_SCORE_OCR
-
-            # OCR (PSM 4) gives a cleaner building name than pdfminer which
-            # garbles font-encoded characters (e.g. "Jon" instead of "Jose").
-            bldg_ocr_m = _GC_OCR_BUILDING_NAME_RE.search(ocr_text)
-            if bldg_ocr_m:
-                attrs["building_name"] = "Edificio " + bldg_ocr_m.group(1).strip()
-                _confidence["building_name"] = CONF_SCORE_OCR
-
-            # OCR gives the correct Cargo Fijo amount (pdfminer may misread
-            # digit glyphs, e.g. "$9.638" → "$9.838").  Override any pdfminer
-            # value when OCR succeeds.
-            cargo_fijo_ocr_m = _GC_OCR_CARGO_FIJO_RE.search(ocr_text)
-            if cargo_fijo_ocr_m:
-                candidate = _parse_amount_to_int(cargo_fijo_ocr_m.group(1))
-                # Sanity: cargo fijo should be smaller than the grand total
-                if candidate and candidate < attrs.get("total_amount", float("inf")):
-                    attrs["cargo_fijo"] = candidate
-                    _confidence["cargo_fijo"] = CONF_SCORE_OCR
-
-            # ----------------------------------------------------------
-            # Full-document re-extraction from the JPEG image layer.
-            # All tier-1 fields are re-read from the JPEG via OCR so
-            # that the higher-confidence OCR score (85) overrides the
-            # pdfminer value (70) wherever OCR succeeds.  OCR reads the
-            # printed glyphs directly and avoids font-encoding artefacts.
-            # ----------------------------------------------------------
-
-            # Billing period (OCR reads the heading "Nota de Cobro Mes YYYY")
-            period_ocr_m = _GC_BILLING_PERIOD_RE.search(ocr_text)
-            if period_ocr_m:
-                _month_ocr = period_ocr_m.group(1).lower()
-                _year_ocr = period_ocr_m.group(2)
-                attrs["billing_period_month"] = period_ocr_m.group(1).capitalize()
-                attrs["billing_period_year"] = _year_ocr
-                _mnum_ocr = _MONTH_NAME_TO_NUM.get(_month_ocr[:3], 0)
-                if _mnum_ocr:
-                    attrs["billing_period_start"] = f"01-{_mnum_ocr:02d}-{_year_ocr}"
-                    _lday_ocr = calendar.monthrange(int(_year_ocr), _mnum_ocr)[1]
-                    attrs["billing_period_end"] = f"{_lday_ocr:02d}-{_mnum_ocr:02d}-{_year_ocr}"
-                for _k in (
-                    "billing_period_month", "billing_period_year",
-                    "billing_period_start", "billing_period_end",
-                ):
-                    if _k in attrs:
-                        _confidence[_k] = CONF_SCORE_OCR
-
-            # Emission date ("Fecha Emisión: 18-02-2026")
-            emdate_ocr_m = _GC_OCR_EMISSION_DATE_RE.search(ocr_text)
-            if emdate_ocr_m:
-                attrs["emission_date"] = emdate_ocr_m.group(1).replace("/", "-")
-                _confidence["emission_date"] = CONF_SCORE_OCR
-
-            # Due date ("Pagar Hasta: 01-03-2026")
-            duedate_ocr_m = _GC_OCR_DUE_DATE_RE.search(ocr_text)
-            if duedate_ocr_m:
-                _raw_due_ocr = duedate_ocr_m.group(1).replace("/", "-")
-                _yr_fix = attrs.get("billing_period_year", "")
-                attrs["due_date"] = (
-                    _gc_fix_year(_raw_due_ocr, _yr_fix) if _yr_fix else _raw_due_ocr
-                )
-                _confidence["due_date"] = CONF_SCORE_OCR
-
-            # Building RUT
-            rut_ocr_m = _GC_RUT_RE.search(ocr_text)
-            if rut_ocr_m:
-                attrs["building_rut"] = rut_ocr_m.group(1)
-                _confidence["building_rut"] = CONF_SCORE_OCR
-
-            # Street address (line immediately after the RUT line)
-            addr_ocr_m = _GC_ADDRESS_RE.search(ocr_text)
-            if addr_ocr_m:
-                attrs["address"] = addr_ocr_m.group(1).strip()
-                _confidence["address"] = CONF_SCORE_OCR
-
-            # Apartment number
-            apt_ocr_m = _GC_APARTMENT_RE.search(ocr_text)
-            if apt_ocr_m:
-                attrs["apartment"] = apt_ocr_m.group(1)
-                _confidence["apartment"] = CONF_SCORE_OCR
-
-            # Owner name (consecutive ALL-CAPS words, 2–4 words)
-            _ocr_owner_excl = {
-                "SANTIAGO", "RUT", "FONDOS", "MENSUAL", "ADMINISTRACIONES",
-            }
-            for _ocr_cand in _GC_OWNER_RE.findall(ocr_text):
-                _ocr_words = _ocr_cand.split()
-                if len(_ocr_words) >= 2 and not _ocr_owner_excl.issuperset(_ocr_words):
-                    attrs["owner_name"] = _ocr_cand.strip()
-                    _confidence["owner_name"] = CONF_SCORE_OCR
-                    break
-
-            # Alícuota percentage (OCR reads "0,95110 %" without font garbling)
-            alicuota_ocr_m = _GC_OCR_ALICUOTA_RE.search(ocr_text)
-            if alicuota_ocr_m:
-                try:
-                    _raw_ali_ocr = "0." + (alicuota_ocr_m.group(1).lstrip("0") or "0")
-                    attrs["alicuota"] = round(float(_raw_ali_ocr), 4)
-                    _confidence["alicuota"] = CONF_SCORE_OCR
-                except ValueError:
-                    pass
-
-            # Building total expense (large CLP amount from the building summary)
-            bldg_total_ocr_m = _GC_BUILDING_TOTAL_RE.search(ocr_text)
-            if bldg_total_ocr_m:
-                _raw_bt_ocr = (
-                    bldg_total_ocr_m.group(1) or bldg_total_ocr_m.group(2) or ""
-                ).replace(".", "")
-                if _raw_bt_ocr.isdigit():
-                    attrs["building_total_expense"] = int(_raw_bt_ocr)
-                    _confidence["building_total_expense"] = CONF_SCORE_OCR
-
-            # Fondos provision percentage
-            fondos_pct_ocr_m = _GC_FONDOS_PCT_RE.search(ocr_text)
-            if fondos_pct_ocr_m:
-                try:
-                    attrs["fondos_pct"] = int(fondos_pct_ocr_m.group(1))
-                    _confidence["fondos_pct"] = CONF_SCORE_OCR
-                except ValueError:
-                    pass
-
-            # GC apartment-portion amount (directly after alícuota line)
-            gc_ocr_m = _GC_OCR_GC_AMOUNT_RE.search(ocr_text)
-            if gc_ocr_m:
-                _cand_gc = _parse_amount_to_int(gc_ocr_m.group(1))
-                if _cand_gc:
-                    attrs["gastos_comunes_amount"] = _cand_gc
-                    _confidence["gastos_comunes_amount"] = CONF_SCORE_OCR
-
-            # Fondos provision amount
-            fondos_amt_ocr_m = _GC_OCR_FONDOS_AMOUNT_RE.search(ocr_text)
-            if fondos_amt_ocr_m:
-                _cand_fondos = _parse_amount_to_int(fondos_amt_ocr_m.group(1))
-                if _cand_fondos:
-                    attrs["fondos_amount"] = _cand_fondos
-                    _confidence["fondos_amount"] = CONF_SCORE_OCR
-
-            # Subtotal departamento (GC + fondos)
-            sub_depto_ocr_m = _GC_OCR_SUBTOTAL_DEPTO_RE.search(ocr_text)
-            if sub_depto_ocr_m:
-                _cand_sd = _parse_amount_to_int(sub_depto_ocr_m.group(1))
-                if _cand_sd:
-                    attrs["subtotal_departamento"] = _cand_sd
-                    _confidence["subtotal_departamento"] = CONF_SCORE_OCR
-
-            # Grand total — sanity: must be ≥ subtotal_departamento
-            total_ocr_m = _GC_OCR_TOTAL_AMOUNT_RE.search(ocr_text)
-            if total_ocr_m:
-                _cand_total = _parse_amount_to_int(total_ocr_m.group(1))
-                _floor = attrs.get("subtotal_departamento") or 0
-                if _cand_total and _cand_total >= _floor:
-                    attrs["total_amount"] = _cand_total
-                    _confidence["total_amount"] = CONF_SCORE_OCR
-
-            # Last payment date
-            lp_date_ocr_m = _GC_OCR_LAST_PAYMENT_DATE_RE.search(ocr_text)
-            if lp_date_ocr_m:
-                _raw_lpd = lp_date_ocr_m.group(1).replace("/", "-")
-                _yr_fix2 = attrs.get("billing_period_year", "")
-                attrs["last_payment_date"] = (
-                    _gc_fix_year(_raw_lpd, _yr_fix2) if _yr_fix2 else _raw_lpd
-                )
-                _confidence["last_payment_date"] = CONF_SCORE_OCR
-
-            # Last payment amount
-            lp_amount_ocr_m = _GC_OCR_LAST_PAYMENT_AMOUNT_RE.search(ocr_text)
-            if lp_amount_ocr_m:
-                attrs["last_payment_amount"] = _parse_amount_to_int(
-                    lp_amount_ocr_m.group(1)
-                )
-                _confidence["last_payment_amount"] = CONF_SCORE_OCR
-
-            # Last payment folio
-            lp_folio_ocr_m = _GC_OCR_LAST_PAYMENT_FOLIO_RE.search(ocr_text)
-            if lp_folio_ocr_m:
-                attrs["last_payment_folio"] = lp_folio_ocr_m.group(1)
-                _confidence["last_payment_folio"] = CONF_SCORE_OCR
-
-        # Template-guided OCR JSON extraction (v1.3.0):
-        # Use the markdown structure as anchor reference to read OCR-space
-        # JSON overlay lines and override any OCR-text regex misreads.
-        # Run this whenever raw OCR overlay results are present, even when
-        # ParsedText is empty.
-        if _ocr_raw:
-            template_json_attrs = _extract_common_expenses_from_ocr_json(_ocr_raw)
-            for key, value in template_json_attrs.items():
-                attrs[key] = value
-                _confidence[key] = CONF_SCORE_OCR
-
-    # ------------------------------------------------------------------
-    # Combined address for binary-sensor display
-    # Format: "<building_name>, <street> Depto.<apt>, <city>"
-    # Built from the three separately extracted fields; stored back into
-    # the ``address`` key so the standard binary-sensor lookup works.
-    # ------------------------------------------------------------------
-    building = attrs.get("building_name", "")
-    raw_addr = attrs.get("address", "")  # e.g. "Curico 380 - Santiago"
-    apt_str = attrs.get("apartment", "")
-    if building and raw_addr:
-        if " - " in raw_addr:
-            street_part, city_part = raw_addr.split(" - ", 1)
-        else:
-            street_part, city_part = raw_addr, ""
-        street_seg = street_part.strip()
-        if apt_str:
-            street_seg += f" Depto.{apt_str}"
-        combined_parts = [building]
-        if street_seg:
-            combined_parts.append(street_seg)
-        if city_part:
-            combined_parts.append(city_part.strip())
-        attrs["address"] = ", ".join(combined_parts)
-
-    # ------------------------------------------------------------------
-    # Attribute aliases consumed by the status binary sensor.
-    # The binary sensor looks up keys by the alias names defined in its
-    # service-type-specific defaults dict; these aliases map the raw
-    # extracted keys to the expected names without duplicating logic.
-    # ------------------------------------------------------------------
-    # common_expenses binary-sensor attributes
-    if "building_total_expense" in attrs:
-        attrs["gross_common_expenses"] = attrs["building_total_expense"]
-    if "alicuota" in attrs:
-        attrs["gross_common_expenses_percentage"] = attrs["alicuota"]
-    # hot_water binary-sensor attributes
-    if "hot_water_reading_prev" in attrs:
-        attrs["previous_measure"] = attrs["hot_water_reading_prev"]
-    if "hot_water_reading_curr" in attrs:
-        attrs["actual_measure"] = attrs["hot_water_reading_curr"]
-
-    # ------------------------------------------------------------------
-    # Derived common-expenses sensor aliases
-    # These keys are consumed by the dedicated breakdown sensor entities.
-    # ------------------------------------------------------------------
-    # Funds provision percentage: integer (e.g. 5 from "FONDOS 5%")
-    if "fondos_pct" in attrs:
-        attrs["funds_provision_percentage"] = attrs["fondos_pct"]
-        _confidence["funds_provision_percentage"] = _confidence.get("fondos_pct", CONF_SCORE_PDFMINER)
-    # Funds provision amount = fondos 5% (e.g. $6.697)
-    if "fondos_amount" in attrs:
-        attrs["funds_provision"] = attrs["fondos_amount"]
-        _confidence["funds_provision"] = _confidence.get("fondos_amount", CONF_SCORE_PDFMINER)
-    # Subtotal = GC apartment portion + fondos (Subtotal Departamento)
-    if "subtotal_departamento" in attrs:
-        attrs["subtotal"] = attrs["subtotal_departamento"]
-        _confidence["subtotal"] = _confidence.get("subtotal_departamento", CONF_SCORE_PDFMINER)
-    # Fixed charge (Cargo Fijo) — prefer cargo_fijo; fall back to subtotal_recargos
-    if (
-        ("cargo_fijo" not in attrs or attrs.get("cargo_fijo") is None)
-        and "subtotal_recargos" in attrs
-        and attrs.get("subtotal_recargos") is not None
-    ):
-        attrs["cargo_fijo"] = attrs["subtotal_recargos"]
-        _confidence["cargo_fijo"] = _confidence.get("subtotal_recargos", CONF_SCORE_PDFMINER)
-    if "cargo_fijo" in attrs:
-        attrs["fixed_charge"] = attrs["cargo_fijo"]
-        _confidence["fixed_charge"] = _confidence.get("cargo_fijo", CONF_SCORE_PDFMINER)
-
-    # ------------------------------------------------------------------
-    # Gastos Comunes amount derivation — fallback when direct extraction
-    # failed.  The formula is:
-    #   gastos_comunes_amount = subtotal_departamento − fondos_amount
-    # ------------------------------------------------------------------
-    if "gastos_comunes_amount" not in attrs or attrs.get("gastos_comunes_amount") is None:
-        sub_depto = attrs.get("subtotal_departamento")
-        fondos = attrs.get("fondos_amount")
-        if sub_depto is not None and fondos is not None:
-            attrs["gastos_comunes_amount"] = sub_depto - fondos
-            _confidence["gastos_comunes_amount"] = CONF_SCORE_DERIVED
-
-    # ------------------------------------------------------------------
-    # Agua caliente (Subtotal Consumo) derivation — fallback when OCR did
-    # not capture the value directly via _GC_OCR_SUBTOTAL_CONSUMO_RE.
-    #
-    # The "Nota de Cobro" PDF structure guarantees:
-    #   Total del mes = Subtotal Departamento + Subtotal Consumo + Cargo Fijo
-    # so Subtotal Consumo can be back-calculated when the other three are
-    # known.  When cargo_fijo comes from the OCR tier its value is correct
-    # ($9.638); without OCR the pdfminer text layer may misread it ($9.838
-    # due to font garbling), making the derived figure slightly off (~$200).
-    # ------------------------------------------------------------------
-    if "subtotal_consumo" not in attrs or attrs.get("subtotal_consumo") is None:
-        total = attrs.get("total_amount")
-        sub_depto = attrs.get("subtotal_departamento")
-        cargo = attrs.get("cargo_fijo")
-        # Primary derivation: all three components available.
-        if (
-            total is not None
-            and sub_depto is not None
-            and cargo is not None
-            and total > sub_depto + cargo
-        ):
-            derived_consumo = total - sub_depto - cargo
-            attrs["subtotal_consumo"] = derived_consumo
-            _confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
-            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
-                attrs["hot_water_amount"] = derived_consumo
-                _confidence["hot_water_amount"] = CONF_SCORE_DERIVED
-        # Relaxed derivation: cargo_fijo missing/zero but total > sub_depto.
-        elif total is not None and sub_depto is not None and cargo is None and total > sub_depto:
-            derived_consumo = total - sub_depto
-            attrs["subtotal_consumo"] = derived_consumo
-            _confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
-            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
-                attrs["hot_water_amount"] = derived_consumo
-                _confidence["hot_water_amount"] = CONF_SCORE_DERIVED
-
-    # GC total = Subtotal Departamento + Cargo Fijo
-    # (does NOT include hot-water, which is a separate device)
-    # Prefer the canonical keys; fall back to their aliases (`subtotal`,
-    # `fixed_charge`) so the Total sensor is never "Unknown" when the
-    # constituent breakdown sensors already show correct values.
-    # Use explicit key-presence checks to avoid treating a legitimate zero
-    # value as "missing" (Python's `or` short-circuits on falsy values).
-    subtotal_val = (
-        attrs["subtotal_departamento"]
-        if "subtotal_departamento" in attrs
-        else attrs.get("subtotal")
+    _LOGGER.debug(
+        "Common-expenses OCR-only extraction populated %d non-metadata attributes from OCR JSON for '%s'",
+        len([key for key in attrs if not key.startswith("_")]),
+        pdf_path,
     )
-    cargo_val = (
-        attrs["cargo_fijo"]
-        if "cargo_fijo" in attrs
-        else attrs.get("fixed_charge")
-    )
-    if subtotal_val is not None and cargo_val is not None:
-        attrs["gc_total"] = subtotal_val + cargo_val
-        _confidence["gc_total"] = CONF_SCORE_DERIVED
-    elif subtotal_val is not None and cargo_val is None:
-        # Cargo fijo not available — use subtotal_departamento alone so the
-        # sensor doesn't show "Unknown" when at least the main component exists.
-        attrs["gc_total"] = subtotal_val
-        _confidence["gc_total"] = CONF_SCORE_DERIVED
-    elif (
-        attrs.get("total_amount") is not None
-        and attrs.get("subtotal_consumo") is not None
-    ):
-        # Fallback: gc_total = total_amount − subtotal_consumo (hot water).
-        # This removes the hot-water portion from the grand total.
-        attrs["gc_total"] = attrs["total_amount"] - attrs["subtotal_consumo"]
-        _confidence["gc_total"] = CONF_SCORE_DERIVED
-    elif attrs.get("total_amount") is not None:
-        # Last resort: use the grand total as gc_total so the sensor is not
-        # "Unknown".  This may include hot-water but is better than no value.
-        attrs["gc_total"] = attrs["total_amount"]
-        _confidence["gc_total"] = CONF_SCORE_DERIVED
-
-    # Propagate alias confidence from binary-sensor attributes
-    if "building_total_expense" in attrs:
-        _confidence["gross_common_expenses"] = _confidence.get(
-            "building_total_expense", CONF_SCORE_PDFMINER
-        )
-    if "alicuota" in attrs:
-        _confidence["gross_common_expenses_percentage"] = _confidence.get(
-            "alicuota", CONF_SCORE_PDFMINER
-        )
-    if "hot_water_reading_prev" in attrs:
-        _confidence["previous_measure"] = _confidence.get(
-            "hot_water_reading_prev", CONF_SCORE_OCR
-        )
-    if "hot_water_reading_curr" in attrs:
-        _confidence["actual_measure"] = _confidence.get(
-            "hot_water_reading_curr", CONF_SCORE_OCR
-        )
-
-    # Store per-attribute confidence scores in the returned dict.
-    # Keys starting with "_" are metadata — not exposed as HA state attributes.
-    if _confidence:
-        attrs["_confidence"] = _confidence
-
-    # ------------------------------------------------------------------
-    # Diagnostic logging — surfaces what each extraction tier contributed.
-    #
-    # This PDF uses a "sandwich" layout: a JPEG image as background plus a
-    # partially complete text layer (font-encoded, created by a prior OCR
-    # pass — identifiable by the HiddenHorzOCR font used in the PDF).
-    # pdfminer reads that embedded text layer directly (Tier 1); OCR
-    # tier-2 re-processes the JPEG to recover fields absent from the
-    # embedded layer AND to override tier-1 fields with a more accurate
-    # reading of the printed image.
-    #
-    # Fields exclusive to OCR tier-2 (absent from embedded text layer):
-    #   hot_water_reading_prev, hot_water_reading_curr,
-    #   hot_water_consumption, hot_water_consumption_unit,
-    #   hot_water_cost_per_m3, hot_water_amount.
-    #
-    # All other tier-1 fields are re-read via OCR to raise their
-    # confidence score from 70 (pdfminer) to 85 (OCR).  The OCR value
-    # wins whenever the pattern matches successfully.
-    # ------------------------------------------------------------------
-    if _confidence:
-        _tier1_keys = sorted(
-            k for k, s in _confidence.items()
-            if s == CONF_SCORE_PDFMINER and not k.startswith("_")
-        )
-        _tier2_keys = sorted(
-            k for k, s in _confidence.items()
-            if s == CONF_SCORE_OCR
-        )
-        _derived_keys = sorted(
-            k for k, s in _confidence.items()
-            if s == CONF_SCORE_DERIVED
-        )
-        _LOGGER.debug(
-            "Common-expenses PDF extraction — "
-            "embedded text layer (%d attrs): [%s]; "
-            "OCR tier-2 (%d attrs): [%s]; "
-            "derived (%d attrs): [%s]",
-            len(_tier1_keys),
-            ", ".join(_tier1_keys) if _tier1_keys else "—",
-            len(_tier2_keys),
-            ", ".join(_tier2_keys) if _tier2_keys else "—",
-            len(_derived_keys),
-            ", ".join(_derived_keys) if _derived_keys else "—",
-        )
-
-    return attrs
+    return _finalize_common_expenses_attrs(attrs, confidence)
 
 
 # ---------------------------------------------------------------------------
@@ -3533,7 +3102,10 @@ def extract_attributes_from_pdf(
         _LOGGER.debug("Could not extract text from PDF '%s': %s", pdf_path, err)
         return {}
 
-    if not pdf_text:
+    if not pdf_text and service_type not in (
+        SERVICE_TYPE_COMMON_EXPENSES,
+        SERVICE_TYPE_HOT_WATER,
+    ):
         return {}
 
     _LOGGER.debug(
