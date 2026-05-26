@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.5] - 2026-05-26
+
+### Fixed
+
+- **Force Refresh now keeps processing even with malformed/missing email Date**
+  (`sensor.py`):
+
+  Matching emails are now fully processed (email attributes + PDF extraction)
+  even when the `Date` header cannot be parsed. This prevents force-refresh from
+  aborting with `last_updated = None`, which previously left Gastos Comunes and
+  Agua Caliente sensors stuck as `unknown` in these cases.
+
+- **Template OCR JSON mapping now runs even when OCR `ParsedText` is empty**
+  (`attribute_extractor.py`):
+
+  For common-expenses PDFs, template-guided extraction from OCR.space overlay
+  lines is now executed whenever raw OCR JSON results exist, regardless of
+  whether concatenated OCR plain text is empty. This ensures OCR refreshes can
+  still populate Gastos Comunes and Agua Caliente sensor fields and keep JSON-
+  driven mapping effective on layout variations.
+
 ## [1.3.4] - 2026-05-26
 
 ### Changed
