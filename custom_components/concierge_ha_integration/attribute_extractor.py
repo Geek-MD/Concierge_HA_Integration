@@ -1958,7 +1958,7 @@ def _extract_common_expenses_from_ocr_json(
                 "total_amount",
             ]
             for _pos, _val in enumerate(amount_values):
-                if _pos < len(_positional_keys) and _val:
+                if _pos < len(_positional_keys) and _val is not None:
                     attrs[_positional_keys[_pos]] = _val
 
     concepto_idx = _anchor_index("concepto")
