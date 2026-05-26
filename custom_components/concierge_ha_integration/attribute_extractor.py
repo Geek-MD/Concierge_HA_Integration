@@ -3072,10 +3072,10 @@ def _extract_common_expenses_pdf_attributes(
     # failed.  The formula is:
     #   gastos_comunes_amount = subtotal_departamento − fondos_amount
     # ------------------------------------------------------------------
-    if not attrs.get("gastos_comunes_amount"):
-        sub_depto = attrs.get("subtotal_departamento", 0)
-        fondos = attrs.get("fondos_amount", 0)
-        if sub_depto and fondos and sub_depto > fondos:
+    if "gastos_comunes_amount" not in attrs or attrs.get("gastos_comunes_amount") is None:
+        sub_depto = attrs.get("subtotal_departamento")
+        fondos = attrs.get("fondos_amount")
+        if sub_depto is not None and fondos is not None and sub_depto > fondos:
             attrs["gastos_comunes_amount"] = sub_depto - fondos
             _confidence["gastos_comunes_amount"] = CONF_SCORE_DERIVED
 
