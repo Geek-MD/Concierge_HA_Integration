@@ -1679,9 +1679,13 @@ _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE = re.compile(
     r"\$\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
 )
 _GC_METER_VALUE_RE = re.compile(r"(\d{1,3}[,.]\d{6})")
+_OCR_MIN_DIMENSION = 1.0
 _OCR_FALLBACK_CHAR_WIDTH = 8.0
 _OCR_ROW_GROUPING_FACTOR = 0.9
 _OCR_HORIZONTAL_PROXIMITY_TOLERANCE = 25.0
+_GC_ANCHOR_SCORE_TOKEN_WEIGHT = 10.0
+_GC_ANCHOR_SCORE_COMPLETE_BONUS = 10.0
+_GC_ROW_LINES_SCORE_DIVISOR = 10.0
 
 
 def _normalize_gc_anchor_text(value: str) -> str:
@@ -1699,6 +1703,14 @@ def _safe_ocr_float(value: Any) -> float:
         return float(str(value).strip())
     except (TypeError, ValueError):
         return 0.0
+
+
+def _gc_anchor_score(token_hits: int, total_tokens: int, similarity: float = 0.0) -> float:
+    """Return a semantic score for an OCR/template anchor match."""
+    score = token_hits * _GC_ANCHOR_SCORE_TOKEN_WEIGHT
+    if token_hits == total_tokens:
+        score += _GC_ANCHOR_SCORE_COMPLETE_BONUS
+    return score + similarity
 
 
 def _build_gc_ocr_pages(
@@ -1735,13 +1747,13 @@ def _build_gc_ocr_pages(
                     left = _safe_ocr_float(word.get("Left"))
                     top = _safe_ocr_float(word.get("Top"))
                     width = _safe_ocr_float(word.get("Width"))
-                    height = _safe_ocr_float(word.get("Height")) or 1.0
+                    height = _safe_ocr_float(word.get("Height")) or _OCR_MIN_DIMENSION
                     words.append(
                         {
                             "text": word_text,
                             "left": left,
                             "top": top,
-                            "right": left + max(width, 1.0),
+                            "right": left + max(width, _OCR_MIN_DIMENSION),
                             "bottom": top + height,
                         }
                     )
@@ -1754,9 +1766,9 @@ def _build_gc_ocr_pages(
             else:
                 left = _safe_ocr_float(line.get("MinLeft"))
                 top = _safe_ocr_float(line.get("MinTop"))
-                height = _safe_ocr_float(line.get("MaxHeight")) or 1.0
+                height = _safe_ocr_float(line.get("MaxHeight")) or _OCR_MIN_DIMENSION
                 width = _safe_ocr_float(line.get("Width")) or max(
-                    float(len(text) * _OCR_FALLBACK_CHAR_WIDTH), 1.0
+                    len(text) * _OCR_FALLBACK_CHAR_WIDTH, _OCR_MIN_DIMENSION
                 )
                 right = left + width
                 bottom = top + height
@@ -1781,10 +1793,12 @@ def _build_gc_ocr_pages(
         rows: list[dict[str, Any]] = []
         for line in raw_lines:
             center_y = (line["top"] + line["bottom"]) / 2.0
-            line_height = max(line["bottom"] - line["top"], 1.0)
+            line_height = max(line["bottom"] - line["top"], _OCR_MIN_DIMENSION)
             if rows:
                 last_row = rows[-1]
-                row_height = max(last_row["bottom"] - last_row["top"], 1.0)
+                row_height = max(
+                    last_row["bottom"] - last_row["top"], _OCR_MIN_DIMENSION
+                )
                 if abs(center_y - last_row["center_y"]) <= max(
                     line_height, row_height
                 ) * _OCR_ROW_GROUPING_FACTOR:
@@ -1846,10 +1860,7 @@ def _find_gc_anchor_line(
                     if anchor_ref
                     else 0.0
                 )
-                score = token_hits * 10.0
-                if token_hits == len(tokens):
-                    score += 10.0
-                score += similarity
+                score = _gc_anchor_score(token_hits, len(tokens), similarity)
                 if score > best_score:
                     best_score = score
                     best_match = {
@@ -1876,9 +1887,9 @@ def _find_gc_row_by_tokens(
                 continue
             if len(tokens) > 1 and token_hits < len(tokens) - 1:
                 continue
-            score = token_hits * 10.0 + len(row["lines"]) / 10.0
-            if token_hits == len(tokens):
-                score += 10.0
+            score = _gc_anchor_score(token_hits, len(tokens)) + (
+                len(row["lines"]) / _GC_ROW_LINES_SCORE_DIVISOR
+            )
             if score > best_score:
                 best_score = score
                 best_match = {
@@ -2143,7 +2154,7 @@ def _extract_common_expenses_from_ocr_json(
         attrs["building_total_expense"] = _parse_amount_to_int(bld_total_raw)
 
     gasto_row = _find_gc_row_by_tokens(pages, ("gasto", "comun"))
-    if gasto_row is not None:
+    if gasto_row is not None and gasto_row["row"]["lines"]:
         gasto_raw = _extract_regex_near_gc_anchor(
             pages,
             {
@@ -2179,7 +2190,7 @@ def _extract_common_expenses_from_ocr_json(
         attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
 
     hot_water_row = _find_gc_row_by_tokens(pages, ("agua", "caliente"))
-    if hot_water_row is not None:
+    if hot_water_row is not None and hot_water_row["row"].get("text"):
         row_text = hot_water_row["row"]["text"]
         meter_matches = _GC_METER_VALUE_RE.findall(row_text)
         if len(meter_matches) >= 2:
@@ -2758,10 +2769,9 @@ def _try_ocr_pdf(
 
 
 def _extract_common_expenses_pdf_attributes(
-    text: str, pdf_path: str = "", ocrspace_api_key: str = "", json_dir: str = ""
+    _text: str, pdf_path: str = "", ocrspace_api_key: str = "", json_dir: str = ""
 ) -> dict[str, Any]:
     """Extract Gastos Comunes and Agua Caliente attributes using OCR Tier 2 only."""
-    del text
     attrs: dict[str, Any] = {}
     confidence: dict[str, float] = {}
 
