@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.6] - 2026-05-26
+
+### Fixed
+
+- **Gastos Comunes and Agua Caliente sensors no longer show "unknown" when
+  partial OCR extraction occurs** (`attribute_extractor.py`):
+
+  The OCR JSON "monto a pagar" positional extraction previously required all 8
+  expected amounts to be present; when OCR captured fewer values (due to layout
+  drift or garbled `$` signs), no amounts were mapped at all.  Now, partial
+  results (≥ 3 amounts) are assigned by position, so at least the first
+  available amounts (gastos comunes, fondos, subtotal) populate their sensors.
+
+- **`gc_total` computation uses proper None-checks instead of truthiness**
+  (`attribute_extractor.py`, `sensor.py`):
+
+  Previously `gc_total = subtotal_departamento + cargo_fijo` was only computed
+  when *both* values were truthy (non-zero).  A legitimate zero `cargo_fijo`
+  or a missing component caused the Total sensor to remain "unknown".  Now
+  explicit `is not None` checks are used, and multiple fallback tiers ensure
+  `gc_total` is always populated when any meaningful data exists:
+  1. `subtotal_departamento + cargo_fijo` (both present)
+  2. `subtotal_departamento` alone (cargo_fijo missing)
+  3. `total_amount − subtotal_consumo` (neither component found)
+  4. `total_amount` as last resort
+
+- **`gastos_comunes_amount` derivation fallback added**
+  (`attribute_extractor.py`):
+
+  When direct extraction of the GC apartment charge fails (OCR garbling, regex
+  miss), it is now derived from `subtotal_departamento − fondos_amount` so the
+  "Bill" sensor is no longer stuck as "unknown".
+
+- **`hot_water_amount` derivation relaxed for missing `cargo_fijo`**
+  (`attribute_extractor.py`):
+
+  The `subtotal_consumo` (and by extension `hot_water_amount`) back-calculation
+  previously required all three components (total, subtotal_depto, cargo_fijo).
+  A new relaxed branch handles the case where `cargo_fijo` is unavailable by
+  computing `total_amount − subtotal_departamento`, ensuring the Agua Caliente
+  sensor shows a value even without full extraction.
+
 ## [1.3.5] - 2026-05-26
 
 ### Fixed

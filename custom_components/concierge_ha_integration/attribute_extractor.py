@@ -1943,6 +1943,23 @@ def _extract_common_expenses_from_ocr_json(
             attrs["cargo_fijo"] = amount_values[5]
             attrs["subtotal_recargos"] = amount_values[6]
             attrs["total_amount"] = amount_values[7]
+        elif len(amount_values) >= 3:
+            # Partial extraction: assign amounts by position where possible.
+            # Positions: 0=GC, 1=fondos, 2=subtotal_depto, 3=hw_amount,
+            #            4=subtotal_consumo, 5=cargo_fijo, 6=recargos, 7=total
+            _positional_keys = [
+                "gastos_comunes_amount",
+                "fondos_amount",
+                "subtotal_departamento",
+                "hot_water_amount",
+                "subtotal_consumo",
+                "cargo_fijo",
+                "subtotal_recargos",
+                "total_amount",
+            ]
+            for _pos, _val in enumerate(amount_values):
+                if _pos < len(_positional_keys) and _val is not None:
+                    attrs[_positional_keys[_pos]] = _val
 
     concepto_idx = _anchor_index("concepto")
     gasto_idx = None
@@ -3043,12 +3060,28 @@ def _extract_common_expenses_pdf_attributes(
         attrs["subtotal"] = attrs["subtotal_departamento"]
         _confidence["subtotal"] = _confidence.get("subtotal_departamento", CONF_SCORE_PDFMINER)
     # Fixed charge (Cargo Fijo) — prefer cargo_fijo; fall back to subtotal_recargos
-    if not attrs.get("cargo_fijo") and attrs.get("subtotal_recargos"):
+    if (
+        ("cargo_fijo" not in attrs or attrs.get("cargo_fijo") is None)
+        and "subtotal_recargos" in attrs
+        and attrs.get("subtotal_recargos") is not None
+    ):
         attrs["cargo_fijo"] = attrs["subtotal_recargos"]
         _confidence["cargo_fijo"] = _confidence.get("subtotal_recargos", CONF_SCORE_PDFMINER)
     if "cargo_fijo" in attrs:
         attrs["fixed_charge"] = attrs["cargo_fijo"]
         _confidence["fixed_charge"] = _confidence.get("cargo_fijo", CONF_SCORE_PDFMINER)
+
+    # ------------------------------------------------------------------
+    # Gastos Comunes amount derivation — fallback when direct extraction
+    # failed.  The formula is:
+    #   gastos_comunes_amount = subtotal_departamento − fondos_amount
+    # ------------------------------------------------------------------
+    if "gastos_comunes_amount" not in attrs or attrs.get("gastos_comunes_amount") is None:
+        sub_depto = attrs.get("subtotal_departamento")
+        fondos = attrs.get("fondos_amount")
+        if sub_depto is not None and fondos is not None:
+            attrs["gastos_comunes_amount"] = sub_depto - fondos
+            _confidence["gastos_comunes_amount"] = CONF_SCORE_DERIVED
 
     # ------------------------------------------------------------------
     # Agua caliente (Subtotal Consumo) derivation — fallback when OCR did
@@ -3061,15 +3094,29 @@ def _extract_common_expenses_pdf_attributes(
     # ($9.638); without OCR the pdfminer text layer may misread it ($9.838
     # due to font garbling), making the derived figure slightly off (~$200).
     # ------------------------------------------------------------------
-    if not attrs.get("subtotal_consumo"):
-        total = attrs.get("total_amount", 0)
-        sub_depto = attrs.get("subtotal_departamento", 0)
-        cargo = attrs.get("cargo_fijo", 0)
-        if total and sub_depto and cargo and total > sub_depto + cargo:
+    if "subtotal_consumo" not in attrs or attrs.get("subtotal_consumo") is None:
+        total = attrs.get("total_amount")
+        sub_depto = attrs.get("subtotal_departamento")
+        cargo = attrs.get("cargo_fijo")
+        # Primary derivation: all three components available.
+        if (
+            total is not None
+            and sub_depto is not None
+            and cargo is not None
+            and total > sub_depto + cargo
+        ):
             derived_consumo = total - sub_depto - cargo
             attrs["subtotal_consumo"] = derived_consumo
             _confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
-            if not attrs.get("hot_water_amount"):
+            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
+                attrs["hot_water_amount"] = derived_consumo
+                _confidence["hot_water_amount"] = CONF_SCORE_DERIVED
+        # Relaxed derivation: cargo_fijo missing/zero but total > sub_depto.
+        elif total is not None and sub_depto is not None and cargo is None and total > sub_depto:
+            derived_consumo = total - sub_depto
+            attrs["subtotal_consumo"] = derived_consumo
+            _confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
+            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
                 attrs["hot_water_amount"] = derived_consumo
                 _confidence["hot_water_amount"] = CONF_SCORE_DERIVED
 
@@ -3083,15 +3130,33 @@ def _extract_common_expenses_pdf_attributes(
     subtotal_val = (
         attrs["subtotal_departamento"]
         if "subtotal_departamento" in attrs
-        else attrs.get("subtotal", 0)
+        else attrs.get("subtotal")
     )
     cargo_val = (
         attrs["cargo_fijo"]
         if "cargo_fijo" in attrs
-        else attrs.get("fixed_charge", 0)
+        else attrs.get("fixed_charge")
     )
-    if subtotal_val and cargo_val:
+    if subtotal_val is not None and cargo_val is not None:
         attrs["gc_total"] = subtotal_val + cargo_val
+        _confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif subtotal_val is not None and cargo_val is None:
+        # Cargo fijo not available — use subtotal_departamento alone so the
+        # sensor doesn't show "Unknown" when at least the main component exists.
+        attrs["gc_total"] = subtotal_val
+        _confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif (
+        attrs.get("total_amount") is not None
+        and attrs.get("subtotal_consumo") is not None
+    ):
+        # Fallback: gc_total = total_amount − subtotal_consumo (hot water).
+        # This removes the hot-water portion from the grand total.
+        attrs["gc_total"] = attrs["total_amount"] - attrs["subtotal_consumo"]
+        _confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif attrs.get("total_amount") is not None:
+        # Last resort: use the grand total as gc_total so the sensor is not
+        # "Unknown".  This may include hot-water but is better than no value.
+        attrs["gc_total"] = attrs["total_amount"]
         _confidence["gc_total"] = CONF_SCORE_DERIVED
 
     # Propagate alias confidence from binary-sensor attributes
