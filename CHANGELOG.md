@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Gastos Comunes and Agua Caliente extraction now uses OCR Tier 2 only**
+  (`attribute_extractor.py`):
+
+  The common-expenses PDF pipeline no longer mixes `pdfminer` Tier 1 values
+  with OCR-derived values. All Gastos Comunes and Agua Caliente sensor fields
+  now come from OCR.space Tier 2 data, preventing stale or mismatched Tier 1
+  text-layer values from leaving sensors as `unknown`.
+
+- **OCR JSON snapshots are now stored on every OCR run with explicit logging**
+  (`attribute_extractor.py`, `README.md`):
+
+  The OCR.space raw JSON payload is now written for every OCR attempt, including
+  partial runs with zero parsed results, and the integration logs where the
+  snapshot was stored. This makes OCR troubleshooting reproducible from the
+  saved JSON alone.
+
+- **Common-expenses OCR JSON mapping now matches by structure/proximity**
+  (`attribute_extractor.py`, `README.md`):
+
+  Instead of depending on the raw OCR JSON line order, the extractor now sorts
+  overlay lines by visual position, groups them into rows, and resolves values
+  through semantic label matching plus nearby-row proximity. This improves
+  extraction stability when OCR returns complete data in a different order than
+  the markdown template.
+
 - **Gastos Comunes and Agua Caliente sensors no longer show "unknown" when
   partial OCR extraction occurs** (`attribute_extractor.py`):
 

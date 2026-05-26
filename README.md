@@ -305,27 +305,24 @@ a key.
 
 For every Gastos Comunes bill that arrives, the integration:
 
-1. **Reads the embedded text layer** — the PDF already contains a partial text
-   layer (created by the building's original OCR pass, identifiable by the
-   `HiddenHorzOCR` font).  `pdfminer` reads this directly and provides all the
-   billing amounts, dates, and owner data without any additional OCR.
-2. **Renders the PDF page** — `pypdfium2` renders the full-page JPEG image at
+1. **Renders the PDF page** — `pypdfium2` renders the full-page JPEG image at
    3× zoom (~216 DPI) to a PNG in memory.
-3. **OCR.space scans the image** — two API calls are made:
+2. **OCR.space scans the image** — two API calls are made:
    - Pass 1: full page (Spanish, OCR Engine 2).
    - Pass 2: Agua Caliente table crop (30–55 % from top, upscaled 2×,
      OCR Engine 2) for improved hot-water meter table recognition.
-4. **Template-guided mapping (v1.3.0)** — for **Gastos Comunes**, OCR JSON
+3. **Structure-guided mapping** — for **Gastos Comunes**, OCR JSON
    (`ParsedResults` overlay lines) is interpreted using the markdown template
    at `custom_components/concierge_ha_integration/services_templates/common_expenses/edificio_jose_miguel.md`
    as a structural reference. The template uses generic placeholders (for
-   example `dd-mm-aaaa`, `$ 0.000.000`) and guides field positions/anchors
-   only; optional/non-critical header lines (e.g. online-payment client code)
-   are intentionally omitted. Values are always extracted from OCR/PDF data.
-   The raw OCR.space JSON payload is also stored under
-   `config/concierge_ha_integration/pdfs/ocrspace_json/`; only the 5 latest
-   snapshots are retained automatically.
-5. **Template mismatch watchdog (v1.3.3)** — if OCR JSON content differs
+   example `dd-mm-aaaa`, `$ 0.000.000`) and contributes semantic labels and
+   table structure, while the extractor matches values by OCR proximity within
+   the detected layout instead of relying on the raw JSON line order. All
+   Gastos Comunes and Agua Caliente values now come exclusively from Tier 2
+   OCR data. The raw OCR.space JSON payload is always stored under
+   `config/concierge_ha_integration/json/`; only the 5 latest snapshots are
+   retained automatically.
+4. **Template mismatch watchdog (v1.3.3)** — if OCR JSON content differs
    significantly from expected markdown anchors (missing/inconsistent anchor
    coverage) **or** includes unexpected structural lines that are not present in
    the markdown template, a persistent Home Assistant notification is raised
@@ -335,7 +332,7 @@ For every Gastos Comunes bill that arrives, the integration:
    - a ready-to-copy markdown report body for manual issue creation.
    Known optional OCR-only content remains ignored (the "Paga tu Gasto Común en
    línea" block and the phone number under "Fono").
-6. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
+5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
 

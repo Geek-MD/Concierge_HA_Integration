@@ -1690,6 +1690,243 @@ def _normalize_gc_anchor_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _safe_ocr_float(value: Any) -> float:
+    """Return *value* converted to float, defaulting to 0.0."""
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_gc_ocr_pages(
+    ocr_raw_results: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """Return OCR overlay pages grouped into visual rows sorted by proximity."""
+    pages: list[list[dict[str, Any]]] = []
+
+    for parsed_idx, parsed in enumerate(ocr_raw_results):
+        overlay = parsed.get("Overlay")
+        if not isinstance(overlay, dict):
+            continue
+        overlay_lines = overlay.get("Lines")
+        if not isinstance(overlay_lines, list):
+            continue
+
+        raw_lines: list[dict[str, Any]] = []
+        for line_idx, line in enumerate(overlay_lines):
+            if not isinstance(line, dict):
+                continue
+            text = str(line.get("LineText", "")).strip()
+            if not text:
+                continue
+
+            words_raw = line.get("Words")
+            words: list[dict[str, Any]] = []
+            if isinstance(words_raw, list):
+                for word in words_raw:
+                    if not isinstance(word, dict):
+                        continue
+                    word_text = str(word.get("WordText", "")).strip()
+                    if not word_text:
+                        continue
+                    left = _safe_ocr_float(word.get("Left"))
+                    top = _safe_ocr_float(word.get("Top"))
+                    width = _safe_ocr_float(word.get("Width"))
+                    height = _safe_ocr_float(word.get("Height")) or 1.0
+                    words.append(
+                        {
+                            "text": word_text,
+                            "left": left,
+                            "top": top,
+                            "right": left + max(width, 1.0),
+                            "bottom": top + height,
+                        }
+                    )
+
+            if words:
+                left = min(word["left"] for word in words)
+                top = min(word["top"] for word in words)
+                right = max(word["right"] for word in words)
+                bottom = max(word["bottom"] for word in words)
+            else:
+                left = _safe_ocr_float(line.get("MinLeft"))
+                top = _safe_ocr_float(line.get("MinTop"))
+                height = _safe_ocr_float(line.get("MaxHeight")) or 1.0
+                width = _safe_ocr_float(line.get("Width")) or max(float(len(text) * 8), 1.0)
+                right = left + width
+                bottom = top + height
+
+            raw_lines.append(
+                {
+                    "page_idx": parsed_idx,
+                    "line_idx": line_idx,
+                    "text": text,
+                    "norm": _normalize_gc_anchor_text(text),
+                    "left": left,
+                    "top": top,
+                    "right": right,
+                    "bottom": bottom,
+                }
+            )
+
+        raw_lines.sort(key=lambda item: (item["top"], item["left"]))
+        if not raw_lines:
+            continue
+
+        rows: list[dict[str, Any]] = []
+        for line in raw_lines:
+            center_y = (line["top"] + line["bottom"]) / 2.0
+            line_height = max(line["bottom"] - line["top"], 1.0)
+            if rows:
+                last_row = rows[-1]
+                row_height = max(last_row["bottom"] - last_row["top"], 1.0)
+                if abs(center_y - last_row["center_y"]) <= max(line_height, row_height) * 0.9:
+                    last_row["lines"].append(line)
+                    last_row["top"] = min(last_row["top"], line["top"])
+                    last_row["bottom"] = max(last_row["bottom"], line["bottom"])
+                    last_row["left"] = min(last_row["left"], line["left"])
+                    last_row["right"] = max(last_row["right"], line["right"])
+                    last_row["center_y"] = (
+                        last_row["top"] + last_row["bottom"]
+                    ) / 2.0
+                    continue
+
+            rows.append(
+                {
+                    "page_idx": parsed_idx,
+                    "lines": [line],
+                    "top": line["top"],
+                    "bottom": line["bottom"],
+                    "left": line["left"],
+                    "right": line["right"],
+                    "center_y": center_y,
+                }
+            )
+
+        for row in rows:
+            row["lines"].sort(key=lambda item: item["left"])
+            row["text"] = " | ".join(line["text"] for line in row["lines"])
+            row["norm"] = _normalize_gc_anchor_text(row["text"])
+        pages.append(rows)
+
+    return pages
+
+
+def _find_gc_anchor_line(
+    pages: list[list[dict[str, Any]]],
+    anchor_key: str,
+    template_lines: list[str],
+) -> dict[str, Any] | None:
+    """Return the best OCR line candidate for *anchor_key*."""
+    tokens = _GC_TEMPLATE_ANCHOR_TOKENS.get(anchor_key, ())
+    if not tokens:
+        return None
+
+    anchor_ref = _find_gc_template_anchor(template_lines, anchor_key) or ""
+    best_match: dict[str, Any] | None = None
+    best_score = 0.0
+
+    for page_idx, rows in enumerate(pages):
+        for row_idx, row in enumerate(rows):
+            for line_idx, line in enumerate(row["lines"]):
+                token_hits = sum(token in line["norm"] for token in tokens)
+                if token_hits == 0:
+                    continue
+                if len(tokens) > 1 and token_hits < len(tokens) - 1:
+                    continue
+                similarity = (
+                    difflib.SequenceMatcher(None, line["norm"], anchor_ref).ratio()
+                    if anchor_ref
+                    else 0.0
+                )
+                score = token_hits * 10.0
+                if token_hits == len(tokens):
+                    score += 10.0
+                score += similarity
+                if score > best_score:
+                    best_score = score
+                    best_match = {
+                        "page_idx": page_idx,
+                        "row_idx": row_idx,
+                        "line_idx": line_idx,
+                        "line": line,
+                    }
+
+    return best_match
+
+
+def _find_gc_row_by_tokens(
+    pages: list[list[dict[str, Any]]], tokens: tuple[str, ...]
+) -> dict[str, Any] | None:
+    """Return the best OCR row whose text matches *tokens* semantically."""
+    best_match: dict[str, Any] | None = None
+    best_score = 0.0
+
+    for page_idx, rows in enumerate(pages):
+        for row_idx, row in enumerate(rows):
+            token_hits = sum(token in row["norm"] for token in tokens)
+            if token_hits == 0:
+                continue
+            if len(tokens) > 1 and token_hits < len(tokens) - 1:
+                continue
+            score = token_hits * 10.0 + len(row["lines"]) / 10.0
+            if token_hits == len(tokens):
+                score += 10.0
+            if score > best_score:
+                best_score = score
+                best_match = {
+                    "page_idx": page_idx,
+                    "row_idx": row_idx,
+                    "row": row,
+                }
+
+    return best_match
+
+
+def _extract_regex_near_gc_anchor(
+    pages: list[list[dict[str, Any]]],
+    anchor_match: dict[str, Any] | None,
+    pattern: re.Pattern[str],
+    *,
+    max_row_gap: int = 2,
+) -> str | None:
+    """Extract a regex value using semantic proximity to an OCR anchor line."""
+    if anchor_match is None:
+        return None
+
+    rows = pages[anchor_match["page_idx"]]
+    row_idx = anchor_match["row_idx"]
+    line_idx = anchor_match["line_idx"]
+    anchor_line = anchor_match["line"]
+    candidate_texts: list[str] = []
+
+    current_row = rows[row_idx]
+    for idx, line in enumerate(current_row["lines"]):
+        if idx == line_idx:
+            continue
+        if line["left"] >= anchor_line["left"] - 25.0:
+            candidate_texts.append(line["text"])
+    candidate_texts.append(anchor_line["text"])
+    candidate_texts.append(current_row["text"])
+
+    for row_gap in range(1, max_row_gap + 1):
+        if row_idx + row_gap < len(rows):
+            candidate_texts.append(rows[row_idx + row_gap]["text"])
+        if row_idx - row_gap >= 0:
+            candidate_texts.append(rows[row_idx - row_gap]["text"])
+
+    seen: set[str] = set()
+    for text in candidate_texts:
+        if text in seen:
+            continue
+        seen.add(text)
+        match = pattern.search(text)
+        if match:
+            return (match.group(1) if match.lastindex else match.group(0)).strip()
+
+    return None
+
+
 def _load_gc_template_lines() -> list[str]:
     """Load normalized reference lines from the common-expenses markdown template."""
     try:
@@ -1789,25 +2026,19 @@ def _gc_is_potential_unexpected_json_line(raw_line: str, norm_line: str) -> bool
 def _extract_common_expenses_from_ocr_json(
     ocr_raw_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Extract attributes from OCR.space JSON using markdown-template anchors."""
-    best_lines: list[str] = []
-    for parsed in ocr_raw_results:
-        overlay = parsed.get("Overlay")
-        if not isinstance(overlay, dict):
-            continue
-        overlay_lines = overlay.get("Lines")
-        if not isinstance(overlay_lines, list):
-            continue
-        current_lines = [
-            str(line.get("LineText", "")).strip()
-            for line in overlay_lines
-            if isinstance(line, dict) and str(line.get("LineText", "")).strip()
-        ]
-        if len(current_lines) > len(best_lines):
-            best_lines = current_lines
-
-    if not best_lines:
+    """Extract attributes from OCR.space JSON using structure and proximity."""
+    pages = _build_gc_ocr_pages(ocr_raw_results)
+    if not pages:
         return {}
+
+    best_rows = max(pages, key=len)
+    best_lines = [
+        line["text"]
+        for row in best_rows
+        for line in row["lines"]
+        if line["text"].strip()
+    ]
+    best_text = "\n".join(row["text"] for row in best_rows if row["text"].strip())
 
     template_lines = _load_gc_template_lines()
     if not template_lines:
@@ -1819,69 +2050,59 @@ def _extract_common_expenses_from_ocr_json(
             if (skeleton := _gc_template_line_skeleton(line))
         }
     )
-
-    norm_lines = [_normalize_gc_anchor_text(line) for line in best_lines]
     attrs: dict[str, Any] = {}
-
-    anchor_indices: dict[str, int | None] = {}
-
-    def _find_anchor_index(anchor_key: str) -> int | None:
-        anchor = _find_gc_template_anchor(template_lines, anchor_key)
-        if anchor:
-            for idx, line in enumerate(norm_lines):
-                if anchor in line or line in anchor:
-                    return idx
-        tokens = _GC_TEMPLATE_ANCHOR_TOKENS.get(anchor_key, ())
-        if tokens:
-            for idx, line in enumerate(norm_lines):
-                if all(token in line for token in tokens):
-                    return idx
-        return None
-
-    def _anchor_index(anchor_key: str) -> int | None:
-        if anchor_key not in anchor_indices:
-            anchor_indices[anchor_key] = _find_anchor_index(anchor_key)
-        return anchor_indices[anchor_key]
-
-    def _scan_after(start_idx: int, pattern: re.Pattern[str], max_lines: int = 8) -> str | None:
-        end = min(len(best_lines), start_idx + max_lines + 1)
-        for idx in range(start_idx, end):
-            match = pattern.search(best_lines[idx])
-            if match:
-                return (match.group(1) if match.lastindex else match.group(0)).strip()
-        return None
+    norm_lines = [_normalize_gc_anchor_text(line) for line in best_lines]
+    anchor_matches: dict[str, dict[str, Any] | None] = {
+        key: _find_gc_anchor_line(pages, key, template_lines)
+        for key in _GC_TEMPLATE_ANCHOR_TOKENS
+    }
 
     billing_year = ""
+    period_m = _GC_BILLING_PERIOD_RE.search(best_text)
+    if period_m:
+        month_name = period_m.group(1).lower()
+        billing_year = period_m.group(2)
+        attrs["billing_period_month"] = period_m.group(1).capitalize()
+        attrs["billing_period_year"] = billing_year
+        month_num = _MONTH_NAME_TO_NUM.get(month_name[:3], 0)
+        if month_num:
+            attrs["billing_period_start"] = f"01-{month_num:02d}-{billing_year}"
+            last_day = calendar.monthrange(int(billing_year), month_num)[1]
+            attrs["billing_period_end"] = f"{last_day:02d}-{month_num:02d}-{billing_year}"
 
-    emission_idx = _anchor_index("emission_date")
-    if emission_idx is not None:
-        emission = _scan_after(emission_idx, _GC_DATE_RE, max_lines=4)
-        if emission:
-            emission_norm = emission.replace("/", "-")
-            attrs["emission_date"] = emission_norm
-            year_match = re.search(r"(\d{4})$", emission_norm)
-            if year_match:
-                billing_year = year_match.group(1)
+    emission = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("emission_date"), _GC_DATE_RE, max_row_gap=2
+    )
+    if emission:
+        emission_norm = emission.replace("/", "-")
+        attrs["emission_date"] = emission_norm
+        year_match = re.search(r"(\d{4})$", emission_norm)
+        if year_match:
+            billing_year = year_match.group(1)
 
-    due_idx = _anchor_index("due_date")
-    if due_idx is not None:
-        due = _scan_after(due_idx, _GC_DATE_RE, max_lines=4)
-        if due:
-            due_norm = due.replace("/", "-")
-            attrs["due_date"] = _gc_fix_year(due_norm, billing_year) if billing_year else due_norm
+    due = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("due_date"), _GC_DATE_RE, max_row_gap=2
+    )
+    if due:
+        due_norm = due.replace("/", "-")
+        attrs["due_date"] = _gc_fix_year(due_norm, billing_year) if billing_year else due_norm
 
     for line in best_lines:
-        if line.lower().startswith("edificio "):
+        if _normalize_gc_anchor_text(line).startswith("edificio "):
             attrs["building_name"] = line.strip()
             break
 
-    for idx, line in enumerate(best_lines):
-        rut_match = _GC_RUT_RE.search(line)
+    rut_anchor = anchor_matches.get("owner_name")
+    rut_row_idx = 0
+    for idx, row in enumerate(best_rows):
+        rut_match = _GC_RUT_RE.search(row["text"])
         if rut_match:
             attrs["building_rut"] = rut_match.group(1)
-            for nxt in range(idx + 1, min(len(best_lines), idx + 4)):
-                if best_lines[nxt].strip() and "fono" not in norm_lines[nxt]:
-                    attrs["address"] = best_lines[nxt].strip()
+            rut_row_idx = idx
+            for nxt in range(idx + 1, min(len(best_rows), idx + 4)):
+                next_text = best_rows[nxt]["text"].strip()
+                if next_text and "fono" not in _normalize_gc_anchor_text(next_text):
+                    attrs["address"] = next_text
                     break
             break
 
@@ -1891,209 +2112,154 @@ def _extract_common_expenses_from_ocr_json(
             attrs["apartment"] = apt_match.group(1)
             break
 
-    owner_idx = _anchor_index("owner_name")
-    if owner_idx is not None:
-        owner = _scan_after(owner_idx + 1, _GC_OWNER_RE, max_lines=6)
-        if owner:
-            attrs["owner_name"] = owner
-
-    alicuota_idx = _anchor_index("alicuota")
-    if alicuota_idx is not None:
-        ali_raw = _scan_after(
-            alicuota_idx,
-            re.compile(r"(?:^|[^0-9])0[,.](\d{4,6})\s*%"),
-            max_lines=5,
-        )
-        if ali_raw:
-            try:
-                attrs["alicuota"] = round(float("0." + ali_raw), 4)
-            except ValueError:
-                pass
-
-    bld_total_idx = _anchor_index("building_total_expense")
-    if bld_total_idx is not None:
-        bld_total_raw = _scan_after(
-            bld_total_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=5,
-        )
-        if bld_total_raw:
-            attrs["building_total_expense"] = _parse_amount_to_int(bld_total_raw)
-
-    monto_pagar_idx = next(
-        (
-            idx
-            for idx, line in enumerate(norm_lines)
-            if "monto a pagar" in line
-        ),
-        None,
+    owner_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("owner_name"), _GC_OWNER_RE, max_row_gap=1
     )
-    if monto_pagar_idx is not None:
-        amount_values = [
-            _parse_amount_to_int(match.group(1))
-            for line in best_lines[monto_pagar_idx + 1 :]
-            if (match := _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE.search(line))
-        ]
-        if len(amount_values) >= 8:
-            attrs["gastos_comunes_amount"] = amount_values[0]
-            attrs["fondos_amount"] = amount_values[1]
-            attrs["subtotal_departamento"] = amount_values[2]
-            attrs["hot_water_amount"] = amount_values[3]
-            attrs["subtotal_consumo"] = amount_values[4]
-            attrs["cargo_fijo"] = amount_values[5]
-            attrs["subtotal_recargos"] = amount_values[6]
-            attrs["total_amount"] = amount_values[7]
-        elif len(amount_values) >= 3:
-            # Partial extraction: assign amounts by position where possible.
-            # Positions: 0=GC, 1=fondos, 2=subtotal_depto, 3=hw_amount,
-            #            4=subtotal_consumo, 5=cargo_fijo, 6=recargos, 7=total
-            _positional_keys = [
-                "gastos_comunes_amount",
-                "fondos_amount",
-                "subtotal_departamento",
-                "hot_water_amount",
-                "subtotal_consumo",
-                "cargo_fijo",
-                "subtotal_recargos",
-                "total_amount",
-            ]
-            for _pos, _val in enumerate(amount_values):
-                if _pos < len(_positional_keys) and _val is not None:
-                    attrs[_positional_keys[_pos]] = _val
+    if owner_raw:
+        attrs["owner_name"] = owner_raw
 
-    concepto_idx = _anchor_index("concepto")
-    gasto_idx = None
-    if concepto_idx is not None:
-        for idx in range(concepto_idx + 1, min(len(norm_lines), concepto_idx + 10)):
-            if "gasto comun" in norm_lines[idx]:
-                gasto_idx = idx
-                break
-    if gasto_idx is not None and "gastos_comunes_amount" not in attrs:
-        gasto_raw = _scan_after(gasto_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=6)
+    ali_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("alicuota"),
+        re.compile(r"(?:^|[^0-9])0[,.](\d{4,6})\s*%"),
+        max_row_gap=1,
+    )
+    if ali_raw:
+        try:
+            attrs["alicuota"] = round(float("0." + ali_raw), 4)
+        except ValueError:
+            pass
+
+    bld_total_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("building_total_expense"),
+        _GC_AMOUNT_CAPTURE_RE,
+        max_row_gap=1,
+    )
+    if bld_total_raw:
+        attrs["building_total_expense"] = _parse_amount_to_int(bld_total_raw)
+
+    gasto_row = _find_gc_row_by_tokens(pages, ("gasto", "comun"))
+    if gasto_row is not None:
+        gasto_raw = _extract_regex_near_gc_anchor(
+            pages,
+            {
+                "page_idx": gasto_row["page_idx"],
+                "row_idx": gasto_row["row_idx"],
+                "line_idx": 0,
+                "line": gasto_row["row"]["lines"][0],
+            },
+            _GC_AMOUNT_CAPTURE_RE,
+            max_row_gap=1,
+        )
         if gasto_raw:
             attrs["gastos_comunes_amount"] = _parse_amount_to_int(gasto_raw)
 
-    fondos_idx = _anchor_index("fondos_amount")
-    if fondos_idx is not None and "fondos_amount" not in attrs:
-        fondos_raw = _scan_after(fondos_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=6)
-        if fondos_raw:
-            attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
-            pct_match = re.search(r"fondos\s+(\d+)", norm_lines[fondos_idx])
-            if pct_match:
-                attrs["fondos_pct"] = int(pct_match.group(1))
-    elif fondos_idx is not None:
-        pct_match = re.search(r"fondos\s+(\d+)", norm_lines[fondos_idx])
+    fondos_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("fondos_amount"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if fondos_raw:
+        attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
+    fondos_anchor = anchor_matches.get("fondos_amount")
+    if fondos_anchor is not None:
+        pct_match = re.search(r"fondos\s+(\d+)", fondos_anchor["line"]["norm"])
         if pct_match:
             attrs["fondos_pct"] = int(pct_match.group(1))
 
-    sub_depto_idx = _anchor_index("subtotal_departamento")
-    if sub_depto_idx is not None and "subtotal_departamento" not in attrs:
-        sub_depto_raw = _scan_after(
-            sub_depto_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=4,
-        )
-        if sub_depto_raw:
-            attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
+    sub_depto_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("subtotal_departamento"),
+        _GC_AMOUNT_CAPTURE_RE,
+        max_row_gap=1,
+    )
+    if sub_depto_raw:
+        attrs["subtotal_departamento"] = _parse_amount_to_int(sub_depto_raw)
 
-    prev_idx = _anchor_index("hot_water_prev")
-    if prev_idx is not None:
-        prev_raw = _scan_after(prev_idx, _GC_METER_VALUE_RE, max_lines=4)
-        if prev_raw:
-            attrs["hot_water_reading_prev"] = _parse_meter_reading(prev_raw)
-
-    curr_idx = _anchor_index("hot_water_curr")
-    if curr_idx is not None:
-        curr_raw = _scan_after(curr_idx, _GC_METER_VALUE_RE, max_lines=4)
-        if curr_raw:
-            attrs["hot_water_reading_curr"] = _parse_meter_reading(curr_raw)
-
-    consumo_idx = _anchor_index("hot_water_consumption")
-    consumo_candidates = [
-        idx
-        for idx, line in enumerate(norm_lines)
-        if "consumos" in line and "generales" not in line
-    ]
-    if consumo_candidates:
-        consumo_idx = consumo_candidates[0]
-    if consumo_idx is not None:
-        consumo_raw = _scan_after(consumo_idx, _GC_METER_VALUE_RE, max_lines=6)
-        if consumo_raw:
-            attrs["hot_water_consumption"] = _parse_meter_reading(consumo_raw)
+    hot_water_row = _find_gc_row_by_tokens(pages, ("agua", "caliente"))
+    if hot_water_row is not None:
+        row_text = hot_water_row["row"]["text"]
+        meter_matches = _GC_METER_VALUE_RE.findall(row_text)
+        if len(meter_matches) >= 2:
+            attrs["hot_water_reading_prev"] = _parse_meter_reading(meter_matches[0])
+            attrs["hot_water_reading_curr"] = _parse_meter_reading(meter_matches[1])
+        if len(meter_matches) >= 3:
+            attrs["hot_water_consumption"] = _parse_meter_reading(meter_matches[2])
+        elif (
+            attrs.get("hot_water_reading_prev") is not None
+            and attrs.get("hot_water_reading_curr") is not None
+        ):
+            attrs["hot_water_consumption"] = round(
+                attrs["hot_water_reading_curr"] - attrs["hot_water_reading_prev"], 6
+            )
+        if "hot_water_consumption" in attrs:
             attrs["hot_water_consumption_unit"] = "m³"
+        cost_match = re.search(r"([\d.]+,\d{2}|[\d,]+\.\d{2})", row_text)
+        if cost_match:
+            attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_match.group(1))
+        amount_match = _GC_AMOUNT_CAPTURE_RE.search(row_text)
+        if amount_match:
+            attrs["hot_water_amount"] = _parse_amount_to_int(amount_match.group(1))
 
-    valor_idx = _anchor_index("hot_water_cost")
-    if valor_idx is not None:
-        cost_raw = _scan_after(valor_idx, re.compile(r"([\d.]+,\d{2}|[\d,]+\.\d{2})"), max_lines=5)
-        if cost_raw:
-            attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_raw)
+    hw_amount_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("hot_water_amount"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if hw_amount_raw:
+        subtotal_consumo = _parse_amount_to_int(hw_amount_raw)
+        attrs["subtotal_consumo"] = subtotal_consumo
+        attrs["hot_water_amount"] = subtotal_consumo
 
-    hw_amount_idx = _anchor_index("hot_water_amount")
-    if hw_amount_idx is not None and "hot_water_amount" not in attrs:
-        hw_amount_raw = _scan_after(
-            hw_amount_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=4,
-        )
-        if hw_amount_raw:
-            subtotal_consumo = _parse_amount_to_int(hw_amount_raw)
-            attrs["subtotal_consumo"] = subtotal_consumo
-            attrs["hot_water_amount"] = subtotal_consumo
+    cargo_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("cargo_fijo"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if cargo_raw:
+        attrs["cargo_fijo"] = _parse_amount_to_int(cargo_raw)
 
-    cargo_idx = _anchor_index("cargo_fijo")
-    if cargo_idx is not None and "cargo_fijo" not in attrs:
-        cargo_raw = _scan_after(cargo_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=4)
-        if cargo_raw:
-            attrs["cargo_fijo"] = _parse_amount_to_int(cargo_raw)
+    recargos_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("subtotal_recargos"),
+        _GC_AMOUNT_CAPTURE_RE,
+        max_row_gap=1,
+    )
+    if recargos_raw:
+        attrs["subtotal_recargos"] = _parse_amount_to_int(recargos_raw)
 
-    recargos_idx = _anchor_index("subtotal_recargos")
-    if recargos_idx is not None and "subtotal_recargos" not in attrs:
-        recargos_raw = _scan_after(
-            recargos_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=4,
-        )
-        if recargos_raw:
-            attrs["subtotal_recargos"] = _parse_amount_to_int(recargos_raw)
+    total_raw = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("total_amount"), _GC_AMOUNT_CAPTURE_RE, max_row_gap=1
+    )
+    if total_raw:
+        attrs["total_amount"] = _parse_amount_to_int(total_raw)
 
-    total_idx = _anchor_index("total_amount")
-    if total_idx is not None and "total_amount" not in attrs:
-        total_raw = _scan_after(total_idx, _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE, max_lines=5)
-        if total_raw:
-            attrs["total_amount"] = _parse_amount_to_int(total_raw)
+    lp_date = _extract_regex_near_gc_anchor(
+        pages, anchor_matches.get("last_payment_date"), _GC_DATE_RE, max_row_gap=1
+    )
+    if lp_date:
+        lp_norm = lp_date.replace("/", "-")
+        attrs["last_payment_date"] = _gc_fix_year(lp_norm, billing_year) if billing_year else lp_norm
 
-    lp_date_idx = _anchor_index("last_payment_date")
-    if lp_date_idx is not None:
-        lp_date = _scan_after(lp_date_idx, _GC_DATE_RE, max_lines=20)
-        if lp_date:
-            lp_norm = lp_date.replace("/", "-")
-            attrs["last_payment_date"] = _gc_fix_year(lp_norm, billing_year) if billing_year else lp_norm
+    lp_amount_raw = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("last_payment_amount"),
+        _GC_AMOUNT_CAPTURE_RE,
+        max_row_gap=1,
+    )
+    if lp_amount_raw:
+        attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_raw)
 
-    lp_amount_idx = _anchor_index("last_payment_amount")
-    if lp_amount_idx is not None:
-        lp_amount_raw = _scan_after(
-            lp_amount_idx,
-            _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE,
-            max_lines=20,
-        )
-        if lp_amount_raw:
-            attrs["last_payment_amount"] = _parse_amount_to_int(lp_amount_raw)
-
-    lp_folio_idx = _anchor_index("last_payment_folio")
-    if lp_folio_idx is not None:
-        lp_folio = _scan_after(lp_folio_idx, re.compile(r"(\d{5,6})"), max_lines=20)
-        if lp_folio:
-            attrs["last_payment_folio"] = lp_folio
-
-    for anchor_key in _GC_TEMPLATE_ANCHOR_TOKENS:
-        _anchor_index(anchor_key)
+    lp_folio = _extract_regex_near_gc_anchor(
+        pages,
+        anchor_matches.get("last_payment_folio"),
+        re.compile(r"(\d{5,6})"),
+        max_row_gap=1,
+    )
+    if lp_folio:
+        attrs["last_payment_folio"] = lp_folio
 
     total_anchor_count = len(_GC_TEMPLATE_ANCHOR_TOKENS)
     found_anchor_keys = sorted(
-        [key for key, idx in anchor_indices.items() if idx is not None]
+        [key for key, match in anchor_matches.items() if match is not None]
     )
     missing_anchor_keys = sorted(
-        [key for key, idx in anchor_indices.items() if idx is None]
+        [key for key, match in anchor_matches.items() if match is None]
     )
     found_anchor_count = len(found_anchor_keys)
     missing_anchor_count = len(missing_anchor_keys)
@@ -2257,6 +2423,143 @@ def _parse_meter_reading(raw: str) -> float:
     return _parse_consumption_to_float(raw)
 
 
+def _finalize_common_expenses_attrs(
+    attrs: dict[str, Any], confidence: dict[str, float]
+) -> dict[str, Any]:
+    """Apply aliases, derivations, and confidence metadata in-place."""
+    building = attrs.get("building_name", "")
+    raw_addr = attrs.get("address", "")
+    apt_str = attrs.get("apartment", "")
+    if building and raw_addr:
+        if " - " in raw_addr:
+            street_part, city_part = raw_addr.split(" - ", 1)
+        else:
+            street_part, city_part = raw_addr, ""
+        street_seg = street_part.strip()
+        if apt_str:
+            street_seg += f" Depto.{apt_str}"
+        combined_parts = [building]
+        if street_seg:
+            combined_parts.append(street_seg)
+        if city_part:
+            combined_parts.append(city_part.strip())
+        attrs["address"] = ", ".join(combined_parts)
+
+    if "building_total_expense" in attrs:
+        attrs["gross_common_expenses"] = attrs["building_total_expense"]
+    if "alicuota" in attrs:
+        attrs["gross_common_expenses_percentage"] = attrs["alicuota"]
+    if "hot_water_reading_prev" in attrs:
+        attrs["previous_measure"] = attrs["hot_water_reading_prev"]
+    if "hot_water_reading_curr" in attrs:
+        attrs["actual_measure"] = attrs["hot_water_reading_curr"]
+
+    if "fondos_pct" in attrs:
+        attrs["funds_provision_percentage"] = attrs["fondos_pct"]
+        confidence["funds_provision_percentage"] = confidence.get(
+            "fondos_pct", CONF_SCORE_OCR
+        )
+    if "fondos_amount" in attrs:
+        attrs["funds_provision"] = attrs["fondos_amount"]
+        confidence["funds_provision"] = confidence.get(
+            "fondos_amount", CONF_SCORE_OCR
+        )
+    if "subtotal_departamento" in attrs:
+        attrs["subtotal"] = attrs["subtotal_departamento"]
+        confidence["subtotal"] = confidence.get(
+            "subtotal_departamento", CONF_SCORE_OCR
+        )
+    if (
+        ("cargo_fijo" not in attrs or attrs.get("cargo_fijo") is None)
+        and "subtotal_recargos" in attrs
+        and attrs.get("subtotal_recargos") is not None
+    ):
+        attrs["cargo_fijo"] = attrs["subtotal_recargos"]
+        confidence["cargo_fijo"] = confidence.get(
+            "subtotal_recargos", CONF_SCORE_OCR
+        )
+    if "cargo_fijo" in attrs:
+        attrs["fixed_charge"] = attrs["cargo_fijo"]
+        confidence["fixed_charge"] = confidence.get("cargo_fijo", CONF_SCORE_OCR)
+
+    if "gastos_comunes_amount" not in attrs or attrs.get("gastos_comunes_amount") is None:
+        sub_depto = attrs.get("subtotal_departamento")
+        fondos = attrs.get("fondos_amount")
+        if sub_depto is not None and fondos is not None:
+            attrs["gastos_comunes_amount"] = sub_depto - fondos
+            confidence["gastos_comunes_amount"] = CONF_SCORE_DERIVED
+
+    if "subtotal_consumo" not in attrs or attrs.get("subtotal_consumo") is None:
+        total = attrs.get("total_amount")
+        sub_depto = attrs.get("subtotal_departamento")
+        cargo = attrs.get("cargo_fijo")
+        if (
+            total is not None
+            and sub_depto is not None
+            and cargo is not None
+            and total > sub_depto + cargo
+        ):
+            derived_consumo = total - sub_depto - cargo
+            attrs["subtotal_consumo"] = derived_consumo
+            confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
+            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
+                attrs["hot_water_amount"] = derived_consumo
+                confidence["hot_water_amount"] = CONF_SCORE_DERIVED
+        elif total is not None and sub_depto is not None and cargo is None and total > sub_depto:
+            derived_consumo = total - sub_depto
+            attrs["subtotal_consumo"] = derived_consumo
+            confidence["subtotal_consumo"] = CONF_SCORE_DERIVED
+            if "hot_water_amount" not in attrs or attrs.get("hot_water_amount") is None:
+                attrs["hot_water_amount"] = derived_consumo
+                confidence["hot_water_amount"] = CONF_SCORE_DERIVED
+
+    subtotal_val = (
+        attrs["subtotal_departamento"]
+        if "subtotal_departamento" in attrs
+        else attrs.get("subtotal")
+    )
+    cargo_val = (
+        attrs["cargo_fijo"] if "cargo_fijo" in attrs else attrs.get("fixed_charge")
+    )
+    if subtotal_val is not None and cargo_val is not None:
+        attrs["gc_total"] = subtotal_val + cargo_val
+        confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif subtotal_val is not None and cargo_val is None:
+        attrs["gc_total"] = subtotal_val
+        confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif (
+        attrs.get("total_amount") is not None
+        and attrs.get("subtotal_consumo") is not None
+    ):
+        attrs["gc_total"] = attrs["total_amount"] - attrs["subtotal_consumo"]
+        confidence["gc_total"] = CONF_SCORE_DERIVED
+    elif attrs.get("total_amount") is not None:
+        attrs["gc_total"] = attrs["total_amount"]
+        confidence["gc_total"] = CONF_SCORE_DERIVED
+
+    if "building_total_expense" in attrs:
+        confidence["gross_common_expenses"] = confidence.get(
+            "building_total_expense", CONF_SCORE_OCR
+        )
+    if "alicuota" in attrs:
+        confidence["gross_common_expenses_percentage"] = confidence.get(
+            "alicuota", CONF_SCORE_OCR
+        )
+    if "hot_water_reading_prev" in attrs:
+        confidence["previous_measure"] = confidence.get(
+            "hot_water_reading_prev", CONF_SCORE_OCR
+        )
+    if "hot_water_reading_curr" in attrs:
+        confidence["actual_measure"] = confidence.get(
+            "hot_water_reading_curr", CONF_SCORE_OCR
+        )
+
+    if confidence:
+        attrs["_confidence"] = confidence
+
+    return attrs
+
+
 def _try_ocr_pdf_via_ocrspace(
     pdf_path: str,
     api_key: str,
@@ -2370,19 +2673,26 @@ def _try_ocr_pdf_via_ocrspace(
         )
         text_crop2, raw_crop2, crop_resp = _call_ocrspace(crop2)
 
-        if full_resp or crop_resp:
-            _store_ocrspace_json_snapshot(
-                pdf_path,
-                {
-                    "pdf_path": pdf_path,
-                    "ocr_provider": "ocr.space",
-                    "passes": {
-                        "full_page": full_resp,
-                        "agua_caliente_crop": crop_resp,
-                    },
+        _store_ocrspace_json_snapshot(
+            pdf_path,
+            {
+                "pdf_path": pdf_path,
+                "ocr_provider": "ocr.space",
+                "passes": {
+                    "full_page": full_resp or {},
+                    "agua_caliente_crop": crop_resp or {},
                 },
-                json_dir=json_dir,
-            )
+                "parsed_results_count": len(raw_full) + len(raw_crop2),
+                "has_ocr_text": bool(text_full.strip() or text_crop2.strip()),
+            },
+            json_dir=json_dir,
+        )
+        _LOGGER.info(
+            "OCR.space JSON snapshot stored for '%s' (json_dir=%s, parsed_results=%d)",
+            pdf_path,
+            json_dir or "auto",
+            len(raw_full) + len(raw_crop2),
+        )
 
         return text_full + "\n" + text_crop2, [*raw_full, *raw_crop2]
 
@@ -2493,9 +2803,31 @@ def _extract_common_expenses_pdf_attributes(
     Reference PDF: "Gastos Comunes Enero 2026" (Edificio Jose Miguel, 1 page).
     """
     attrs: dict[str, Any] = {}
-    # Per-attribute confidence scores populated as each field is extracted.
-    # Merged into attrs["_confidence"] at the end of the function.
     _confidence: dict[str, float] = {}
+
+    if not pdf_path:
+        return {}
+
+    ocr_text, ocr_raw = _try_ocr_pdf(pdf_path, ocrspace_api_key, json_dir=json_dir)
+    if not ocr_raw and not ocr_text.strip():
+        _LOGGER.info(
+            "Common-expenses OCR-only extraction skipped for '%s': no Tier 2 data available",
+            pdf_path,
+        )
+        return {}
+
+    template_json_attrs = _extract_common_expenses_from_ocr_json(ocr_raw)
+    for key, value in template_json_attrs.items():
+        attrs[key] = value
+        if not key.startswith("_"):
+            _confidence[key] = CONF_SCORE_OCR
+
+    _LOGGER.debug(
+        "Common-expenses OCR-only extraction populated %d non-metadata attributes from OCR JSON for '%s'",
+        len([key for key in attrs if not key.startswith("_")]),
+        pdf_path,
+    )
+    return _finalize_common_expenses_attrs(attrs, _confidence)
 
     # ------------------------------------------------------------------
     # Billing period (month + year)
@@ -3533,7 +3865,10 @@ def extract_attributes_from_pdf(
         _LOGGER.debug("Could not extract text from PDF '%s': %s", pdf_path, err)
         return {}
 
-    if not pdf_text:
+    if not pdf_text and service_type not in (
+        SERVICE_TYPE_COMMON_EXPENSES,
+        SERVICE_TYPE_HOT_WATER,
+    ):
         return {}
 
     _LOGGER.debug(
