@@ -30,6 +30,7 @@ from .const import (
 )
 from .sensor import ConciergeServicesCoordinator, attr_key_from_uid_suffix
 from .service_detector import detect_services_from_imap, normalize_service_id
+from .task_logbook import async_log_task
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -395,6 +396,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "Concierge Services integration loaded for %s",
         entry.data.get("email"),
     )
+    async_log_task(
+        hass,
+        f"Integración iniciada para {entry.data.get('email')}",
+    )
 
     return True
 
@@ -509,7 +514,21 @@ def _async_register_recalculate_service(
                         device_id,
                         sub_id,
                     )
+                    async_log_task(
+                        hass,
+                        (
+                            "recalculate solicitado para "
+                            f"dispositivo {device_id} (subentry {sub_id})"
+                        ),
+                    )
                     await coordinator.async_recompute_derived(sub_id)
+                    async_log_task(
+                        hass,
+                        (
+                            "recalculate completado para "
+                            f"dispositivo {device_id} (subentry {sub_id})"
+                        ),
+                    )
                     return
 
         raise HomeAssistantError(
@@ -638,6 +657,13 @@ def _async_register_set_value_service(
             value,
         )
         await coordinator.async_set_manual_value(sub_id, attribute, value)
+        async_log_task(
+            hass,
+            (
+                f"set_value aplicado en {entity_id}: "
+                f"{attribute}={value!r} (subentry {sub_id})"
+            ),
+        )
 
     hass.services.async_register(
         DOMAIN,
@@ -659,6 +685,7 @@ async def _async_discover_services(hass: HomeAssistant, entry: ConfigEntry) -> N
     add the device from the integration card in Configuration → Integrations.
     """
     cfg = {**entry.data, **entry.options}
+    async_log_task(hass, "Escaneo de descubrimiento de servicios iniciado")
 
     try:
         services = await hass.async_add_executor_job(
@@ -671,6 +698,7 @@ async def _async_discover_services(hass: HomeAssistant, entry: ConfigEntry) -> N
         )
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.debug("Concierge Services discovery scan failed: %s", err)
+        async_log_task(hass, f"Escaneo de descubrimiento falló: {err}")
         return
 
     # IDs already configured as subentries.
@@ -696,6 +724,7 @@ async def _async_discover_services(hass: HomeAssistant, entry: ConfigEntry) -> N
         )
         return
 
+    discovered_count = 0
     for service in services:
         if service.service_id in existing_ids or service.service_id in pending:
             continue
@@ -704,6 +733,11 @@ async def _async_discover_services(hass: HomeAssistant, entry: ConfigEntry) -> N
             "Concierge Services: discovered new service '%s' (%s)",
             service.service_name,
             service.service_id,
+        )
+        discovered_count += 1
+        async_log_task(
+            hass,
+            f"Servicio descubierto: {service.service_name} ({service.service_id})",
         )
         pending.add(service.service_id)
 
@@ -723,6 +757,14 @@ async def _async_discover_services(hass: HomeAssistant, entry: ConfigEntry) -> N
                 err,
             )
             pending.discard(service.service_id)
+
+    async_log_task(
+        hass,
+        (
+            "Escaneo de descubrimiento finalizado: "
+            f"{discovered_count} servicio(s) nuevo(s)"
+        ),
+    )
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

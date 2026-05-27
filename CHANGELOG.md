@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.10] - 2026-05-27
+
+### Added
+
+- **Task execution entries in Home Assistant Logbook under a dedicated domain**
+  (`__init__.py`, `sensor.py`, `const.py`, `task_logbook.py`):
+
+  The integration now emits `logbook_entry` events for key operational tasks so
+  troubleshooting does not depend only on developer logs. Entries are grouped
+  under the dedicated Logbook domain `concierge_ha_tasks`, including setup,
+  discovery scans, automatic polling cycles, force refresh outcomes, recalculate
+  actions, and `set_value` manual overrides.
+
 ## [1.3.9] - 2026-05-27
 
 ### Changed

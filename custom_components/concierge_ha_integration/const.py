@@ -1,6 +1,8 @@
 """Constants for the Concierge Services integration."""
 
 DOMAIN = "concierge_ha_integration"
+TASK_LOGBOOK_DOMAIN = "concierge_ha_tasks"
+TASK_LOGBOOK_NAME = "Concierge Tasks"
 
 # Configuration keys
 CONF_IMAP_SERVER = "imap_server"

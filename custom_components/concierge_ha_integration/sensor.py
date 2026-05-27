@@ -64,6 +64,7 @@ from .service_detector import (
     classify_service_type,
     normalize_service_id,
 )
+from .task_logbook import async_log_task
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -671,10 +672,30 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from IMAP server."""
+        async_log_task(self.hass, "Ciclo automático de lectura de correos iniciado")
         try:
             result = await self.hass.async_add_executor_job(self._fetch_service_data)
         except Exception as err:
+            async_log_task(self.hass, f"Ciclo automático falló: {err}")
             raise UpdateFailed(f"Error communicating with IMAP server: {err}") from err
+
+        services = result.get("services", {})
+        service_count = len(services) if isinstance(services, dict) else 0
+        without_match = 0
+        if isinstance(services, dict):
+            without_match = sum(
+                1
+                for service_data in services.values()
+                if isinstance(service_data, dict)
+                and service_data.get("last_updated") is None
+            )
+        async_log_task(
+            self.hass,
+            (
+                "Ciclo automático completado: "
+                f"{service_count} servicio(s), {without_match} sin coincidencia"
+            ),
+        )
         self._manage_ocr_repair_issue()
         self._manage_gc_template_mismatch_notification(result)
         return result
@@ -956,6 +977,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             subentry_id,
             service_id,
         )
+        async_log_task(
+            self.hass,
+            f"force_refresh iniciado para {service_name} ({subentry_id})",
+        )
 
         # ------------------------------------------------------------------
         # Step 1 — Delete cached PDFs so the downloader fetches a fresh copy.
@@ -1004,6 +1029,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 service_name,
                 err,
             )
+            async_log_task(
+                self.hass,
+                f"force_refresh falló para {service_name}: {err}",
+            )
             return
 
         # ------------------------------------------------------------------
@@ -1019,6 +1048,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "— existing sensor values are preserved (subentry=%s)",
                 service_name,
                 subentry_id,
+            )
+            async_log_task(
+                self.hass,
+                (
+                    "force_refresh sin coincidencia de correo para "
+                    f"{service_name} ({subentry_id})"
+                ),
             )
             return
 
@@ -1055,6 +1091,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "(subentry=%s)",
             service_name,
             subentry_id,
+        )
+        async_log_task(
+            self.hass,
+            f"force_refresh completado para {service_name} ({subentry_id})",
         )
 
     def _fetch_single_service_data(self, subentry_id: str) -> dict[str, Any]:
