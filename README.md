@@ -277,25 +277,29 @@ data:
 
 ## 📋 Prerequisites
 
-### Hot Water extraction (Tier 1)
+### Hot Water extraction (Tier 1 + OCR fallback)
 
 Five sensors under each **Gastos Comunes** device report Agua Caliente (hot water)
-data extracted from the same "Nota de Cobro" PDF text layer:
+data extracted from the same "Nota de Cobro" PDF:
 `hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
 `hot_water_prev_reading`, `hot_water_curr_reading`.
 
-No external OCR API key is required.
+The integration first uses the PDF text layer (Tier 1). If that layer is empty
+or incomplete, configure an **OCR.space API key** so it can fall back to OCR
+instead of leaving the Gastos Comunes / Agua Caliente sensors as `unknown`.
 
 #### How the extraction pipeline works
 
 For every Gastos Comunes bill that arrives, the integration:
 
 1. **Read PDF text layer (Tier 1)** — `pdfminer` extracts the embedded text.
-2. **Extract billing + hot-water fields** — Gastos Comunes and Agua Caliente
-   values are parsed directly from that text.
-3. **Finalize and derive fields** — aliases and computed values are applied
+2. **Fallback to OCR when needed** — if Tier 1 is incomplete, OCR.space is used
+   to recover the missing Gastos Comunes / Agua Caliente values.
+3. **Extract billing + hot-water fields** — values are parsed from the best
+   available source.
+4. **Finalize and derive fields** — aliases and computed values are applied
    (for example `gc_total`, `subtotal_consumo`, and fallback derivations).
-4. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
+5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
 
@@ -305,7 +309,9 @@ For every Gastos Comunes bill that arrives, the integration:
 
 ### Before you install
 
-No OCR API key is required. Hot-water data is extracted from the PDF Tier-1 text layer.
+An OCR.space API key is optional but recommended for Gastos Comunes / Agua
+Caliente, because some building PDFs do not expose a usable text layer and need
+OCR fallback to avoid `unknown` sensors.
 
 ### Option 1: HACS (Recommended)
 

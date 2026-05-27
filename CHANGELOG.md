@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.11] - 2026-05-27
+
+### Fixed
+
+- **Gastos Comunes / Agua Caliente no longer stay `unknown` when Tier 1 is incomplete**
+  (`attribute_extractor.py`, `sensor.py`, `config_flow.py`, `README.md`):
+
+  Common-expenses extraction now keeps the Tier-1 (`pdfminer`) path as the
+  first choice, but it falls back to OCR.space again when the PDF text layer is
+  empty or too incomplete to populate the Gastos Comunes / Agua Caliente
+  sensors. The OCR.space API key is also persisted again in the setup/options
+  flow and passed into PDF extraction, so image-based building PDFs can recover
+  the missing values instead of leaving all those sensors in `unknown`.
+
 ## [1.3.10] - 2026-05-27
 
 ### Added
