@@ -112,6 +112,10 @@
 - 🪵 **Structured Email-Processing Logs** (v1.2.2): Every time the integration scans the
   mailbox it emits detailed log entries so you can verify whether each email was detected
   and why — see [Logging & Diagnostics](#-logging--diagnostics) for details.
+- 📘 **Home Assistant Logbook task entries** (v1.3.10): Key integration tasks
+  (startup, discovery scans, automatic polling, force refresh, recalculate and
+  `set_value`) are now written to the **Registro/Logbook** timeline under the
+  dedicated domain `concierge_ha_tasks`.
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
@@ -462,6 +466,7 @@ with five entities:
 - ✅ **Gastos Comunes PDF extraction generalised for any building (v1.1.0)**: alícuota, fondos, and building-total patterns were previously hard-coded to the reference building's values; they now match any building's Nota de Cobro regardless of alícuota magnitude, fondos percentage, or total size; the three-amounts fallback is scoped to the breakdown section to prevent false matches
 - ✅ **Forwarded-email detection fixed (v1.2.1)**: a new fifth strategy (`service-type-pattern-fallback`) iterates the canonical `SERVICE_PATTERNS` list so that Spanish-language keywords ("gastos comunes", "aguas andinas", "metrogas", …) are recognised regardless of the sender address, fixing cases where bills forwarded through Gmail or other generic webmail providers were silently missed
 - ✅ **Structured email-processing logs (v1.2.2)**: every mailbox scan now emits `INFO`-level entries for each matched email (from, subject, date, **detection strategy**), extracted attributes (email body and PDF), and PDF emission-date overrides; `DEBUG`-level entries cover every email evaluated and every non-match — see [Logging & Diagnostics](#-logging--diagnostics)
+- ✅ **Registro/Logbook task timeline (v1.3.10)**: the integration now publishes task entries to Home Assistant Logbook under `concierge_ha_tasks` for startup, discovery, automatic IMAP polling, force refresh, recalculate and manual `set_value` operations
 
 ### 🔮 Future Enhancements
 - Persistent notifications for detected services
@@ -494,6 +499,13 @@ logger:
 
 Use `info` instead of `debug` if you only want the match/extraction lines without
 the per-email evaluation noise.
+
+### Logbook task entries (Registro)
+
+Starting with **v1.3.10**, Concierge also writes task-level entries to Home
+Assistant **Logbook / Registro** using the dedicated domain
+`concierge_ha_tasks`. This lets you follow what the integration did over time
+without enabling verbose logger output.
 
 ### Log levels
 
