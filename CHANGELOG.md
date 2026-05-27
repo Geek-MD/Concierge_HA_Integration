@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.9] - 2026-05-27
+
+### Changed
+
+- **Gastos Comunes + Agua Caliente extraction reverted to Tier 1 only**
+  (`attribute_extractor.py`, `sensor.py`, `config_flow.py`):
+
+  Common-expenses parsing now reads only the PDF text layer (`pdfminer`) and no
+  longer uses OCR Tier 2 (OCR.space) for these fields. Hot-water values are now
+  extracted from Tier 1 patterns and existing fallback derivations.
+
+- **`set_value` keeps manual override behavior without "learning" wording**
+  (`__init__.py`, `sensor.py`, `services.yaml`, translations):
+
+  The service remains available as `concierge_ha_integration.set_value`, but
+  descriptions and labels now describe it as a manual override in memory.
+
+### Removed
+
+- **OCR Tier 2 runtime dependency for common-expenses pipeline**
+  (`manifest.json`):
+
+  Removed `pypdfium2` and `Pillow` from runtime requirements since the v1.3.9
+  common-expenses/hot-water path no longer uses OCR Tier 2.
+
 ## [1.3.8] - 2026-05-26
 
 ### Fixed

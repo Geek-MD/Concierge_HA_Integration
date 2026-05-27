@@ -129,8 +129,8 @@
       }
     },
     "set_value": {
-      "name": "Wert setzen (Lernkorrektur)",
-      "description": "Erzwingt einen bestimmten Wert für ein Attribut einer Concierge-Dienstentität und speichert ihn als Lernkorrektur. Der Wert wird sofort und nach jeder zukünftigen E-Mail/PDF-Analyse angewendet. Formelbasierte Sensoren (z. B. Gesamt = Zwischensumme + Grundgebühr) werden automatisch neu berechnet. Es kann jeweils nur eine Entität ausgewählt werden.",
+      "name": "Wert setzen (Manuelle Korrektur)",
+      "description": "Erzwingt einen bestimmten Wert für ein Attribut einer Concierge-Dienstentität als manuelle Korrektur. Der Wert wird sofort im Koordinator angewendet. Formelbasierte Sensoren (z. B. Gesamt = Zwischensumme + Grundgebühr) werden automatisch neu berechnet. Es kann jeweils nur eine Entität ausgewählt werden.",
       "fields": {
         "attribute": {
           "name": "Attribut",

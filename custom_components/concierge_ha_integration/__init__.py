@@ -369,7 +369,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register the recalculate (derived-attribute recomputation) service.
     _async_register_recalculate_service(hass, entry)
 
-    # Register the set_value (learning-override) service.
+    # Register the set_value manual-override service.
     _async_register_set_value_service(hass, entry)
 
     # Run an initial inbox scan for new services right after setup.
@@ -637,7 +637,7 @@ def _async_register_set_value_service(
             attribute,
             value,
         )
-        await coordinator.async_set_learning_override(sub_id, attribute, value)
+        await coordinator.async_set_manual_value(sub_id, attribute, value)
 
     hass.services.async_register(
         DOMAIN,

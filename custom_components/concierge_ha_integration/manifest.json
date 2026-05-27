@@ -8,10 +8,8 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Geek-MD/Concierge_HA_Integration/issues",
   "requirements": [
-    "pdfminer.six>=20221105",
-    "pypdfium2>=4.30.0",
-    "Pillow>=10.2.0"
+    "pdfminer.six>=20221105"
   ],
   "single_config_entry": true,
-  "version": "1.3.8"
+  "version": "1.3.9"
 }

@@ -1244,12 +1244,8 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Common-expenses service extractor (Gastos Comunes / Nota de Cobro)
 # ---------------------------------------------------------------------------
-# The Gastos Comunes PDF is a JPEG-backed document: the main billing table is
-# embedded as a JPEG image while only a partial text layer (pdfminer-readable)
-# overlays certain fields.  Two extraction tiers are used:
-#   1. pdfminer text layer  – always available; provides amounts, dates, owner.
-#   2. OCR.space cloud API  – requires an API key; provides the hot-water table
-#                             (Agua Caliente) that lives only in the image.
+# Common-expenses extraction uses the PDF text layer (Tier 1 / pdfminer).
+# This path is now the single source for both Gastos Comunes and Agua Caliente.
 
 # "Nota de Cobro Enero 2026" – billing month and year
 _GC_BILLING_PERIOD_RE = re.compile(
@@ -2815,34 +2811,205 @@ def _try_ocr_pdf(
 
 
 def _extract_common_expenses_pdf_attributes(
-    _text: str, pdf_path: str = "", ocrspace_api_key: str = "", json_dir: str = ""
+    text: str, pdf_path: str = "", ocrspace_api_key: str = "", json_dir: str = ""
 ) -> dict[str, Any]:
-    """Extract Gastos Comunes and Agua Caliente attributes using OCR Tier 2 only."""
+    """Extract Gastos Comunes and Agua Caliente attributes using Tier 1 (pdfminer)."""
+    del pdf_path
+    del ocrspace_api_key
+    del json_dir
+
     attrs: dict[str, Any] = {}
     confidence: dict[str, float] = {}
 
-    if not pdf_path:
+    if not text.strip():
         return {}
 
-    ocr_text, ocr_raw = _try_ocr_pdf(pdf_path, ocrspace_api_key, json_dir=json_dir)
-    if not ocr_raw and not ocr_text.strip():
-        _LOGGER.info(
-            "Common-expenses OCR-only extraction skipped for '%s': no Tier 2 data available",
-            pdf_path,
+    billing_year = ""
+    period_m = _GC_BILLING_PERIOD_RE.search(text)
+    if period_m:
+        month_name = period_m.group(1).lower()
+        billing_year = period_m.group(2)
+        attrs["billing_period_month"] = period_m.group(1).capitalize()
+        attrs["billing_period_year"] = billing_year
+        confidence["billing_period_month"] = CONF_SCORE_PDFMINER
+        confidence["billing_period_year"] = CONF_SCORE_PDFMINER
+        month_num = _MONTH_NAME_TO_NUM.get(month_name[:3], 0)
+        if month_num:
+            last_day = calendar.monthrange(int(billing_year), month_num)[1]
+            attrs["billing_period_start"] = f"01-{month_num:02d}-{billing_year}"
+            attrs["billing_period_end"] = f"{last_day:02d}-{month_num:02d}-{billing_year}"
+            confidence["billing_period_start"] = CONF_SCORE_PDFMINER
+            confidence["billing_period_end"] = CONF_SCORE_PDFMINER
+
+    dates_m = _GC_DATES_BLOCK_RE.search(text)
+    if dates_m:
+        emission = dates_m.group(1).replace("/", "-")
+        due = dates_m.group(2).replace("/", "-")
+        attrs["emission_date"] = emission
+        attrs["due_date"] = _gc_fix_year(due, billing_year) if billing_year else due
+        confidence["emission_date"] = CONF_SCORE_PDFMINER
+        confidence["due_date"] = CONF_SCORE_PDFMINER
+        year_match = re.search(r"(\d{4})$", emission)
+        if year_match:
+            billing_year = year_match.group(1)
+
+    building_m = _GC_BUILDING_NAME_RE.search(text)
+    if building_m:
+        extracted = f"Edificio {building_m.group(1).strip()}"
+        if difflib.SequenceMatcher(
+            None,
+            _normalize_gc_anchor_text(extracted),
+            _normalize_gc_anchor_text(_GC_KNOWN_BUILDING_NAME),
+        ).ratio() >= _GC_BUILDING_NAME_SIMILARITY_THRESHOLD:
+            attrs["building_name"] = _GC_KNOWN_BUILDING_NAME
+        else:
+            attrs["building_name"] = extracted
+        confidence["building_name"] = CONF_SCORE_PDFMINER
+
+    rut_m = _GC_RUT_RE.search(text)
+    if rut_m:
+        attrs["building_rut"] = rut_m.group(1)
+        confidence["building_rut"] = CONF_SCORE_PDFMINER
+
+    address_m = _GC_ADDRESS_RE.search(text)
+    if address_m:
+        attrs["address"] = address_m.group(1).strip()
+        confidence["address"] = CONF_SCORE_PDFMINER
+
+    apt_m = _GC_APARTMENT_RE.search(text)
+    if apt_m:
+        attrs["apartment"] = apt_m.group(1)
+        confidence["apartment"] = CONF_SCORE_PDFMINER
+
+    owner_m = _GC_OWNER_RE.search(text)
+    if owner_m:
+        attrs["owner_name"] = owner_m.group(1).strip()
+        confidence["owner_name"] = CONF_SCORE_PDFMINER
+
+    alicuota_m = _GC_ALICUOTA_RE.search(text)
+    if alicuota_m:
+        try:
+            attrs["alicuota"] = round(float("0." + alicuota_m.group(1)), 4)
+            confidence["alicuota"] = CONF_SCORE_PDFMINER
+        except ValueError:
+            pass
+
+    building_total_m = _GC_BUILDING_TOTAL_RE.search(text)
+    if building_total_m:
+        raw_total = building_total_m.group(1) or building_total_m.group(2)
+        if raw_total:
+            attrs["building_total_expense"] = _parse_amount_to_int(raw_total)
+            confidence["building_total_expense"] = CONF_SCORE_PDFMINER
+
+    three_amounts_m = _GC_THREE_AMOUNTS_RE.search(text)
+    if three_amounts_m:
+        attrs.setdefault(
+            "gastos_comunes_amount", _parse_amount_to_int(three_amounts_m.group(1))
         )
-        return {}
+        attrs.setdefault("fondos_amount", _parse_amount_to_int(three_amounts_m.group(2)))
+        attrs.setdefault(
+            "subtotal_departamento", _parse_amount_to_int(three_amounts_m.group(3))
+        )
 
-    template_json_attrs = _extract_common_expenses_from_ocr_json(ocr_raw)
-    for key, value in template_json_attrs.items():
-        attrs[key] = value
-        if not key.startswith("_"):
-            confidence[key] = CONF_SCORE_OCR
+    gc_amount_m = _GC_AMOUNT_RE.search(text)
+    if gc_amount_m:
+        attrs["gastos_comunes_amount"] = _parse_amount_to_int(gc_amount_m.group(1))
+    if "gastos_comunes_amount" in attrs:
+        confidence["gastos_comunes_amount"] = CONF_SCORE_PDFMINER
 
-    _LOGGER.debug(
-        "Common-expenses OCR-only extraction populated %d non-metadata attributes from OCR JSON for '%s'",
-        len([key for key in attrs if not key.startswith("_")]),
-        pdf_path,
-    )
+    fondos_pct_m = _GC_FONDOS_PCT_RE.search(text)
+    if fondos_pct_m:
+        attrs["fondos_pct"] = int(fondos_pct_m.group(1))
+        confidence["fondos_pct"] = CONF_SCORE_PDFMINER
+
+    fondos_amount_m = _GC_FONDOS_AMOUNT_RE.search(text)
+    if fondos_amount_m:
+        attrs["fondos_amount"] = _parse_amount_to_int(fondos_amount_m.group(1))
+    if "fondos_amount" in attrs:
+        confidence["fondos_amount"] = CONF_SCORE_PDFMINER
+
+    subtotal_depto_m = _GC_SUBTOTAL_DEPTO_RE.search(text)
+    if subtotal_depto_m:
+        attrs["subtotal_departamento"] = _parse_amount_to_int(subtotal_depto_m.group(1))
+    if "subtotal_departamento" in attrs:
+        confidence["subtotal_departamento"] = CONF_SCORE_PDFMINER
+
+    cargo_m = _GC_CARGO_FIJO_RE.search(text)
+    if cargo_m:
+        attrs["cargo_fijo"] = _parse_amount_to_int(cargo_m.group(1))
+        confidence["cargo_fijo"] = CONF_SCORE_PDFMINER
+
+    subtotal_recargos_m = _GC_SUBTOTAL_RECARGOS_RE.search(text)
+    if subtotal_recargos_m:
+        attrs["subtotal_recargos"] = _parse_amount_to_int(subtotal_recargos_m.group(1))
+        confidence["subtotal_recargos"] = CONF_SCORE_PDFMINER
+
+    totals_section_m = _GC_TOTALS_SECTION_RE.search(text)
+    if totals_section_m:
+        amount_values = [
+            _parse_amount_to_int(m.group(1))
+            for m in _GC_AMOUNT_WITH_DOLLAR_CAPTURE_RE.finditer(totals_section_m.group(0))
+        ]
+        if amount_values:
+            attrs["total_amount"] = max(amount_values)
+            confidence["total_amount"] = CONF_SCORE_PDFMINER
+
+    last_payment_date_m = _GC_LAST_PAYMENT_DATE_RE.search(text)
+    if last_payment_date_m:
+        raw_date = last_payment_date_m.group(1).replace("/", "-")
+        attrs["last_payment_date"] = (
+            _gc_fix_year(raw_date, billing_year) if billing_year else raw_date
+        )
+        confidence["last_payment_date"] = CONF_SCORE_PDFMINER
+
+    last_payment_amount_m = _GC_LAST_PAYMENT_AMOUNT_RE.search(text)
+    if last_payment_amount_m:
+        attrs["last_payment_amount"] = _parse_amount_to_int(last_payment_amount_m.group(1))
+        confidence["last_payment_amount"] = CONF_SCORE_PDFMINER
+
+    last_payment_folio_m = _GC_LAST_PAYMENT_FOLIO_RE.search(text)
+    if last_payment_folio_m:
+        attrs["last_payment_folio"] = last_payment_folio_m.group(1)
+        confidence["last_payment_folio"] = CONF_SCORE_PDFMINER
+
+    hw_row_m = _GC_OCR_HOT_WATER_ROW_RE.search(text)
+    if hw_row_m:
+        prev_raw = hw_row_m.group(1)
+        curr_raw = hw_row_m.group(2)
+        cons_raw = hw_row_m.group(3)
+        cost_raw = hw_row_m.group(4)
+        amount_raw = hw_row_m.group(5)
+
+        attrs["hot_water_reading_prev"] = _parse_meter_reading(prev_raw)
+        attrs["hot_water_reading_curr"] = _parse_meter_reading(curr_raw)
+        confidence["hot_water_reading_prev"] = CONF_SCORE_PDFMINER
+        confidence["hot_water_reading_curr"] = CONF_SCORE_PDFMINER
+
+        if cons_raw:
+            attrs["hot_water_consumption"] = _parse_meter_reading(cons_raw)
+        else:
+            attrs["hot_water_consumption"] = round(
+                attrs["hot_water_reading_curr"] - attrs["hot_water_reading_prev"], 6
+            )
+        attrs["hot_water_consumption_unit"] = "m³"
+        confidence["hot_water_consumption"] = CONF_SCORE_PDFMINER
+        confidence["hot_water_consumption_unit"] = CONF_SCORE_PDFMINER
+
+        attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(cost_raw)
+        confidence["hot_water_cost_per_m3"] = CONF_SCORE_PDFMINER
+
+        if amount_raw:
+            attrs["hot_water_amount"] = _parse_amount_to_int(amount_raw)
+            confidence["hot_water_amount"] = CONF_SCORE_PDFMINER
+
+    subtotal_consumo_m = _GC_OCR_SUBTOTAL_CONSUMO_RE.search(text)
+    if subtotal_consumo_m:
+        subtotal_consumo = _parse_amount_to_int(subtotal_consumo_m.group(1))
+        attrs["subtotal_consumo"] = subtotal_consumo
+        attrs["hot_water_amount"] = subtotal_consumo
+        confidence["subtotal_consumo"] = CONF_SCORE_PDFMINER
+        confidence["hot_water_amount"] = CONF_SCORE_PDFMINER
+
     return _finalize_common_expenses_attrs(attrs, confidence)
 
 
@@ -3101,19 +3268,15 @@ def extract_attributes_from_pdf(
       (Chilean building administrator "Nota de Cobro", Jan 2026).
       Both ``SERVICE_TYPE_COMMON_EXPENSES`` and ``SERVICE_TYPE_HOT_WATER`` share
       the same PDF; the full extracted dictionary is returned for both so the
-      caller can select the relevant fields.  The PDF uses a "sandwich" layout:
-      a full-page JPEG image as background plus a partially complete embedded
-      text layer created by a prior OCR pass (identifiable by the
-      ``HiddenHorzOCR`` font).  pdfminer reads that embedded layer directly.
-      Tier-1 (embedded text layer, no OCR needed): ``billing_period_month``,
+      caller can select the relevant fields.  Extraction uses Tier-1
+      (embedded text layer via pdfminer) for both Gastos Comunes and Agua
+      Caliente fields: ``billing_period_month``,
       ``billing_period_year``, ``billing_period_start``, ``billing_period_end``,
       ``emission_date``, ``due_date``, ``building_name``, ``building_rut``,
       ``address``, ``apartment``, ``owner_name``, ``alicuota``,
       ``building_total_expense``, ``gastos_comunes_amount``, ``fondos_amount``,
       ``subtotal_departamento``, ``subtotal_recargos``, ``total_amount``,
       ``last_payment_date``, ``last_payment_amount``, ``last_payment_folio``.
-      Tier-2 (OCR on JPEG — hot-water table absent from embedded text):
-      uses the OCR.space cloud API (*ocrspace_api_key*).
       ``hot_water_reading_prev``, ``hot_water_reading_curr``,
       ``hot_water_consumption``, ``hot_water_consumption_unit``,
       ``hot_water_cost_per_m3``, ``hot_water_amount``, ``subtotal_consumo``.
