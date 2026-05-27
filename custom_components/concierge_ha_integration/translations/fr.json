@@ -129,8 +129,8 @@
       }
     },
     "set_value": {
-      "name": "Définir une valeur (correction d'apprentissage)",
-      "description": "Force une valeur spécifique pour un attribut d'une entité de service Concierge et la persiste comme correction d'apprentissage. La valeur est appliquée immédiatement et après chaque analyse future d'e-mail/PDF. Les capteurs dérivés de formules (ex. Total = Sous-total + Charge fixe) sont recalculés automatiquement. Une seule entité peut être sélectionnée à la fois.",
+      "name": "Définir une valeur (correction manuelle)",
+      "description": "Force une valeur spécifique pour un attribut d'une entité de service Concierge comme correction manuelle. La valeur est appliquée immédiatement dans le coordinateur. Les capteurs dérivés de formules (ex. Total = Sous-total + Charge fixe) sont recalculés automatiquement. Une seule entité peut être sélectionnée à la fois.",
       "fields": {
         "attribute": {
           "name": "Attribut",

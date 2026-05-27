@@ -129,8 +129,8 @@
       }
     },
     "set_value": {
-      "name": "Establecer Valor (Corrección de Aprendizaje)",
-      "description": "Fuerza un valor específico para un atributo de una entidad del servicio Concierge y lo persiste como corrección de aprendizaje. El valor se aplica de inmediato y después de cada análisis futuro de correo/PDF. Los sensores derivados de fórmulas (p.ej. Total = Subtotal + Cargo Fijo) se recalculan automáticamente. Solo se puede seleccionar una entidad a la vez.",
+      "name": "Establecer Valor (Corrección Manual)",
+      "description": "Fuerza un valor específico para un atributo de una entidad del servicio Concierge como corrección manual. El valor se aplica de inmediato en el coordinador. Los sensores derivados de fórmulas (p.ej. Total = Subtotal + Cargo Fijo) se recalculan automáticamente. Solo se puede seleccionar una entidad a la vez.",
       "fields": {
         "attribute": {
           "name": "Atributo",

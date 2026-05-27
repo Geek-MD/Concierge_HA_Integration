@@ -129,8 +129,8 @@
       }
     },
     "set_value": {
-      "name": "Definir valor (correção de aprendizado)",
-      "description": "Força um valor específico para um atributo de uma entidade de serviço Concierge e o persiste como correção de aprendizado. O valor é aplicado imediatamente e após cada análise futura de e-mail/PDF. Os sensores derivados de fórmulas (ex. Total = Subtotal + Tarifa fixa) são recalculados automaticamente. Apenas uma entidade pode ser selecionada por vez.",
+      "name": "Definir valor (correção manual)",
+      "description": "Força um valor específico para um atributo de uma entidade de serviço Concierge como correção manual. O valor é aplicado imediatamente no coordenador. Os sensores derivados de fórmulas (ex. Total = Subtotal + Tarifa fixa) são recalculados automaticamente. Apenas uma entidade pode ser selecionada por vez.",
       "fields": {
         "attribute": {
           "name": "Atributo",

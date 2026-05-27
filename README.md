@@ -97,20 +97,17 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
   | `sensor.concierge_{id}_total` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
-  | `sensor.concierge_{id}_hot_water_consumption` | Sensor | — | Hot Water consumption (`m³`) — from OCR |
-  | `sensor.concierge_{id}_hot_water_cost_per_unit` | Sensor | — | Hot Water cost per m³ (`$/m³`) — from OCR |
-  | `sensor.concierge_{id}_hot_water_amount` | Sensor | — | Hot Water charge (`$`) — from OCR or derived |
-  | `sensor.concierge_{id}_hot_water_prev_reading` | Sensor | — | Hot Water previous meter reading (`m³`) — from OCR |
-  | `sensor.concierge_{id}_hot_water_curr_reading` | Sensor | — | Hot Water current meter reading (`m³`) — from OCR |
+  | `sensor.concierge_{id}_hot_water_consumption` | Sensor | — | Hot Water consumption (`m³`) — from PDF Tier 1 |
+  | `sensor.concierge_{id}_hot_water_cost_per_unit` | Sensor | — | Hot Water cost per m³ (`$/m³`) — from PDF Tier 1 |
+  | `sensor.concierge_{id}_hot_water_amount` | Sensor | — | Hot Water charge (`$`) — from PDF Tier 1 or derived |
+  | `sensor.concierge_{id}_hot_water_prev_reading` | Sensor | — | Hot Water previous meter reading (`m³`) — from PDF Tier 1 |
+  | `sensor.concierge_{id}_hot_water_curr_reading` | Sensor | — | Hot Water current meter reading (`m³`) — from PDF Tier 1 |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device; recomputes derived sensors as its final step |
   | `button.concierge_{id}_recalculate` | Button | Configuration | Recomputes formula-derived sensors from already-stored values (no email scan) |
 
   > **Hot Water** is a sub-account billed within the Common Expenses PDF,
   > there is no separate email for it.  Its five sensors are
-  > populated automatically when the OCR Tier-2 pass succeeds (requires
-  > a configured **OCR.space API key** — see [Prerequisites](#-prerequisites)).
-  > When OCR is unavailable the sensors exist but report `None` until a
-  > manual override is applied via the `set_value` service.
+  > populated automatically from the PDF text layer (Tier 1).
 
 - 🪵 **Structured Email-Processing Logs** (v1.2.2): Every time the integration scans the
   mailbox it emits detailed log entries so you can verify whether each email was detected
@@ -231,9 +228,8 @@ the recomputation immediately without any scripting or service call.
 ### `concierge_ha_integration.set_value`
 
 Forces a specific value for a named attribute of a Concierge service entity and
-persists it as a **learning override**.  The correction is applied immediately and
-will be re-applied automatically after every future email/PDF analysis, overriding
-any value extracted by pdfminer or OCR.  The overridden sensor will show
+applies it as a **manual override** in memory. The correction is applied
+immediately. The overridden sensor will show
 `extraction_confidence = 100`.
 
 Formula-derived sensors (e.g. `sensor.concierge_gastos_comunes_total`, which equals
@@ -277,72 +273,25 @@ data:
 
 ## 📋 Prerequisites
 
-### OCR.space API key — required for Hot Water sensors
+### Hot Water extraction (Tier 1)
 
 Five sensors under each **Gastos Comunes** device report Agua Caliente (hot water)
-data extracted via OCR from the "Nota de Cobro" PDF:
+data extracted from the same "Nota de Cobro" PDF text layer:
 `hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
 `hot_water_prev_reading`, `hot_water_curr_reading`.
 
-To populate these sensors automatically, you need a free **OCR.space** API key:
+No external OCR API key is required.
 
-1. Visit <https://ocr.space/OCRAPI> and register for a free account.
-2. Copy your API key (e.g. `K81234567890abcd`).
-3. Enter it in the integration during setup (**Finalize Configuration** step →
-   **OCR.space API Key**) or later via **Settings → Devices & Services →
-   Concierge HA Integration → CONFIGURE** (**OCR.space API Key**).
-
-> **Free tier limits** — The free plan allows up to 500 requests/month and
-> 25 000 requests/month with the enhanced `helloworld` demo key (rate-limited).
-> Registering for a free personal key at ocr.space gives a higher quota.
-> Each Gastos Comunes bill uses 2 API calls (full page + crop).
-
-If no key is configured the Agua Caliente sensors remain empty.  A Repair issue
-and a persistent notification appear in Home Assistant recommending that you add
-a key.
-
-#### How the OCR pipeline works
+#### How the extraction pipeline works
 
 For every Gastos Comunes bill that arrives, the integration:
 
-1. **Renders the PDF page** — `pypdfium2` renders the full-page JPEG image at
-   3× zoom (~216 DPI) to a PNG in memory.
-2. **OCR.space scans the image** — two API calls are made:
-   - Pass 1: full page (Spanish, OCR Engine 2).
-   - Pass 2: Agua Caliente table crop (30–55 % from top, upscaled 2×,
-     OCR Engine 2) for improved hot-water meter table recognition.
-3. **Structure-guided mapping** — for **Gastos Comunes**, OCR JSON
-   (`ParsedResults` overlay lines) is interpreted using the markdown template
-   at `custom_components/concierge_ha_integration/services_templates/common_expenses/edificio_jose_miguel.md`
-   as a structural reference. The template uses generic placeholders (for
-   example `dd-mm-aaaa`, `$ 0.000.000`) and contributes semantic labels and
-   table structure, while the extractor:
-   - Groups overlay lines into logical rows using **per-line height tolerance**
-     (avoids the "snowball" collapse where one tall logo line drags all content
-     into a single row).
-   - Resolves values by **Y-proximity** to their anchor label (closest line
-     in the same row wins), not by left-to-right text order.
-   - Uses `Concepto` as the primary anchor for Gastos Comunes and derives
-     Provisión de Fondos via `subtotal − gastos_comunes` when direct proximity
-     would pick the wrong cell.
-   - Accepts both *Agua Caliente* and the OCR-common variant *Aqua Caliente*
-     as the hot-water section heading.
-
-   All Gastos Comunes and Agua Caliente values come exclusively from Tier 2
-   OCR data. The raw OCR.space JSON payload is always stored under
-   `config/concierge_ha_integration/json/`; only the 5 latest snapshots are
-   retained automatically.
-4. **Template mismatch watchdog (v1.3.3)** — if OCR JSON content differs
-   significantly from expected markdown anchors (missing/inconsistent anchor
-   coverage) **or** includes unexpected structural lines that are not present in
-   the markdown template, a persistent Home Assistant notification is raised
-   with:
-   - a direct link to
-     <https://github.com/Geek-MD/Concierge_HA_Integration/issues>
-   - a ready-to-copy markdown report body for manual issue creation.
-   Known optional OCR-only content remains ignored (the "Paga tu Gasto Común en
-   línea" block and the phone number under "Fono").
-5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
+1. **Read PDF text layer (Tier 1)** — `pdfminer` extracts the embedded text.
+2. **Extract billing + hot-water fields** — Gastos Comunes and Agua Caliente
+   values are parsed directly from that text.
+3. **Finalize and derive fields** — aliases and computed values are applied
+   (for example `gc_total`, `subtotal_consumo`, and fallback derivations).
+4. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
 
@@ -350,18 +299,9 @@ For every Gastos Comunes bill that arrives, the integration:
 
 ## 📦 Installation
 
-### Before you install — get a free OCR.space API key
+### Before you install
 
-The integration uses [OCR.space](https://ocr.space/OCRAPI) to extract hot-water
-meter data from Gastos Comunes PDFs.  Register for a **free API key** before or
-during setup:
-
-1. Go to <https://ocr.space/OCRAPI>
-2. Fill in the registration form and submit
-3. Copy the API key from the confirmation email (e.g. `K81234567890abcd`)
-
-You will be asked to enter this key in the **Finalize Configuration** step.
-You can also add or change it later via the **CONFIGURE** button.
+No OCR API key is required. Hot-water data is extracted from the PDF Tier-1 text layer.
 
 ### Option 1: HACS (Recommended)
 
@@ -405,8 +345,6 @@ All configuration is done through the user interface:
 
 After validating credentials, configure:
 - **Friendly Name**: A descriptive name for this integration (e.g., "Home Bills", "Casa Principal")
-- **OCR.space API Key**: Your free key from [ocr.space/OCRAPI](https://ocr.space/OCRAPI).
-  Required for Agua Caliente (Hot Water) sensor extraction.  Can be left empty and added later.
 
 ### Step 3: Add Service Devices
 
@@ -516,7 +454,7 @@ with five entities:
 - ✅ acepta.com Custodium multi-hop PDF download: follows the full chain (fidelizador tracking URL → outer wrapper → Custodium JS page → PdfView "no plugin" page → PDF); handles percent-encoded hrefs, extra rendering parameters, and root-relative paths (v0.7.15)
 - ✅ Per-service entity architecture (v0.7.0): each service device exposes `binary_sensor.concierge_{id}_status` (Diagnostic) + `sensor.concierge_{id}_last_update` (Diagnostic) + `sensor.concierge_{id}_consumption` + `sensor.concierge_{id}_cost_per_unit` + `sensor.concierge_{id}_total_amount`
 - ✅ `sensor.concierge_{id}_last_update` holds the full ISO 8601 bill datetime (v0.7.1)
-- ✅ `set_value` learning-override service (v0.9.0): forces a correct value for any named attribute of a Concierge entity; entity picker is filtered to Concierge HA Integration only; `extraction_confidence` is set to 100 on overridden sensors (v0.9.3: entity selection moved to HA `target` so `attribute` and `value` render as proper form inputs in the UI; v0.9.4: restricted to exactly one entity per call; formula-derived sensors auto-recalculate when an input changes)
+- ✅ `set_value` manual-override service (v0.9.0): forces a correct value for any named attribute of a Concierge entity; entity picker is filtered to Concierge HA Integration only; `extraction_confidence` is set to 100 on overridden sensors (v0.9.3: entity selection moved to HA `target` so `attribute` and `value` render as proper form inputs in the UI; v0.9.4: restricted to exactly one entity per call; formula-derived sensors auto-recalculate when an input changes)
 - ✅ `force_refresh` service (v0.8.4): forces immediate email scan + PDF analysis for a single device; device picker is filtered to Concierge HA Integration only
 - ✅ Per-device *Force Refresh* button entity (v0.8.4): `button.concierge_{id}_force_refresh` appears in the device Configuration panel; pressing it triggers the same targeted refresh as the service
 - ✅ Agua Caliente sensors on the Gastos Comunes device (v0.9.5): five dedicated sensor entities (`consumption`, `cost_per_unit`, `amount`, `prev_reading`, `curr_reading`) are automatically created for every Gastos Comunes service and populated from the same "Nota de Cobro" PDF via OCR — no separate "Agua Caliente" service device is required or supported, since the hot-water data lives exclusively inside the Gastos Comunes email/PDF

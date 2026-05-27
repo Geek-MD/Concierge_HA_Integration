@@ -32,7 +32,6 @@ from .const import (
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
-    CONF_OCRSPACE_API_KEY,
     CONF_PASSWORD,
     CONF_SAMPLE_FROM,
     CONF_SAMPLE_SUBJECT,
@@ -164,7 +163,7 @@ _COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
 ]
 
 # Agua Caliente (hot-water) sensors grouped under the Gastos Comunes device.
-# These are extracted from the same "Nota de Cobro" PDF via OCR (Tier 2).
+# These are extracted from the same "Nota de Cobro" PDF text layer (Tier 1).
 # All five attributes are set by _extract_common_expenses_pdf_attributes.
 _COMMON_EXPENSES_HOT_WATER_SENSORS: list[tuple[str, str, str, str]] = [
     ("hot_water_consumption",  "Hot Water Consumption",  "m³",   "gc_hw_consumption"),
@@ -397,7 +396,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._json_dir: str = hass.config.path(JSON_SUBDIR)
         self._gc_template_alert_fingerprint: str | None = None
 
-    async def async_set_learning_override(
+    async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
     ) -> None:
         """Overwrite an attribute value in the coordinator's in-memory data.
@@ -932,8 +931,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
            are preserved and a warning is logged.
         5. **Recompute derived attributes** (e.g. ``gc_total``) from the
            freshly extracted values so that formula-based sensors always
-           reflect the latest data, including any stored learning overrides
-           that were applied during extraction.
+           reflect the latest data, including manual values set via
+           ``set_value`` before recomputation.
         """
         if self.config_entry is None:
             _LOGGER.error(
@@ -1295,7 +1294,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 pdf_attrs = extract_attributes_from_pdf(
                                     pdf_path,
                                     service_type,
-                                    self._cfg.get(CONF_OCRSPACE_API_KEY, ""),
+                                    "",
                                     json_dir=self._json_dir,
                                 )
                                 latest_attributes.update(pdf_attrs)
@@ -1611,7 +1610,7 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
           70  – pdfminer text layer (may have font-encoding errors)
           85  – OCR (OCR.space cloud API) — more accurate for image-backed PDFs
           60  – derived/calculated from other extracted values
-         100  – user-supplied correction (learning override via ``set_value``)
+         100  – user-supplied correction (manual override via ``set_value``)
         """
         return self._get_extracted_attrs().get("_confidence", {}).get(attr_key)
 

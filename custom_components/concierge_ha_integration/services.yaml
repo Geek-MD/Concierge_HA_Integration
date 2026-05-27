@@ -36,14 +36,14 @@ recalculate:
           integration: concierge_ha_integration
 
 set_value:
-  name: "Set Value (Learning Override)"
+  name: "Set Value (Manual Override)"
   description: >
     Forces a specific value for a named attribute of a Concierge service entity
-    and persists it as a learning override. The correction is applied immediately
-    and will be re-applied automatically after every future email/PDF analysis,
-    overriding any value extracted by pdfminer or OCR. Use this when the
-    automatic extraction produces a wrong value that cannot be corrected by
-    re-scanning (e.g. due to font-encoding errors in the PDF).
+    as a manual override. The correction is applied immediately in the
+    coordinator and can be propagated to formula sensors with Recalculate or
+    Force Refresh.
+    Use this when automatic extraction produces a wrong value that cannot be
+    corrected by re-scanning (e.g. due to font-encoding errors in the PDF).
     The overridden sensor will show extraction_confidence = 100.
     Formula-derived sensors (e.g. Total = Subtotal + Fixed Charge) are
     recalculated automatically when any of their inputs change.
