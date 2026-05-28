@@ -277,29 +277,26 @@ data:
 
 ## 📋 Prerequisites
 
-### Hot Water extraction (Tier 1 + OCR fallback)
+### Hot Water extraction (Tier 1)
 
 Five sensors under each **Gastos Comunes** device report Agua Caliente (hot water)
 data extracted from the same "Nota de Cobro" PDF:
 `hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
 `hot_water_prev_reading`, `hot_water_curr_reading`.
 
-The integration first uses the PDF text layer (Tier 1). If that layer is empty
-or incomplete, configure an **OCR.space API key** so it can fall back to OCR
-instead of leaving the Gastos Comunes / Agua Caliente sensors as `unknown`.
+The integration reads the PDF text layer directly (Tier 1) to populate these
+values. No OCR.space API key is required in the integration configuration.
 
 #### How the extraction pipeline works
 
 For every Gastos Comunes bill that arrives, the integration:
 
 1. **Read PDF text layer (Tier 1)** — `pdfminer` extracts the embedded text.
-2. **Fallback to OCR when needed** — if Tier 1 is incomplete, OCR.space is used
-   to recover the missing Gastos Comunes / Agua Caliente values.
-3. **Extract billing + hot-water fields** — values are parsed from the best
-   available source.
-4. **Finalize and derive fields** — aliases and computed values are applied
+2. **Extract billing + hot-water fields** — values are parsed from the PDF text
+   layer.
+3. **Finalize and derive fields** — aliases and computed values are applied
    (for example `gc_total`, `subtotal_consumo`, and fallback derivations).
-5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
+4. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
 
@@ -309,9 +306,7 @@ For every Gastos Comunes bill that arrives, the integration:
 
 ### Before you install
 
-An OCR.space API key is optional but recommended for Gastos Comunes / Agua
-Caliente, because some building PDFs do not expose a usable text layer and need
-OCR fallback to avoid `unknown` sensors.
+No OCR.space API key is required.
 
 ### Option 1: HACS (Recommended)
 
@@ -467,8 +462,7 @@ with five entities:
 - ✅ `set_value` manual-override service (v0.9.0): forces a correct value for any named attribute of a Concierge entity; entity picker is filtered to Concierge HA Integration only; `extraction_confidence` is set to 100 on overridden sensors (v0.9.3: entity selection moved to HA `target` so `attribute` and `value` render as proper form inputs in the UI; v0.9.4: restricted to exactly one entity per call; formula-derived sensors auto-recalculate when an input changes)
 - ✅ `force_refresh` service (v0.8.4): forces immediate email scan + PDF analysis for a single device; device picker is filtered to Concierge HA Integration only
 - ✅ Per-device *Force Refresh* button entity (v0.8.4): `button.concierge_{id}_force_refresh` appears in the device Configuration panel; pressing it triggers the same targeted refresh as the service
-- ✅ Agua Caliente sensors on the Gastos Comunes device (v0.9.5): five dedicated sensor entities (`consumption`, `cost_per_unit`, `amount`, `prev_reading`, `curr_reading`) are automatically created for every Gastos Comunes service and populated from the same "Nota de Cobro" PDF via OCR — no separate "Agua Caliente" service device is required or supported, since the hot-water data lives exclusively inside the Gastos Comunes email/PDF
-- ✅ **OCR.space cloud API as sole OCR engine (v1.0.2)**: removed RapidOCR (onnxruntime unavailable on HA OS) and Concierge Add-on fallback; users register for a free key at [ocr.space/OCRAPI](https://ocr.space/OCRAPI) and enter it during setup or via CONFIGURE
+- ✅ Agua Caliente sensors on the Gastos Comunes device (v0.9.5): five dedicated sensor entities (`consumption`, `cost_per_unit`, `amount`, `prev_reading`, `curr_reading`) are automatically created for every Gastos Comunes service and populated from the same "Nota de Cobro" PDF text layer — no separate "Agua Caliente" service device is required or supported, since the hot-water data lives exclusively inside the Gastos Comunes email/PDF
 - ✅ **Gastos Comunes PDF extraction generalised for any building (v1.1.0)**: alícuota, fondos, and building-total patterns were previously hard-coded to the reference building's values; they now match any building's Nota de Cobro regardless of alícuota magnitude, fondos percentage, or total size; the three-amounts fallback is scoped to the breakdown section to prevent false matches
 - ✅ **Forwarded-email detection fixed (v1.2.1)**: a new fifth strategy (`service-type-pattern-fallback`) iterates the canonical `SERVICE_PATTERNS` list so that Spanish-language keywords ("gastos comunes", "aguas andinas", "metrogas", …) are recognised regardless of the sender address, fixing cases where bills forwarded through Gmail or other generic webmail providers were silently missed
 - ✅ **Structured email-processing logs (v1.2.2)**: every mailbox scan now emits `INFO`-level entries for each matched email (from, subject, date, **detection strategy**), extracted attributes (email body and PDF), and PDF emission-date overrides; `DEBUG`-level entries cover every email evaluated and every non-match — see [Logging & Diagnostics](#-logging--diagnostics)
