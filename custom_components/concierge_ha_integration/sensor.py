@@ -56,7 +56,6 @@ from .attribute_extractor import (
     CONF_SCORE_OVERRIDE,
     extract_attributes_from_email_body,
     extract_attributes_from_pdf,
-    is_ocr_available,
     _strip_html,
 )
 from .pdf_downloader import delete_service_pdfs, download_pdf_from_email, purge_old_pdfs
@@ -702,48 +701,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return result
 
     def _manage_ocr_repair_issue(self) -> None:
-        """Create or clear the OCR-engine repair issue and persistent notification.
+        """Dismiss legacy OCR-space requirement notices.
 
-        When OCR is unavailable (no OCR.space API key configured) a Repair
-        issue and a persistent notification are raised to inform the user that
-        Agua Caliente sensor values cannot be extracted automatically and must
-        be entered manually.
-
-        Both are automatically resolved on the first successful OCR run.
+        OCR.space API key setup is no longer treated as a configuration
+        requirement, so previously raised notices are proactively cleared.
         """
-        ocr_state = is_ocr_available()
-        if ocr_state is False:
-            ir.async_create_issue(
-                self.hass,
-                DOMAIN,
-                "ocr_unavailable",
-                is_fixable=False,
-                is_persistent=False,
-                severity=ir.IssueSeverity.WARNING,
-                translation_key="ocr_unavailable",
-                translation_placeholders={
-                    "ocrspace_url": "https://ocr.space/OCRAPI",
-                },
-            )
-            persistent_notification.async_create(
-                self.hass,
-                message=(
-                    "No **OCR.space API key** is configured.\n\n"
-                    "OCR-based tasks cannot run — **Agua Caliente** (hot water) "
-                    "sensor values will need to be entered manually until an API "
-                    "key is set.\n\n"
-                    "To fix this, register for a free key at "
-                    "[ocr.space/OCRAPI](https://ocr.space/OCRAPI) and enter it "
-                    "in the integration options (**OCR.space API Key**)."
-                ),
-                title="Concierge — OCR engine unavailable",
-                notification_id=_OCR_NOTIFICATION_ID,
-            )
-        elif ocr_state is True:
-            ir.async_delete_issue(self.hass, DOMAIN, "ocr_unavailable")
-            persistent_notification.async_dismiss(
-                self.hass, _OCR_NOTIFICATION_ID
-            )
+        ir.async_delete_issue(self.hass, DOMAIN, "ocr_unavailable")
+        persistent_notification.async_dismiss(self.hass, _OCR_NOTIFICATION_ID)
 
     def _manage_gc_template_mismatch_notification(
         self, coordinator_data: dict[str, Any]

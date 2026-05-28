@@ -17,7 +17,6 @@ from .const import (
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
-    CONF_OCRSPACE_API_KEY,
     CONF_PASSWORD,
     CONF_SAMPLE_FROM,
     CONF_SAMPLE_SUBJECT,
@@ -139,7 +138,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
                 data={
                     **self._imap_data,
                     "friendly_name": friendly_name,
-                    CONF_OCRSPACE_API_KEY: user_input.get(CONF_OCRSPACE_API_KEY, ""),
                 },
             )
 
@@ -149,7 +147,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
                     "friendly_name",
                     default=self._imap_data[CONF_EMAIL],
                 ): str,
-                vol.Optional(CONF_OCRSPACE_API_KEY, default=""): str,
             }
         )
 
@@ -202,10 +199,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(
                     "friendly_name",
                     default=current.get("friendly_name", current.get(CONF_EMAIL, "")),
-                ): str,
-                vol.Optional(
-                    CONF_OCRSPACE_API_KEY,
-                    default=current.get(CONF_OCRSPACE_API_KEY, ""),
                 ): str,
             }
         )
