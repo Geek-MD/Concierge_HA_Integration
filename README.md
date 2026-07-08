@@ -97,11 +97,11 @@
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
   | `sensor.concierge_{id}_total` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
-  | `sensor.concierge_{id}_hot_water_consumption` | Sensor | — | Hot Water consumption (`m³`) — from PDF Tier 1 |
-  | `sensor.concierge_{id}_hot_water_cost_per_unit` | Sensor | — | Hot Water cost per m³ (`$/m³`) — from PDF Tier 1 |
-  | `sensor.concierge_{id}_hot_water_amount` | Sensor | — | Hot Water charge (`$`) — from PDF Tier 1 or derived |
-  | `sensor.concierge_{id}_hot_water_prev_reading` | Sensor | — | Hot Water previous meter reading (`m³`) — from PDF Tier 1 |
-  | `sensor.concierge_{id}_hot_water_curr_reading` | Sensor | — | Hot Water current meter reading (`m³`) — from PDF Tier 1 |
+  | `sensor.concierge_{id}_hot_water_consumption` | Sensor | — | Hot Water consumption (`m³`) — from addon OCR or PDF Tier 1 |
+  | `sensor.concierge_{id}_hot_water_cost_per_unit` | Sensor | — | Hot Water cost per m³ (`$/m³`) — from addon OCR or PDF Tier 1 |
+  | `sensor.concierge_{id}_hot_water_amount` | Sensor | — | Hot Water charge (`$`) — from addon OCR, PDF Tier 1, or derived |
+  | `sensor.concierge_{id}_hot_water_prev_reading` | Sensor | — | Hot Water previous meter reading (`m³`) — from addon OCR or PDF Tier 1 |
+  | `sensor.concierge_{id}_hot_water_curr_reading` | Sensor | — | Hot Water current meter reading (`m³`) — from addon OCR or PDF Tier 1 |
   | `button.concierge_{id}_force_refresh` | Button | Configuration | Triggers an immediate email + PDF re-scan for this device; recomputes derived sensors as its final step |
   | `button.concierge_{id}_recalculate` | Button | Configuration | Recomputes formula-derived sensors from already-stored values (no email scan) |
 
@@ -116,6 +116,13 @@
   (startup, discovery scans, automatic polling, force refresh, recalculate and
   `set_value`) are now written to the **Registro/Logbook** timeline under the
   dedicated domain `concierge_ha_tasks`.
+- 🔌 **Concierge addon integration** (v1.4.0): When the
+  [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and
+  running, **Gastos Comunes** and **Agua Caliente** PDF analysis automatically delegates
+  to the addon's OCR REST API (PaddleOCR) instead of the built-in pdfminer extractor,
+  improving accuracy on image-backed or non-standard PDFs.  If the addon is not installed
+  a **persistent notification** appears in Home Assistant suggesting its installation —
+  it disappears automatically once the addon is detected.
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
@@ -277,26 +284,45 @@ data:
 
 ## 📋 Prerequisites
 
-### Hot Water extraction (Tier 1)
+### Concierge OCR API addon (recommended)
+
+For the best extraction quality on **Gastos Comunes** and **Agua Caliente** PDFs,
+install the [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon).
+
+The addon runs a local PaddleOCR REST API on port `8099` that the integration
+automatically detects and uses.  Installation steps:
+
+1. Add the addon repository in Home Assistant:
+   **Settings → Add-ons → Add-on Store → ⋮ → Repositories →** add
+   `https://github.com/Geek-MD/Concierge_addon`
+2. Install **Concierge OCR API** and start it.
+3. The integration will automatically switch to addon-based OCR on the next
+   polling cycle (or after pressing **Force Refresh** on the device).
+
+> If the addon is not installed or not running, the integration falls back to
+> the internal pdfminer extractor and creates a persistent HA notification
+> suggesting installation.  The notification is dismissed automatically once
+> the addon is detected.
+
+### Hot Water extraction
 
 Five sensors under each **Gastos Comunes** device report Agua Caliente (hot water)
 data extracted from the same "Nota de Cobro" PDF:
 `hot_water_consumption`, `hot_water_cost_per_unit`, `hot_water_amount`,
 `hot_water_prev_reading`, `hot_water_curr_reading`.
 
-The integration reads the PDF text layer directly (Tier 1) to populate these
-values. No OCR.space API key is required in the integration configuration.
-
 #### How the extraction pipeline works
 
 For every Gastos Comunes bill that arrives, the integration:
 
-1. **Read PDF text layer (Tier 1)** — `pdfminer` extracts the embedded text.
-2. **Extract billing + hot-water fields** — values are parsed from the PDF text
-   layer.
-3. **Finalize and derive fields** — aliases and computed values are applied
+1. **Check addon availability** — the integration queries `http://localhost:8099/health`.
+   - **Addon available →** steps 2–3 use PaddleOCR via the addon REST API.
+   - **Addon not available →** steps 2–3 use the internal pdfminer extractor.
+2. **Extract PDF content** — text is obtained from the PDF (addon OCR or pdfminer).
+3. **Extract billing + hot-water fields** — values are parsed from the extracted text.
+4. **Finalize and derive fields** — aliases and computed values are applied
    (for example `gc_total`, `subtotal_consumo`, and fallback derivations).
-4. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
+5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
    are written to Home Assistant.
 
@@ -307,6 +333,11 @@ For every Gastos Comunes bill that arrives, the integration:
 ### Before you install
 
 No OCR.space API key is required.
+
+For the best Gastos Comunes / Hot Water OCR accuracy, also install the
+[Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon)
+(see [Prerequisites](#-prerequisites) above). It is optional — the integration
+works without it using the built-in pdfminer extractor.
 
 ### Option 1: HACS (Recommended)
 
@@ -467,9 +498,9 @@ with five entities:
 - ✅ **Forwarded-email detection fixed (v1.2.1)**: a new fifth strategy (`service-type-pattern-fallback`) iterates the canonical `SERVICE_PATTERNS` list so that Spanish-language keywords ("gastos comunes", "aguas andinas", "metrogas", …) are recognised regardless of the sender address, fixing cases where bills forwarded through Gmail or other generic webmail providers were silently missed
 - ✅ **Structured email-processing logs (v1.2.2)**: every mailbox scan now emits `INFO`-level entries for each matched email (from, subject, date, **detection strategy**), extracted attributes (email body and PDF), and PDF emission-date overrides; `DEBUG`-level entries cover every email evaluated and every non-match — see [Logging & Diagnostics](#-logging--diagnostics)
 - ✅ **Registro/Logbook task timeline (v1.3.10)**: the integration now publishes task entries to Home Assistant Logbook under `concierge_ha_tasks` for startup, discovery, automatic IMAP polling, force refresh, recalculate and manual `set_value` operations
+- ✅ **Concierge addon integration (v1.4.0)**: when the [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and running at `http://localhost:8099`, Gastos Comunes and Agua Caliente PDF analysis delegates to the addon's PaddleOCR REST API instead of the internal pdfminer extractor; a persistent HA notification is created when the addon is not detected, and dismissed automatically once it becomes available
 
 ### 🔮 Future Enhancements
-- Persistent notifications for detected services
 - Enhanced attribute display in sensor states
 - Historical billing data tracking
 - Consumption trends and analytics
@@ -516,6 +547,7 @@ without enabling verbose logger output.
 | `INFO` | Email **matched** — shows which strategy triggered it | `Concierge Services [Gas]: email matched via strategy 'sender-domain' — from='facturas@metrogas.cl', subject='Boleta Marzo 2026', date='...'` |
 | `INFO` | Attributes extracted from the email body | `Concierge Services [Gas]: attributes extracted from email body — total_amount=45230, consumption=18.3` |
 | `INFO` | PDF attachment found and being processed | `Concierge Services [Common Expenses]: PDF found at '/config/.../gc_2026-04.pdf' — extracting additional attributes` |
+| `INFO` | Addon OCR API used for PDF analysis | `Concierge Services [Common Expenses]: using Concierge addon OCR API for PDF '/config/.../gc_2026-04.pdf'` |
 | `INFO` | Attributes extracted from the PDF | `Concierge Services [Common Expenses]: attributes extracted from PDF — subtotal=95000, cargo_fijo=9638, ...` |
 | `INFO` | `last_updated` overridden with the PDF's issue date | `Concierge Services [Common Expenses]: last_updated overridden with PDF emission date '15-04-2026'` |
 | `DEBUG` | Matching email found but no PDF attachment | `Concierge Services [Gas]: no PDF attachment found in matching email` |

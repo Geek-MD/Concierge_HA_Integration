@@ -8,6 +8,9 @@ import json
 import logging
 from pathlib import Path
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
@@ -29,6 +32,8 @@ from homeassistant.helpers.update_coordinator import (
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ADDON_API_URL,
+    ADDON_NOTIFICATION_ID,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -54,6 +59,7 @@ from .const import (
 from .attribute_extractor import (
     CONF_SCORE_DERIVED,
     CONF_SCORE_OVERRIDE,
+    extract_attributes_from_addon_ocr_json,
     extract_attributes_from_email_body,
     extract_attributes_from_pdf,
     _strip_html,
@@ -396,6 +402,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._pdf_dir: str = hass.config.path(PDF_SUBDIR)
         self._json_dir: str = hass.config.path(JSON_SUBDIR)
         self._gc_template_alert_fingerprint: str | None = None
+        # Tracks whether the Concierge addon is available. None = not yet checked.
+        self._addon_available: bool | None = None
 
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
@@ -673,6 +681,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from IMAP server."""
         async_log_task(self.hass, "Ciclo automático de lectura de correos iniciado")
+
+        # Check Concierge addon availability once per update cycle and manage
+        # the persistent notification that guides users to install it.
+        await self._async_manage_addon_notification()
+
         try:
             result = await self.hass.async_add_executor_job(self._fetch_service_data)
         except Exception as err:
@@ -708,6 +721,98 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         ir.async_delete_issue(self.hass, DOMAIN, "ocr_unavailable")
         persistent_notification.async_dismiss(self.hass, _OCR_NOTIFICATION_ID)
+
+    @staticmethod
+    def _sync_check_addon(addon_url: str) -> bool:
+        """Check the Concierge addon health endpoint synchronously (runs in executor).
+
+        Returns ``True`` when the addon is reachable and reports ``{"status": "ok"}``.
+        """
+        try:
+            req = urllib.request.Request(
+                f"{addon_url}/health",
+                method="GET",
+                headers={"Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+                if resp.status != 200:
+                    return False
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("status") == "ok"
+        except Exception:  # pylint: disable=broad-except
+            return False
+
+    @staticmethod
+    def _sync_ocr_pdf_via_addon(pdf_path: str, addon_url: str = ADDON_API_URL) -> dict[str, Any]:
+        """Submit *pdf_path* to the Concierge addon OCR API synchronously.
+
+        Calls ``POST {addon_url}/ocr/source`` with ``source_type=local_path`` and
+        ``source_value=<pdf_path>``.  Returns the parsed JSON response dict, or an
+        empty dict when the call fails.
+
+        This is designed to be called from an executor thread (blocking I/O).
+        """
+        try:
+            data = urllib.parse.urlencode(
+                {"source_type": "local_path", "source_value": pdf_path}
+            ).encode("utf-8")
+            req = urllib.request.Request(
+                f"{addon_url}/ocr/source",
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=90) as resp:  # noqa: S310
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.debug(
+                "Concierge addon OCR call failed for '%s': %s", pdf_path, err
+            )
+            return {}
+
+    async def _async_manage_addon_notification(self) -> None:
+        """Check addon availability and create or dismiss the installation notice.
+
+        Calls the addon ``/health`` endpoint in an executor thread.  When the
+        addon is not reachable a persistent notification is created suggesting
+        installation; when it becomes available the notification is dismissed.
+        """
+        was_available = self._addon_available
+        self._addon_available = await self.hass.async_add_executor_job(
+            self._sync_check_addon, ADDON_API_URL
+        )
+
+        if not self._addon_available:
+            if was_available is not False:
+                # First time we detect the addon is absent — create notification.
+                _LOGGER.info(
+                    "Concierge Services: Concierge addon not detected at %s; "
+                    "creating installation notice",
+                    ADDON_API_URL,
+                )
+                persistent_notification.async_create(
+                    self.hass,
+                    title="Concierge — Addon de OCR no instalado",
+                    message=(
+                        "La integración Concierge HA detectó que el addon **Concierge OCR API** "
+                        "no está instalado o no está en ejecución.\n\n"
+                        "Para mejorar la extracción de datos de **Gastos Comunes** y **Agua "
+                        "Caliente**, instala el addon desde el repositorio:\n\n"
+                        "[https://github.com/Geek-MD/Concierge_addon]"
+                        "(https://github.com/Geek-MD/Concierge_addon)\n\n"
+                        "Una vez instalado y en ejecución, esta notificación desaparecerá "
+                        "automáticamente."
+                    ),
+                    notification_id=ADDON_NOTIFICATION_ID,
+                )
+        else:
+            if was_available is not True:
+                _LOGGER.info(
+                    "Concierge Services: Concierge addon detected at %s; "
+                    "using addon OCR for common-expenses and hot-water PDFs",
+                    ADDON_API_URL,
+                )
+            persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
 
     def _manage_gc_template_mismatch_notification(
         self, coordinator_data: dict[str, Any]
@@ -1296,12 +1401,54 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 # Extract additional attributes from the
                                 # PDF (e.g. consumption for Metrogas).
                                 # PDF values override email-derived values.
-                                pdf_attrs = extract_attributes_from_pdf(
-                                    pdf_path,
-                                    service_type,
-                                    str(self._cfg.get(CONF_OCRSPACE_API_KEY, "")),
-                                    json_dir=self._json_dir,
+                                #
+                                # For common_expenses and hot_water: when the
+                                # Concierge addon is available use its OCR API
+                                # instead of the internal pdfminer extractor.
+                                use_addon = (
+                                    self._addon_available is True
+                                    and service_type in (
+                                        SERVICE_TYPE_COMMON_EXPENSES,
+                                        SERVICE_TYPE_HOT_WATER,
+                                    )
                                 )
+                                if use_addon:
+                                    _LOGGER.info(
+                                        "Concierge Services [%s]: using Concierge "
+                                        "addon OCR API for PDF '%s'",
+                                        service_name,
+                                        pdf_path,
+                                    )
+                                    addon_ocr_json = self._sync_ocr_pdf_via_addon(
+                                        pdf_path
+                                    )
+                                    if addon_ocr_json:
+                                        pdf_attrs = extract_attributes_from_addon_ocr_json(
+                                            addon_ocr_json,
+                                            pdf_path=pdf_path,
+                                            json_dir=self._json_dir,
+                                        )
+                                    else:
+                                        _LOGGER.warning(
+                                            "Concierge Services [%s]: addon OCR "
+                                            "returned empty result for '%s'; "
+                                            "falling back to internal extractor",
+                                            service_name,
+                                            pdf_path,
+                                        )
+                                        pdf_attrs = extract_attributes_from_pdf(
+                                            pdf_path,
+                                            service_type,
+                                            str(self._cfg.get(CONF_OCRSPACE_API_KEY, "")),
+                                            json_dir=self._json_dir,
+                                        )
+                                else:
+                                    pdf_attrs = extract_attributes_from_pdf(
+                                        pdf_path,
+                                        service_type,
+                                        str(self._cfg.get(CONF_OCRSPACE_API_KEY, "")),
+                                        json_dir=self._json_dir,
+                                    )
                                 latest_attributes.update(pdf_attrs)
 
                                 pdf_attr_keys = [
