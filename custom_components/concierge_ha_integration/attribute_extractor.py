@@ -3057,6 +3057,122 @@ def _extract_common_expenses_pdf_attributes(
 
 
 # ---------------------------------------------------------------------------
+# Concierge addon OCR JSON helpers
+# ---------------------------------------------------------------------------
+
+def _addon_ocr_json_to_ocrspace_format(
+    addon_json: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Convert Concierge addon OCR JSON to a pseudo OCR.space ParsedResults format.
+
+    The Concierge addon (https://github.com/Geek-MD/Concierge_addon) returns:
+    ``{"page_count": N, "pages": [{"page": 1, "lines": [{"text": "...",
+    "confidence": 0.99, "box": [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]}], "text":
+    "..."}], "text": "..."}``.
+
+    This function maps each page/line to an OCR.space ``ParsedResults`` entry so
+    that the existing :func:`_build_gc_ocr_pages` / template-guided extraction
+    pipeline can process addon results without modification.
+
+    Args:
+        addon_json: The full JSON object returned by the addon ``/ocr/source``
+                    (or ``/ocr``) endpoint.
+
+    Returns:
+        A list of pseudo ``ParsedResults`` dicts that :func:`_build_gc_ocr_pages`
+        accepts; one entry per page in the addon response.
+    """
+    pages_data = addon_json.get("pages", [])
+    if not isinstance(pages_data, list):
+        return []
+
+    parsed_results: list[dict[str, Any]] = []
+    for page_data in pages_data:
+        if not isinstance(page_data, dict):
+            continue
+        lines_data = page_data.get("lines", [])
+        overlay_lines: list[dict[str, Any]] = []
+
+        for line_data in lines_data:
+            if not isinstance(line_data, dict):
+                continue
+            text = str(line_data.get("text", "")).strip()
+            if not text:
+                continue
+            # box: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]] clockwise from top-left
+            box = line_data.get("box", [])
+            if isinstance(box, list) and len(box) >= 4:
+                xs = [pt[0] for pt in box if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+                ys = [pt[1] for pt in box if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+                min_left = float(min(xs)) if xs else 0.0
+                min_top = float(min(ys)) if ys else 0.0
+                width = float(max(xs) - min_left) if xs else float(len(text)) * _OCR_FALLBACK_CHAR_WIDTH
+                height = float(max(ys) - min_top) if ys else _OCR_MIN_DIMENSION
+            else:
+                min_left = 0.0
+                min_top = 0.0
+                width = float(len(text)) * _OCR_FALLBACK_CHAR_WIDTH
+                height = _OCR_MIN_DIMENSION
+
+            overlay_lines.append({
+                "LineText": text,
+                "MinLeft": min_left,
+                "MinTop": min_top,
+                "Width": max(width, _OCR_MIN_DIMENSION),
+                "MaxHeight": max(height, _OCR_MIN_DIMENSION),
+                "Words": [],  # No word-level data in addon response
+            })
+
+        parsed_results.append({
+            "ParsedText": str(page_data.get("text", "")),
+            "Overlay": {"Lines": overlay_lines},
+        })
+
+    return parsed_results
+
+
+def extract_attributes_from_addon_ocr_json(
+    addon_json: dict[str, Any],
+    pdf_path: str = "",
+    json_dir: str = "",
+) -> dict[str, Any]:
+    """Extract common-expenses/hot-water attributes from a Concierge addon OCR response.
+
+    Converts the addon's ``/ocr/source`` response JSON to the internal page format
+    and runs the same template-guided extraction used for OCR.space results.
+
+    Args:
+        addon_json: Full JSON object returned by the addon ``/ocr/source`` endpoint.
+        pdf_path:   Source PDF path (used only for logging).
+        json_dir:   Directory where an OCR JSON snapshot may be saved (unused here,
+                    kept for API symmetry with :func:`extract_attributes_from_pdf`).
+
+    Returns:
+        Attribute dictionary in the same format as
+        :func:`_extract_common_expenses_pdf_attributes`.
+    """
+    parsed_results = _addon_ocr_json_to_ocrspace_format(addon_json)
+    if not parsed_results:
+        _LOGGER.debug(
+            "Concierge addon OCR response for '%s' contained no usable pages", pdf_path
+        )
+        return {}
+
+    _LOGGER.info(
+        "Concierge addon: extracting GC attributes from OCR JSON (%d page(s)) for '%s'",
+        len(parsed_results),
+        pdf_path,
+    )
+    attrs = _extract_common_expenses_from_ocr_json(parsed_results)
+    # Mark all extracted values with the addon's OCR confidence score.
+    confidence = attrs.setdefault("_confidence", {})
+    for key in list(attrs):
+        if not key.startswith("_") and key not in confidence:
+            confidence[key] = CONF_SCORE_OCR
+    return attrs
+
+
+# ---------------------------------------------------------------------------
 # Routing helpers
 # ---------------------------------------------------------------------------
 

@@ -42,3 +42,10 @@ JSON_MAX_FILES = 5
 # (https://ocr.space/OCRAPI). The free tier key is "helloworld" (rate-limited);
 # register at https://ocr.space/OCRAPI for a higher-quota free key.
 CONF_OCRSPACE_API_KEY = "ocrspace_api_key"
+
+# Concierge addon (https://github.com/Geek-MD/Concierge_addon)
+# When installed, the addon exposes an OCR REST API used to analyse
+# common-expenses and hot-water PDFs instead of the internal extractor.
+ADDON_SLUG = "concierge_ocr"
+ADDON_API_URL = "http://localhost:8099"
+ADDON_NOTIFICATION_ID = "concierge_addon_not_installed"
