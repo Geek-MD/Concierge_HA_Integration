@@ -37,6 +37,7 @@ from .const import (
     ADDON_API_URL,
     ADDON_NOTIFICATION_ID,
     ADDON_SLUG,
+    ADDON_STARTUP_DELAY_SECONDS,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -408,6 +409,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tracks whether the Concierge addon is available. None = not yet checked.
         self._addon_available: bool | None = None
         self._addon_api_url: str = ADDON_API_URL
+        # Timestamp of coordinator creation — used to enforce a startup grace
+        # period before the "addon not installed" notification is shown.
+        self._init_time = dt_util.utcnow()
 
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
@@ -816,6 +820,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         addon is absent or stopped a persistent notification is created
         suggesting installation; when it becomes available the notification is
         dismissed.
+
+        A startup grace period of ``ADDON_STARTUP_DELAY_SECONDS`` is observed
+        before the "not installed" notification is created, so that a freshly
+        installed addon has time to start before being considered absent.
         """
         was_available = self._addon_available
         addon_detected, supervisor_addon_url = self._get_supervisor_addon_status()
@@ -837,8 +845,24 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 break
 
         if not self._addon_available and not addon_detected:
+            # Check whether we are still within the startup grace period.
+            elapsed = (dt_util.utcnow() - self._init_time).total_seconds()
+            if elapsed < ADDON_STARTUP_DELAY_SECONDS:
+                _LOGGER.debug(
+                    "Concierge Services: addon not yet detected at %s; "
+                    "suppressing notification during startup grace period "
+                    "(%.0f s / %d s elapsed)",
+                    candidate_urls,
+                    elapsed,
+                    ADDON_STARTUP_DELAY_SECONDS,
+                )
+                # Reset to None so the notification is created on the next
+                # check once the grace period has expired.
+                self._addon_available = None
+                return
             if was_available is not False:
-                # First time we detect the addon is absent — create notification.
+                # First time we detect the addon is absent after the grace
+                # period — create notification.
                 _LOGGER.info(
                     "Concierge Services: Concierge addon not detected at %s; "
                     "creating installation notice",

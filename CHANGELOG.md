@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-07-09
+
+### Fixed
+
+- **Startup grace period before showing "addon not installed" notification**
+  (`sensor.py`, `const.py`, `manifest.json`):
+
+  The persistent notification that warns about the Concierge OCR addon not
+  being installed was being shown immediately on every HA start, even when the
+  addon was installed and simply had not finished starting yet. A 180-second
+  startup grace period is now observed before the notification is created, so
+  that the addon has enough time to initialise before being considered absent.
+
 ## [1.4.1] - 2026-07-09
 
 ### Fixed
