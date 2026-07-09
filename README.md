@@ -315,7 +315,7 @@ data extracted from the same "Nota de Cobro" PDF:
 
 For every Gastos Comunes bill that arrives, the integration:
 
-1. **Check addon availability** — the integration queries `http://localhost:8099/health`.
+1. **Check addon availability** — on Home Assistant Supervisor installs, the integration checks the `concierge_ocr` addon state from Supervisor metadata first and then probes the addon's health endpoint using the addon hostname when available (falling back to `http://localhost:8099/health` outside Supervisor).
    - **Addon available →** steps 2–3 use PaddleOCR via the addon REST API.
    - **Addon not available →** steps 2–3 use the internal pdfminer extractor.
 2. **Extract PDF content** — text is obtained from the PDF (addon OCR or pdfminer).
@@ -498,7 +498,7 @@ with five entities:
 - ✅ **Forwarded-email detection fixed (v1.2.1)**: a new fifth strategy (`service-type-pattern-fallback`) iterates the canonical `SERVICE_PATTERNS` list so that Spanish-language keywords ("gastos comunes", "aguas andinas", "metrogas", …) are recognised regardless of the sender address, fixing cases where bills forwarded through Gmail or other generic webmail providers were silently missed
 - ✅ **Structured email-processing logs (v1.2.2)**: every mailbox scan now emits `INFO`-level entries for each matched email (from, subject, date, **detection strategy**), extracted attributes (email body and PDF), and PDF emission-date overrides; `DEBUG`-level entries cover every email evaluated and every non-match — see [Logging & Diagnostics](#-logging--diagnostics)
 - ✅ **Registro/Logbook task timeline (v1.3.10)**: the integration now publishes task entries to Home Assistant Logbook under `concierge_ha_tasks` for startup, discovery, automatic IMAP polling, force refresh, recalculate and manual `set_value` operations
-- ✅ **Concierge addon integration (v1.4.0)**: when the [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and running at `http://localhost:8099`, Gastos Comunes and Agua Caliente PDF analysis delegates to the addon's PaddleOCR REST API instead of the internal pdfminer extractor; a persistent HA notification is created when the addon is not detected, and dismissed automatically once it becomes available
+- ✅ **Concierge addon integration (v1.4.1)**: when the [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and running, Gastos Comunes and Agua Caliente PDF analysis delegates to the addon's PaddleOCR REST API instead of the internal pdfminer extractor; detection is now Supervisor-aware and the persistent HA notification is dismissed correctly on Supervisor-based installs
 
 ### 🔮 Future Enhancements
 - Enhanced attribute display in sensor states

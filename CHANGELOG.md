@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is automatically dismissed when it is detected as operational, improving the
   diagnostic and configuration flow for Home Assistant users.
 
+## [1.4.1] - 2026-07-09
+
+### Fixed
+
+- **Supervisor-aware Concierge addon detection**
+  (`sensor.py`, `const.py`, `manifest.json`, `README.md`):
+
+  Addon detection now checks Home Assistant Supervisor metadata first, uses the
+  addon's reported hostname when available, and no longer relies only on
+  `http://localhost:8099/health` to decide whether the addon is installed and
+  running. This prevents false persistent notifications on Supervisor-based
+  installations.
+
 ## [1.3.12] - 2026-05-28
 
 ### Fixed

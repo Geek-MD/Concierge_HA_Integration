@@ -47,5 +47,6 @@ CONF_OCRSPACE_API_KEY = "ocrspace_api_key"
 # When installed, the addon exposes an OCR REST API used to analyse
 # common-expenses and hot-water PDFs instead of the internal extractor.
 ADDON_SLUG = "concierge_ocr"
+ADDON_API_PORT = 8099
 ADDON_API_URL = "http://localhost:8099"
 ADDON_NOTIFICATION_ID = "concierge_addon_not_installed"

@@ -23,6 +23,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.hassio import is_hassio
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -32,8 +33,10 @@ from homeassistant.helpers.update_coordinator import (
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ADDON_API_PORT,
     ADDON_API_URL,
     ADDON_NOTIFICATION_ID,
+    ADDON_SLUG,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -404,6 +407,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._gc_template_alert_fingerprint: str | None = None
         # Tracks whether the Concierge addon is available. None = not yet checked.
         self._addon_available: bool | None = None
+        self._addon_api_url: str = ADDON_API_URL
 
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
@@ -742,6 +746,40 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:  # pylint: disable=broad-except
             return False
 
+    def _get_supervisor_addon_url(self) -> str | None:
+        """Return the Supervisor-provided addon URL when available and started."""
+        if not is_hassio(self.hass):
+            return None
+
+        try:
+            from homeassistant.components.hassio import get_addons_info
+        except ImportError:
+            return None
+
+        addons = get_addons_info(self.hass) or {}
+        addon_info = addons.get(ADDON_SLUG)
+        if not isinstance(addon_info, dict):
+            return None
+
+        addon_state = str(addon_info.get("state", "")).lower()
+        if addon_state != "started":
+            _LOGGER.debug(
+                "Concierge Services: addon '%s' present in Supervisor but state is '%s'",
+                ADDON_SLUG,
+                addon_state or "unknown",
+            )
+            return None
+
+        hostname = addon_info.get("hostname")
+        if isinstance(hostname, str) and hostname:
+            return f"http://{hostname}:{ADDON_API_PORT}"
+
+        _LOGGER.debug(
+            "Concierge Services: addon '%s' started but Supervisor reported no hostname",
+            ADDON_SLUG,
+        )
+        return ADDON_API_URL
+
     @staticmethod
     def _sync_ocr_pdf_via_addon(pdf_path: str, addon_url: str = ADDON_API_URL) -> dict[str, Any]:
         """Submit *pdf_path* to the Concierge addon OCR API synchronously.
@@ -778,9 +816,33 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         installation; when it becomes available the notification is dismissed.
         """
         was_available = self._addon_available
-        self._addon_available = await self.hass.async_add_executor_job(
-            self._sync_check_addon, ADDON_API_URL
-        )
+        supervisor_addon_url = self._get_supervisor_addon_url()
+        candidate_urls: list[str] = []
+        if supervisor_addon_url:
+            candidate_urls.append(supervisor_addon_url)
+        if ADDON_API_URL not in candidate_urls:
+            candidate_urls.append(ADDON_API_URL)
+
+        self._addon_available = False
+        self._addon_api_url = candidate_urls[0]
+        for candidate_url in candidate_urls:
+            addon_health_ok = await self.hass.async_add_executor_job(
+                self._sync_check_addon, candidate_url
+            )
+            if addon_health_ok:
+                self._addon_available = True
+                self._addon_api_url = candidate_url
+                break
+
+        if not self._addon_available and supervisor_addon_url:
+            self._addon_available = True
+            self._addon_api_url = supervisor_addon_url
+            _LOGGER.debug(
+                "Concierge Services: addon '%s' is started in Supervisor but health "
+                "checks failed for %s",
+                ADDON_SLUG,
+                candidate_urls,
+            )
 
         if not self._addon_available:
             if was_available is not False:
@@ -788,7 +850,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.info(
                     "Concierge Services: Concierge addon not detected at %s; "
                     "creating installation notice",
-                    ADDON_API_URL,
+                    candidate_urls,
                 )
                 persistent_notification.async_create(
                     self.hass,
@@ -810,7 +872,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.info(
                     "Concierge Services: Concierge addon detected at %s; "
                     "using addon OCR for common-expenses and hot-water PDFs",
-                    ADDON_API_URL,
+                    self._addon_api_url,
                 )
             persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
 
@@ -1420,7 +1482,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         pdf_path,
                                     )
                                     addon_ocr_json = self._sync_ocr_pdf_via_addon(
-                                        pdf_path
+                                        pdf_path, self._addon_api_url
                                     )
                                     if addon_ocr_json:
                                         pdf_attrs = extract_attributes_from_addon_ocr_json(
