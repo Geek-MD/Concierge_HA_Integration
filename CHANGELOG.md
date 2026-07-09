@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-07-09
+
+### Fixed
+
+- **Explicit Concierge addon lifecycle handling for install, stopped, starting and timeout states**
+  (`sensor.py`, `const.py`, `manifest.json`, `README.md`):
+
+  The integration now distinguishes between the Concierge OCR addon being not
+  installed, installed but not running, still starting, and fully ready. The
+  old fixed 180-second startup grace period was replaced with Supervisor-aware
+  lifecycle handling plus a 5-minute startup timeout: notifications now appear
+  immediately when the addon is absent or stopped, stay suppressed while the
+  addon is still starting, and switch to a dedicated startup-problem notice if
+  `/health` still does not become ready within 5 minutes.
+
 ## [1.4.2] - 2026-07-09
 
 ### Fixed
