@@ -409,6 +409,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tracks whether the Concierge addon is available. None = not yet checked.
         self._addon_available: bool | None = None
         self._addon_api_url: str = ADDON_API_URL
+        # Timestamp when the addon first entered a starting/started-but-unready
+        # state so we can enforce the 5-minute startup timeout.
         self._addon_start_wait_since: datetime | None = None
 
     async def async_set_manual_value(
@@ -769,6 +771,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         addons = get_addons_info(self.hass) or {}
         if not isinstance(addons, dict):
+            _LOGGER.debug(
+                "Concierge Services: Supervisor returned unexpected addons metadata type: %s",
+                type(addons).__name__,
+            )
             return ("unknown", None)
 
         addon_info = addons.get(ADDON_SLUG)
