@@ -9,22 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Integración opcional con el addon Concierge OCR API para PDF de Gastos Comunes/Agua Caliente**
+- **Optional integration with the Concierge OCR API addon for Gastos Comunes/Agua Caliente PDFs**
   (`sensor.py`, `attribute_extractor.py`, `const.py`, `README.md`):
 
-  Cuando el addon `concierge_ocr` está disponible en `http://localhost:8099`, la
-  integración delega el OCR de PDFs al endpoint del addon (`/ocr/source`) y
-  reutiliza el pipeline existente de extracción convirtiendo la respuesta del
-  addon al formato interno esperado.
+  When the `concierge_ocr` addon is available at `http://localhost:8099`, the
+  integration delegates PDF OCR to the addon endpoint (`/ocr/source`) and
+  reuses the existing extraction pipeline by converting the addon response to
+  the expected internal format.
 
 ### Changed
 
-- **Notificación persistente para guiar instalación del addon OCR**
+- **Persistent notification to guide OCR addon installation**
   (`sensor.py`, `const.py`, `README.md`):
 
-  Ahora se crea una notificación persistente cuando el addon no está disponible
-  y se descarta automáticamente al detectarlo operativo, mejorando el flujo de
-  diagnóstico y configuración para usuarios de Home Assistant.
+  A persistent notification is now created when the addon is not available and
+  is automatically dismissed when it is detected as operational, improving the
+  diagnostic and configuration flow for Home Assistant users.
 
 ## [1.3.12] - 2026-05-28
 
