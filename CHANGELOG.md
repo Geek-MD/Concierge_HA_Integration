@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-07-09
+
+### Fixed
+
+- **Supervisor-aware Concierge addon detection**
+  (`sensor.py`, `const.py`, `manifest.json`, `README.md`):
+
+  Addon detection now checks Home Assistant Supervisor metadata first, uses the
+  addon's reported hostname when available, and no longer relies only on
+  `http://localhost:8099/health` to decide whether the addon is installed and
+  running. This prevents false persistent notifications on Supervisor-based
+  installations.
+
 ## [1.4.0] - 2026-07-08
 
 ### Added
