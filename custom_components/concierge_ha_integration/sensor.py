@@ -819,6 +819,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         was_available = self._addon_available
         supervisor_addon_url = self._get_supervisor_addon_url()
+        addon_detected = supervisor_addon_url is not None
         candidate_urls: list[str] = []
         if supervisor_addon_url:
             candidate_urls.append(supervisor_addon_url)
@@ -836,17 +837,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._addon_api_url = candidate_url
                 break
 
-        if not self._addon_available and supervisor_addon_url:
-            self._addon_available = True
-            self._addon_api_url = supervisor_addon_url
-            _LOGGER.debug(
-                "Concierge Services: addon '%s' is started in Supervisor but health "
-                "checks failed for %s",
-                ADDON_SLUG,
-                candidate_urls,
-            )
-
-        if not self._addon_available:
+        if not self._addon_available and not addon_detected:
             if was_available is not False:
                 # First time we detect the addon is absent — create notification.
                 _LOGGER.info(
@@ -870,7 +861,15 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     notification_id=ADDON_NOTIFICATION_ID,
                 )
         else:
-            if was_available is not True:
+            if addon_detected and not self._addon_available:
+                _LOGGER.info(
+                    "Concierge Services: addon '%s' is started in Supervisor but "
+                    "its health endpoint failed at %s; suppressing install notice "
+                    "and keeping internal extractor as fallback",
+                    ADDON_SLUG,
+                    candidate_urls,
+                )
+            elif was_available is not True:
                 _LOGGER.info(
                     "Concierge Services: Concierge addon detected at %s; "
                     "using addon OCR for common-expenses and hot-water PDFs",
