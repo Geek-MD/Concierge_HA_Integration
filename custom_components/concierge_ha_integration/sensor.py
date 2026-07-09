@@ -811,9 +811,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_manage_addon_notification(self) -> None:
         """Check addon availability and create or dismiss the installation notice.
 
-        Calls the addon ``/health`` endpoint in an executor thread.  When the
-        addon is not reachable a persistent notification is created suggesting
-        installation; when it becomes available the notification is dismissed.
+        Prefers Supervisor metadata on HA OS / Supervised installs, then probes
+        one or more addon ``/health`` endpoints in an executor thread. When the
+        addon is absent or stopped a persistent notification is created
+        suggesting installation; when it becomes available the notification is
+        dismissed.
         """
         was_available = self._addon_available
         supervisor_addon_url = self._get_supervisor_addon_url()
