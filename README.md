@@ -122,7 +122,9 @@
   to the addon's OCR REST API (PaddleOCR) instead of the built-in pdfminer extractor,
   improving accuracy on image-backed or non-standard PDFs.  If the addon is not installed
   a **persistent notification** appears in Home Assistant suggesting its installation —
-  it disappears automatically once the addon is detected.
+  it disappears automatically once the addon is detected.  A 3-minute startup grace period
+  (v1.4.2) prevents false notifications when the addon is installed but has not finished
+  starting yet.
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
@@ -302,7 +304,9 @@ automatically detects and uses.  Installation steps:
 > If the addon is not installed or not running, the integration falls back to
 > the internal pdfminer extractor and creates a persistent HA notification
 > suggesting installation.  The notification is dismissed automatically once
-> the addon is detected.
+> the addon is detected.  A **3-minute startup grace period** is observed on
+> every HA start, so that a freshly installed addon has time to initialise
+> before being considered absent.
 
 ### Hot Water extraction
 
@@ -499,6 +503,7 @@ with five entities:
 - ✅ **Structured email-processing logs (v1.2.2)**: every mailbox scan now emits `INFO`-level entries for each matched email (from, subject, date, **detection strategy**), extracted attributes (email body and PDF), and PDF emission-date overrides; `DEBUG`-level entries cover every email evaluated and every non-match — see [Logging & Diagnostics](#-logging--diagnostics)
 - ✅ **Registro/Logbook task timeline (v1.3.10)**: the integration now publishes task entries to Home Assistant Logbook under `concierge_ha_tasks` for startup, discovery, automatic IMAP polling, force refresh, recalculate and manual `set_value` operations
 - ✅ **Concierge addon integration (v1.4.1)**: when the [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and running, Gastos Comunes and Agua Caliente PDF analysis delegates to the addon's PaddleOCR REST API instead of the internal pdfminer extractor; detection is now Supervisor-aware and the persistent HA notification is dismissed correctly on Supervisor-based installs
+- ✅ **Addon startup grace period (v1.4.2)**: a 3-minute grace period is now observed after HA starts before the "addon not installed" persistent notification is created, preventing false positives when the addon is installed but has not finished starting yet
 
 ### 🔮 Future Enhancements
 - Enhanced attribute display in sensor states
