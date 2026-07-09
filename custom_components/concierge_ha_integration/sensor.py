@@ -746,20 +746,20 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:  # pylint: disable=broad-except
             return False
 
-    def _get_supervisor_addon_url(self) -> str | None:
-        """Return the Supervisor-provided addon URL when available and started."""
+    def _get_supervisor_addon_status(self) -> tuple[bool, str | None]:
+        """Return whether the Supervisor addon is started and its hostname URL."""
         if not is_hassio(self.hass):
-            return None
+            return (False, None)
 
         try:
             from homeassistant.components.hassio import get_addons_info
         except ImportError:
-            return None
+            return (False, None)
 
         addons = get_addons_info(self.hass) or {}
         addon_info = addons.get(ADDON_SLUG)
         if not isinstance(addon_info, dict):
-            return None
+            return (False, None)
 
         addon_state = str(addon_info.get("state", "")).lower()
         if addon_state != "started":
@@ -768,17 +768,17 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ADDON_SLUG,
                 addon_state or "unknown",
             )
-            return None
+            return (False, None)
 
         hostname = addon_info.get("hostname")
         if isinstance(hostname, str) and hostname:
-            return f"http://{hostname}:{ADDON_API_PORT}"
+            return (True, f"http://{hostname}:{ADDON_API_PORT}")
 
         _LOGGER.debug(
             "Concierge Services: addon '%s' started but Supervisor reported no hostname",
             ADDON_SLUG,
         )
-        return ADDON_API_URL
+        return (True, None)
 
     @staticmethod
     def _sync_ocr_pdf_via_addon(pdf_path: str, addon_url: str = ADDON_API_URL) -> dict[str, Any]:
@@ -818,8 +818,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         dismissed.
         """
         was_available = self._addon_available
-        supervisor_addon_url = self._get_supervisor_addon_url()
-        addon_detected = supervisor_addon_url is not None
+        addon_detected, supervisor_addon_url = self._get_supervisor_addon_status()
         candidate_urls: list[str] = []
         if supervisor_addon_url:
             candidate_urls.append(supervisor_addon_url)
@@ -827,7 +826,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             candidate_urls.append(ADDON_API_URL)
 
         self._addon_available = False
-        self._addon_api_url = candidate_urls[0]
+        self._addon_api_url = ADDON_API_URL
         for candidate_url in candidate_urls:
             addon_health_ok = await self.hass.async_add_executor_job(
                 self._sync_check_addon, candidate_url
