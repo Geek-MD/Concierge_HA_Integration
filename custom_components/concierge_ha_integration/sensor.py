@@ -749,7 +749,16 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return False
 
     def _get_supervisor_addon_status(self) -> tuple[str, str | None]:
-        """Return the Supervisor addon lifecycle state and its hostname URL."""
+        """Return the Supervisor addon lifecycle state and its hostname URL.
+
+        Lifecycle states:
+            - ``unsupported``: Home Assistant is not running with Supervisor.
+            - ``unknown``: Supervisor metadata could not be queried.
+            - ``not_installed``: The addon is absent from Supervisor metadata.
+            - ``starting``: Supervisor reports the addon is still starting.
+            - ``started``: Supervisor reports the addon has started.
+            - ``stopped``: The addon exists but is not currently running.
+        """
         if not is_hassio(self.hass):
             return ("unsupported", None)
 
