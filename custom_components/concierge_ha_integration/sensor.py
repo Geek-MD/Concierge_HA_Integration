@@ -891,7 +891,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 title="Concierge — Addon de OCR con problemas de inicio",
                 message=(
                     "La integración Concierge HA detectó que el addon **Concierge OCR API** "
-                    "lleva más de 5 minutos arrancando y aún no queda listo.\n\n"
+                    "lleva más de 5 minutos arrancando y aún no está listo.\n\n"
                     "Revisa el estado y los logs del addon en Home Assistant. Mientras "
                     "tanto, la integración seguirá usando el extractor interno como respaldo."
                 ),
@@ -930,7 +930,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 title="Concierge — Addon de OCR detenido",
                 message=(
                     "La integración Concierge HA detectó que el addon **Concierge OCR API** "
-                    "está instalado, pero no está arrancando ni en ejecución.\n\n"
+                    "está instalado, pero no está en ejecución.\n\n"
                     "Inícialo desde Home Assistant para habilitar el OCR mejorado de "
                     "**Gastos Comunes** y **Agua Caliente**."
                 ),
