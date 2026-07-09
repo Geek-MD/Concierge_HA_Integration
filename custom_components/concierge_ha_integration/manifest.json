@@ -1,6 +1,7 @@
 {
   "domain": "concierge_ha_integration",
   "name": "Concierge HA Integration",
+  "after_dependencies": ["hassio"],
   "codeowners": ["@Geek-MD"],
   "config_flow": true,
   "documentation": "https://github.com/Geek-MD/Concierge_HA_Integration",
@@ -10,7 +11,6 @@
   "requirements": [
     "pdfminer.six>=20221105"
   ],
-  "after_dependencies": ["hassio"],
   "single_config_entry": true,
   "version": "1.4.1"
 }
