@@ -50,7 +50,6 @@ ADDON_SLUG = "concierge_ocr"
 ADDON_API_PORT = 8099
 ADDON_API_URL = "http://localhost:8099"
 ADDON_NOTIFICATION_ID = "concierge_addon_not_installed"
-# Seconds to wait after integration startup before showing the "addon not
-# installed" notification.  This avoids false positives when the addon is
-# installed but has not finished starting up yet.
-ADDON_STARTUP_DELAY_SECONDS = 180
+# Maximum seconds to wait while the addon is reported as starting (or started
+# but still failing health checks) before raising a problem notification.
+ADDON_STARTUP_TIMEOUT_SECONDS = 300

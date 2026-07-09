@@ -116,15 +116,16 @@
   (startup, discovery scans, automatic polling, force refresh, recalculate and
   `set_value`) are now written to the **Registro/Logbook** timeline under the
   dedicated domain `concierge_ha_tasks`.
-- 🔌 **Concierge addon integration** (v1.4.0): When the
+- 🔌 **Concierge addon integration** (v1.4.3): When the
   [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and
   running, **Gastos Comunes** and **Agua Caliente** PDF analysis automatically delegates
   to the addon's OCR REST API (PaddleOCR) instead of the built-in pdfminer extractor,
-  improving accuracy on image-backed or non-standard PDFs.  If the addon is not installed
-  a **persistent notification** appears in Home Assistant suggesting its installation —
-  it disappears automatically once the addon is detected.  A 3-minute startup grace period
-  (v1.4.2) prevents false notifications when the addon is installed but has not finished
-  starting yet.
+  improving accuracy on image-backed or non-standard PDFs. If the addon is not installed,
+  or if it is installed but not running, a **persistent notification** appears in Home
+  Assistant immediately. If Supervisor reports that the addon is **starting** (or it is
+  already **started** but its `/health` endpoint is still not ready), the integration waits
+  up to **5 minutes** before raising a startup-problem notification. All addon notices
+  disappear automatically once the addon becomes healthy.
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):

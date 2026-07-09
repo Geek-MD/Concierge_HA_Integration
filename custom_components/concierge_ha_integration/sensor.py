@@ -37,7 +37,7 @@ from .const import (
     ADDON_API_URL,
     ADDON_NOTIFICATION_ID,
     ADDON_SLUG,
-    ADDON_STARTUP_DELAY_SECONDS,
+    ADDON_STARTUP_TIMEOUT_SECONDS,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -409,9 +409,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tracks whether the Concierge addon is available. None = not yet checked.
         self._addon_available: bool | None = None
         self._addon_api_url: str = ADDON_API_URL
-        # Timestamp of coordinator creation — used to enforce a startup grace
-        # period before the "addon not installed" notification is shown.
-        self._init_time = dt_util.utcnow()
+        # Timestamp when the addon first entered a starting/started-but-unready
+        # state so we can enforce the 5-minute startup timeout.
+        self._addon_start_wait_since: datetime | None = None
 
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
@@ -750,39 +750,62 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:  # pylint: disable=broad-except
             return False
 
-    def _get_supervisor_addon_status(self) -> tuple[bool, str | None]:
-        """Return whether the Supervisor addon is started and its hostname URL."""
+    def _get_supervisor_addon_status(self) -> tuple[str, str | None]:
+        """Return the Supervisor addon lifecycle state and its hostname URL.
+
+        Lifecycle states:
+            - ``unsupported``: Home Assistant is not running with Supervisor.
+            - ``unknown``: Supervisor metadata could not be queried.
+            - ``not_installed``: The addon is absent from Supervisor metadata.
+            - ``starting``: Supervisor reports the addon is still starting.
+            - ``started``: Supervisor reports the addon has started.
+            - ``stopped``: The addon exists but is not currently running.
+        """
         if not is_hassio(self.hass):
-            return (False, None)
+            return ("unsupported", None)
 
         try:
             from homeassistant.components.hassio import get_addons_info
         except ImportError:
-            return (False, None)
+            return ("unknown", None)
 
         addons = get_addons_info(self.hass) or {}
+        if not isinstance(addons, dict):
+            _LOGGER.debug(
+                "Concierge Services: Supervisor returned unexpected addons metadata type: %s",
+                type(addons).__name__,
+            )
+            return ("unknown", None)
+
         addon_info = addons.get(ADDON_SLUG)
         if not isinstance(addon_info, dict):
-            return (False, None)
+            return ("not_installed", None)
 
         addon_state = str(addon_info.get("state", "")).lower()
-        if addon_state != "started":
-            _LOGGER.debug(
-                "Concierge Services: addon '%s' present in Supervisor but state is '%s'",
-                ADDON_SLUG,
-                addon_state or "unknown",
-            )
-            return (False, None)
-
         hostname = addon_info.get("hostname")
-        if isinstance(hostname, str) and hostname:
-            return (True, f"http://{hostname}:{ADDON_API_PORT}")
+        addon_url = (
+            f"http://{hostname}:{ADDON_API_PORT}"
+            if isinstance(hostname, str) and hostname
+            else None
+        )
+
+        if addon_state == "started":
+            if addon_url is None:
+                _LOGGER.debug(
+                    "Concierge Services: addon '%s' started but Supervisor reported no hostname",
+                    ADDON_SLUG,
+                )
+            return ("started", addon_url)
+
+        if addon_state == "starting":
+            return ("starting", addon_url)
 
         _LOGGER.debug(
-            "Concierge Services: addon '%s' started but Supervisor reported no hostname",
+            "Concierge Services: addon '%s' present in Supervisor but state is '%s'",
             ADDON_SLUG,
+            addon_state or "unknown",
         )
-        return (True, None)
+        return ("stopped", addon_url)
 
     @staticmethod
     def _sync_ocr_pdf_via_addon(pdf_path: str, addon_url: str = ADDON_API_URL) -> dict[str, Any]:
@@ -813,20 +836,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return {}
 
     async def _async_manage_addon_notification(self) -> None:
-        """Check addon availability and create or dismiss the installation notice.
-
-        Prefers Supervisor metadata on HA OS / Supervised installs, then probes
-        one or more addon ``/health`` endpoints in an executor thread. When the
-        addon is absent or stopped a persistent notification is created
-        suggesting installation; when it becomes available the notification is
-        dismissed.
-
-        A startup grace period of ``ADDON_STARTUP_DELAY_SECONDS`` is observed
-        before the "not installed" notification is created, so that a freshly
-        installed addon has time to start before being considered absent.
-        """
+        """Check addon lifecycle state and manage notifications accordingly."""
         was_available = self._addon_available
-        addon_detected, supervisor_addon_url = self._get_supervisor_addon_status()
+        supervisor_state, supervisor_addon_url = self._get_supervisor_addon_status()
         candidate_urls: list[str] = []
         if supervisor_addon_url:
             candidate_urls.append(supervisor_addon_url)
@@ -844,61 +856,118 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._addon_api_url = candidate_url
                 break
 
-        if not self._addon_available and not addon_detected:
-            # Check whether we are still within the startup grace period.
-            elapsed = (dt_util.utcnow() - self._init_time).total_seconds()
-            if elapsed < ADDON_STARTUP_DELAY_SECONDS:
-                _LOGGER.debug(
-                    "Concierge Services: addon not yet detected at %s; "
-                    "suppressing notification during startup grace period "
-                    "(%.0f s / %d s elapsed)",
-                    candidate_urls,
-                    elapsed,
-                    ADDON_STARTUP_DELAY_SECONDS,
-                )
-                # Reset to None so the notification is created on the next
-                # check once the grace period has expired.
-                self._addon_available = None
-                return
-            if was_available is not False:
-                # First time we detect the addon is absent after the grace
-                # period — create notification.
-                _LOGGER.info(
-                    "Concierge Services: Concierge addon not detected at %s; "
-                    "creating installation notice",
-                    candidate_urls,
-                )
-                persistent_notification.async_create(
-                    self.hass,
-                    title="Concierge — Addon de OCR no instalado",
-                    message=(
-                        "La integración Concierge HA detectó que el addon **Concierge OCR API** "
-                        "no está instalado o no está en ejecución.\n\n"
-                        "Para mejorar la extracción de datos de **Gastos Comunes** y **Agua "
-                        "Caliente**, instala el addon desde el repositorio:\n\n"
-                        "[https://github.com/Geek-MD/Concierge_addon]"
-                        "(https://github.com/Geek-MD/Concierge_addon)\n\n"
-                        "Una vez instalado y en ejecución, esta notificación desaparecerá "
-                        "automáticamente."
-                    ),
-                    notification_id=ADDON_NOTIFICATION_ID,
-                )
-        else:
-            if addon_detected and not self._addon_available:
-                _LOGGER.info(
-                    "Concierge Services: addon '%s' is started in Supervisor but "
-                    "its health endpoint failed at %s; suppressing install notice "
-                    "and keeping internal extractor as fallback",
-                    ADDON_SLUG,
-                    candidate_urls,
-                )
-            elif was_available is not True:
+        if self._addon_available:
+            self._addon_start_wait_since = None
+            if was_available is not True:
                 _LOGGER.info(
                     "Concierge Services: Concierge addon detected at %s; "
                     "using addon OCR for common-expenses and hot-water PDFs",
                     self._addon_api_url,
                 )
             persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
+            return
+
+        now = dt_util.utcnow()
+
+        if supervisor_state in {"starting", "started"}:
+            if self._addon_start_wait_since is None:
+                self._addon_start_wait_since = now
+                _LOGGER.info(
+                    "Concierge Services: addon '%s' is %s but its health endpoint "
+                    "is not ready yet at %s; waiting up to %d seconds",
+                    ADDON_SLUG,
+                    supervisor_state,
+                    candidate_urls,
+                    ADDON_STARTUP_TIMEOUT_SECONDS,
+                )
+
+            elapsed = (now - self._addon_start_wait_since).total_seconds()
+            if elapsed < ADDON_STARTUP_TIMEOUT_SECONDS:
+                _LOGGER.debug(
+                    "Concierge Services: addon '%s' still starting at %s "
+                    "(%.0f s / %d s elapsed); suppressing notification",
+                    ADDON_SLUG,
+                    candidate_urls,
+                    elapsed,
+                    ADDON_STARTUP_TIMEOUT_SECONDS,
+                )
+                persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
+                return
+
+            _LOGGER.warning(
+                "Concierge Services: addon '%s' exceeded startup timeout at %s "
+                "(%.0f s elapsed)",
+                ADDON_SLUG,
+                candidate_urls,
+                elapsed,
+            )
+            persistent_notification.async_create(
+                self.hass,
+                title="Concierge — Addon de OCR con problemas de inicio",
+                message=(
+                    "La integración Concierge HA detectó que el addon **Concierge OCR API** "
+                    "lleva más de 5 minutos arrancando y aún no está listo.\n\n"
+                    "Revisa el estado y los logs del addon en Home Assistant. Mientras "
+                    "tanto, la integración seguirá usando el extractor interno como respaldo."
+                ),
+                notification_id=ADDON_NOTIFICATION_ID,
+            )
+            return
+
+        self._addon_start_wait_since = None
+
+        if supervisor_state == "not_installed":
+            _LOGGER.info(
+                "Concierge Services: Concierge addon not installed; creating notice"
+            )
+            persistent_notification.async_create(
+                self.hass,
+                title="Concierge — Addon de OCR no instalado",
+                message=(
+                    "La integración Concierge HA detectó que el addon **Concierge OCR API** "
+                    "no está instalado.\n\n"
+                    "Para mejorar la extracción de datos de **Gastos Comunes** y **Agua "
+                    "Caliente**, instala el addon desde el repositorio:\n\n"
+                    "[https://github.com/Geek-MD/Concierge_addon]"
+                    "(https://github.com/Geek-MD/Concierge_addon)\n\n"
+                    "Una vez instalado y listo, esta notificación desaparecerá automáticamente."
+                ),
+                notification_id=ADDON_NOTIFICATION_ID,
+            )
+            return
+
+        if supervisor_state == "stopped":
+            _LOGGER.info(
+                "Concierge Services: Concierge addon installed but not running; creating notice"
+            )
+            persistent_notification.async_create(
+                self.hass,
+                title="Concierge — Addon de OCR detenido",
+                message=(
+                    "La integración Concierge HA detectó que el addon **Concierge OCR API** "
+                    "está instalado, pero no está en ejecución.\n\n"
+                    "Inícialo desde Home Assistant para habilitar el OCR mejorado de "
+                    "**Gastos Comunes** y **Agua Caliente**."
+                ),
+                notification_id=ADDON_NOTIFICATION_ID,
+            )
+            return
+
+        _LOGGER.info(
+            "Concierge Services: addon not reachable at %s and Supervisor state is '%s'",
+            candidate_urls,
+            supervisor_state,
+        )
+        persistent_notification.async_create(
+            self.hass,
+            title="Concierge — Addon de OCR no disponible",
+            message=(
+                "La integración Concierge HA no pudo conectarse al addon **Concierge OCR API**.\n\n"
+                "Verifica que esté instalado y funcionando correctamente. Mientras tanto, "
+                "la integración seguirá usando el extractor interno como respaldo."
+            ),
+            notification_id=ADDON_NOTIFICATION_ID,
+        )
 
     def _manage_gc_template_mismatch_notification(
         self, coordinator_data: dict[str, Any]
