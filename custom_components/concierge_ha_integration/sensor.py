@@ -423,7 +423,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._ha_started = True
                 hass.async_create_task(
                     self.async_refresh(),
-                    "concierge_ha_integration addon check after ha start",
+                    "concierge_ha_integration_addon_check_after_ha_start",
                 )
 
             hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_ha_started)
