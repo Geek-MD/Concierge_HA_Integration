@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.7] - 2026-07-10
+
+### Fixed
+
+- **False "addon not installed" notification on HA 2026.4+** (`sensor.py`, `manifest.json`):
+
+  Home Assistant 2026.4.0 changed two Supervisor helper functions in a way that
+  broke the addon-presence detection:
+
+  1. **`get_supervisor_info` now raises `HassioNotReadyError`** instead of
+     returning `None` when its data cache hasn't been populated yet.  The
+     integration was calling the function without a `try/except`, so the
+     exception propagated uncaught and was silently swallowed by the
+     coordinator, leaving whatever notification was previously on screen
+     unchanged.
+
+  2. **The `"addons"` key in `get_supervisor_info`'s result is now a
+     backwards-compat shim** filled from `DATA_ADDONS_LIST` (a separate addon
+     coordinator).  When that coordinator hasn't done its first refresh yet,
+     the key is *absent* from the result dict.  The old code used
+     `supervisor_info.get("addons", [])` which returned `[]` in this case —
+     incorrectly interpreted as "no addons installed" — triggering the
+     persistent "not installed" notification even though the addon was present.
+
+  3. **`get_addons_info` also raises `HassioNotReadyError`** in the same
+     situation.  The previous `(get_addons_info(self.hass) or {})` pattern did
+     not handle exceptions, so this too could propagate.
+
+  Fixes applied to `_get_supervisor_addon_status`:
+
+  - All calls to `get_supervisor_info` and `get_addons_info` are now wrapped in
+    `try/except Exception` so that any `HassioNotReadyError` (or other
+    unexpected hassio error) returns `("unknown", None)`, which suppresses the
+    notification rather than firing a false alarm.
+  - `get_addons_list()` (introduced alongside the HA 2026.4 changes) is now
+    tried as the *primary* source for the installed-addon list.  When its data
+    isn't ready it raises `HassioNotReadyError`, which is caught and mapped to
+    `"unknown"`.  This avoids the empty-list false-negative that came from the
+    deprecated `supervisor_info["addons"]` shim.
+  - Older HA versions that don't expose `get_addons_list` fall back to the
+    `supervisor_info.get("addons")` key, but now treat a `None` result (missing
+    key) as `"unknown"` rather than as an empty addon list.
+
 ## [1.4.6] - 2026-07-10
 
 ### Fixed

@@ -787,21 +787,58 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except ImportError:
             return ("unknown", None)
 
-        # Use the supervisor info addon list as the primary source.  It is
-        # populated from a single ``/supervisor/info`` API call and is therefore
-        # more reliable than ``get_addons_info`` (``DATA_ADDONS_INFO``), which
-        # stores per-addon detailed fetches that may be ``None`` for an entry
-        # when the individual fetch fails – a condition that was previously
-        # mis-classified as "not installed".
-        supervisor_info = get_supervisor_info(self.hass)
-        if supervisor_info is None:
-            # Supervisor data not yet available; don't raise a false alarm.
+        # In HA 2026.4+, get_supervisor_info (and other hassio helpers) raise
+        # HassioNotReadyError instead of returning None when their data cache
+        # hasn't been populated yet.  Treat any exception here as "data not yet
+        # available" and suppress the notification to avoid false alarms.
+        try:
+            supervisor_info = get_supervisor_info(self.hass)
+        except Exception:  # noqa: BLE001
             _LOGGER.debug(
                 "Concierge Services: Supervisor info not yet available; skipping addon check"
             )
             return ("unknown", None)
 
-        addon_list = supervisor_info.get("addons", [])
+        if supervisor_info is None:
+            # Older HA returns None when data isn't ready.
+            _LOGGER.debug(
+                "Concierge Services: Supervisor info not yet available; skipping addon check"
+            )
+            return ("unknown", None)
+
+        # Obtain the list of installed addons.
+        #
+        # In HA 2026.4+, ``get_addons_list()`` is the dedicated API and the
+        # "addons" key in supervisor_info is only a backwards-compat shim filled
+        # from DATA_ADDONS_LIST.  When that coordinator hasn't refreshed yet,
+        # the key is absent and ``supervisor_info.get("addons", [])`` would
+        # return an empty list — incorrectly interpreted as "no addons
+        # installed".  Prefer ``get_addons_list()`` so we get an exception (→
+        # "unknown") rather than an empty list when data isn't ready yet.
+        addon_list: list[Any] | None = None
+        try:
+            from homeassistant.components.hassio import get_addons_list as _get_addons_list
+        except ImportError:
+            pass  # older HA — fall back to supervisor_info["addons"] below
+        else:
+            try:
+                addon_list = _get_addons_list(self.hass)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Concierge Services: Addon list not yet available; skipping addon check"
+                )
+                return ("unknown", None)
+
+        if addon_list is None:
+            # Older HA: the "addons" key is embedded directly in supervisor_info.
+            # If it is absent (None), data hasn't loaded yet — suppress the check.
+            addon_list = supervisor_info.get("addons")
+            if addon_list is None:
+                _LOGGER.debug(
+                    "Concierge Services: Addon list not yet available; skipping addon check"
+                )
+                return ("unknown", None)
+
         if not isinstance(addon_list, list):
             _LOGGER.debug(
                 "Concierge Services: Supervisor returned unexpected addons list type: %s",
@@ -821,7 +858,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Try to obtain the hostname from the detailed addon info for a more
         # specific URL; fall back gracefully when it is unavailable.
         hostname: str | None = None
-        detailed_info = (get_addons_info(self.hass) or {}).get(ADDON_SLUG)
+        try:
+            detailed_info = (get_addons_info(self.hass) or {}).get(ADDON_SLUG)
+        except Exception:  # noqa: BLE001
+            detailed_info = None
         if isinstance(detailed_info, dict):
             hostname = detailed_info.get("hostname")
         addon_url = (
