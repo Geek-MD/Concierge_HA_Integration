@@ -869,20 +869,28 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Supervisor returns addons with their *full* slug, which for third-party
         # repository addons follows the format ``{repo_slug}_{addon_slug}``
         # (e.g. ``geek_md_concierge_ocr`` instead of ``concierge_ocr``).
-        # Accept both an exact match and a suffix match so the check works
-        # regardless of which repository the user installed the addon from.
+        # Perform a two-pass lookup: prefer an exact slug match so that a
+        # short-slug entry is never shadowed by a repo-prefixed entry, and only
+        # fall back to a suffix match when no exact match is found.
         basic_info = next(
             (
                 a
                 for a in addon_list
                 if isinstance(a, dict)
-                and (
-                    a.get("slug") == ADDON_SLUG
-                    or str(a.get("slug", "")).endswith(f"_{ADDON_SLUG}")
-                )
+                and a.get("slug") == ADDON_SLUG
             ),
             None,
         )
+        if basic_info is None:
+            basic_info = next(
+                (
+                    a
+                    for a in addon_list
+                    if isinstance(a, dict)
+                    and str(a.get("slug", "")).endswith(f"_{ADDON_SLUG}")
+                ),
+                None,
+            )
         if basic_info is None:
             return ("not_installed", None)
 
