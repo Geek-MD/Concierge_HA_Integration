@@ -873,7 +873,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # short-slug entry is never shadowed by a repo-prefixed entry, and only
         # fall back to a suffix match when no exact match is found.
         basic_info = next(
-            (a for a in addon_list if isinstance(a, dict) and a.get("slug") == ADDON_SLUG),
+            (
+                a
+                for a in addon_list
+                if isinstance(a, dict)
+                and a.get("slug") == ADDON_SLUG
+            ),
             None,
         )
         if basic_info is None:
