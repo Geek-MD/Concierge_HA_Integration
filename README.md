@@ -125,7 +125,8 @@
   Assistant immediately. If Supervisor reports that the addon is **starting** (or it is
   already **started** but its `/health` endpoint is still not ready), the integration waits
   up to **5 minutes** before raising a startup-problem notification. All addon notices
-  disappear automatically once the addon becomes healthy.
+  disappear automatically once the addon becomes healthy. Repeated recursive checks do
+  not recreate the same addon notice unless the underlying addon state changes.
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):

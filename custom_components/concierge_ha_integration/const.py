@@ -53,3 +53,7 @@ ADDON_NOTIFICATION_ID = "concierge_addon_not_installed"
 # Maximum seconds to wait while the addon is reported as starting (or started
 # but still failing health checks) before raising a problem notification.
 ADDON_STARTUP_TIMEOUT_SECONDS = 300
+# Seconds to wait after HA has fully started before performing the first addon
+# check.  This prevents false "not installed" notifications that can appear
+# right after a reboot when Supervisor data is still being populated.
+ADDON_CHECK_DELAY_SECONDS = 300
