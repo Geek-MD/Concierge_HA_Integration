@@ -765,24 +765,50 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return ("unsupported", None)
 
         try:
-            from homeassistant.components.hassio import get_addons_info
+            from homeassistant.components.hassio import (
+                get_addons_info,
+                get_supervisor_info,
+            )
         except ImportError:
             return ("unknown", None)
 
-        addons = get_addons_info(self.hass) or {}
-        if not isinstance(addons, dict):
+        # Use the supervisor info addon list as the primary source.  It is
+        # populated from a single ``/supervisor/info`` API call and is therefore
+        # more reliable than ``get_addons_info`` (``DATA_ADDONS_INFO``), which
+        # stores per-addon detailed fetches that may be ``None`` for an entry
+        # when the individual fetch fails – a condition that was previously
+        # mis-classified as "not installed".
+        supervisor_info = get_supervisor_info(self.hass)
+        if supervisor_info is None:
+            # Supervisor data not yet available; don't raise a false alarm.
             _LOGGER.debug(
-                "Concierge Services: Supervisor returned unexpected addons metadata type: %s",
-                type(addons).__name__,
+                "Concierge Services: Supervisor info not yet available; skipping addon check"
             )
             return ("unknown", None)
 
-        addon_info = addons.get(ADDON_SLUG)
-        if not isinstance(addon_info, dict):
+        addon_list = supervisor_info.get("addons", [])
+        if not isinstance(addon_list, list):
+            _LOGGER.debug(
+                "Concierge Services: Supervisor returned unexpected addons list type: %s",
+                type(addon_list).__name__,
+            )
+            return ("unknown", None)
+
+        basic_info = next(
+            (a for a in addon_list if isinstance(a, dict) and a.get("slug") == ADDON_SLUG),
+            None,
+        )
+        if basic_info is None:
             return ("not_installed", None)
 
-        addon_state = str(addon_info.get("state", "")).lower()
-        hostname = addon_info.get("hostname")
+        addon_state = str(basic_info.get("state", "")).lower()
+
+        # Try to obtain the hostname from the detailed addon info for a more
+        # specific URL; fall back gracefully when it is unavailable.
+        hostname: str | None = None
+        detailed_info = (get_addons_info(self.hass) or {}).get(ADDON_SLUG)
+        if isinstance(detailed_info, dict):
+            hostname = detailed_info.get("hostname")
         addon_url = (
             f"http://{hostname}:{ADDON_API_PORT}"
             if isinstance(hostname, str) and hostname
