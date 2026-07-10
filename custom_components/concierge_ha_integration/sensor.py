@@ -23,6 +23,7 @@ from homeassistant.const import EntityCategory, EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.hassio import is_hassio
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import (
@@ -35,6 +36,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     ADDON_API_PORT,
     ADDON_API_URL,
+    ADDON_CHECK_DELAY_SECONDS,
     ADDON_NOTIFICATION_ID,
     ADDON_SLUG,
     ADDON_STARTUP_TIMEOUT_SECONDS,
@@ -412,19 +414,33 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Timestamp when the addon first entered a starting/started-but-unready
         # state so we can enforce the 5-minute startup timeout.
         self._addon_start_wait_since: datetime | None = None
-        # True once HA has fully started (or if coordinator is created after start,
-        # e.g. on a config-entry reload).  Addon notifications are suppressed while
-        # this flag is False to avoid false alarms during HA boot.
-        self._ha_started: bool = hass.state == CoreState.running
+        # Earliest moment at which the addon check may fire.  None means HA
+        # has not yet fired EVENT_HOMEASSISTANT_STARTED.  A datetime means
+        # "suppress addon checks until this timestamp" (5-minute post-start
+        # delay to allow Supervisor data to fully populate).
+        self._addon_check_not_before: datetime | None = None
 
-        if not self._ha_started:
+        def _arm_addon_check_delay() -> None:
+            """Set the not-before timestamp and schedule a deferred refresh."""
+            self._addon_check_not_before = (
+                dt_util.utcnow() + timedelta(seconds=ADDON_CHECK_DELAY_SECONDS)
+            )
+
             @callback
-            def _on_ha_started(_event: Event) -> None:
-                self._ha_started = True
+            def _trigger_deferred_refresh(_now: datetime) -> None:
                 hass.async_create_task(
                     self.async_refresh(),
                     "concierge_ha_integration_addon_check_after_ha_start",
                 )
+
+            async_call_later(hass, ADDON_CHECK_DELAY_SECONDS, _trigger_deferred_refresh)
+
+        if hass.state == CoreState.running:
+            _arm_addon_check_delay()
+        else:
+            @callback
+            def _on_ha_started(_event: Event) -> None:
+                _arm_addon_check_delay()
 
             hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_ha_started)
 
@@ -918,13 +934,20 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_manage_addon_notification(self) -> None:
         """Check addon lifecycle state and manage notifications accordingly."""
-        # Don't raise any notification while HA hasn't finished starting up.
-        # The supervisor addon list may be incomplete during boot, which would
-        # cause a false "not installed" alarm.  Once EVENT_HOMEASSISTANT_STARTED
-        # fires the flag is set and an immediate async_refresh() is scheduled.
-        if not self._ha_started:
+        # Suppress all addon checks until ADDON_CHECK_DELAY_SECONDS have elapsed
+        # after HA fully started.  This avoids false "not installed" alarms while
+        # Supervisor is still populating its addon data after a reboot.
+        now = dt_util.utcnow()
+        if self._addon_check_not_before is None or now < self._addon_check_not_before:
+            remaining = (
+                (self._addon_check_not_before - now).total_seconds()
+                if self._addon_check_not_before is not None
+                else ADDON_CHECK_DELAY_SECONDS
+            )
             _LOGGER.debug(
-                "Concierge Services: HA not yet fully started; suppressing addon notification"
+                "Concierge Services: addon check suppressed; "
+                "%.0f s remaining before first check",
+                remaining,
             )
             return
 

@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.8] - 2026-07-10
+
+### Changed
+
+- **5-minute delay before the first addon check after HA starts** (`sensor.py`, `const.py`):
+
+  After Home Assistant fully starts (or after the integration is loaded/reloaded),
+  the addon-presence check is now held back for **5 minutes** before it runs for
+  the first time.  This prevents false *"Addon de OCR no instalado"* notifications
+  that can appear right after a reboot while Supervisor is still populating its
+  internal addon list.
+
+  - Replaced the immediate `async_refresh()` call that was triggered by
+    `EVENT_HOMEASSISTANT_STARTED` with an `async_call_later` deferred task that
+    fires after `ADDON_CHECK_DELAY_SECONDS` (300 s).
+  - Added `_addon_check_not_before: datetime | None` to the coordinator so that
+    any update cycle that happens to run within the delay window is also
+    suppressed, giving consistent protection regardless of the update interval.
+  - Added `ADDON_CHECK_DELAY_SECONDS = 300` to `const.py`.
+
 ## [1.4.7] - 2026-07-10
 
 ### Fixed
