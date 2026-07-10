@@ -866,12 +866,30 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return ("unknown", None)
 
+        # Supervisor returns addons with their *full* slug, which for third-party
+        # repository addons follows the format ``{repo_slug}_{addon_slug}``
+        # (e.g. ``geek_md_concierge_ocr`` instead of ``concierge_ocr``).
+        # Accept both an exact match and a suffix match so the check works
+        # regardless of which repository the user installed the addon from.
         basic_info = next(
-            (a for a in addon_list if isinstance(a, dict) and a.get("slug") == ADDON_SLUG),
+            (
+                a
+                for a in addon_list
+                if isinstance(a, dict)
+                and (
+                    a.get("slug") == ADDON_SLUG
+                    or str(a.get("slug", "")).endswith(f"_{ADDON_SLUG}")
+                )
+            ),
             None,
         )
         if basic_info is None:
             return ("not_installed", None)
+
+        # Use the actual full slug returned by Supervisor for subsequent API
+        # lookups so that ``get_addons_info`` can find the addon even when the
+        # Supervisor-assigned slug differs from the short slug in ADDON_SLUG.
+        actual_slug = str(basic_info.get("slug") or ADDON_SLUG)
 
         addon_state = str(basic_info.get("state", "")).lower()
 
@@ -879,7 +897,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # specific URL; fall back gracefully when it is unavailable.
         hostname: str | None = None
         try:
-            detailed_info = (get_addons_info(self.hass) or {}).get(ADDON_SLUG)
+            detailed_info = (get_addons_info(self.hass) or {}).get(actual_slug)
         except Exception:  # noqa: BLE001
             detailed_info = None
         if isinstance(detailed_info, dict):
