@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Addon notification no longer reappears on every recursive check after manual dismissal** (`sensor.py`, `README.md`):
+- **Addon notification no longer reappears on every recursive check after manual dismissal** (`sensor.py`, `manifest.json`, `README.md`):
 
   The coordinator now tracks the last addon-notification reason and only creates
   a new persistent addon notice when the underlying addon state actually changes
