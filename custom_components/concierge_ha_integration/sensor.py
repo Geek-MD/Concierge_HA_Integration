@@ -890,6 +890,18 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         was_available = self._addon_available
         supervisor_state, supervisor_addon_url = self._get_supervisor_addon_status()
+
+        # Without Supervisor, addons cannot be installed.  Skip the health
+        # check entirely and dismiss any leftover notification.
+        if supervisor_state == "unsupported":
+            _LOGGER.debug(
+                "Concierge Services: no Supervisor detected; skipping addon check"
+            )
+            self._addon_available = False
+            self._addon_start_wait_since = None
+            persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
+            return
+
         candidate_urls: list[str] = []
         if supervisor_addon_url:
             candidate_urls.append(supervisor_addon_url)
@@ -1004,10 +1016,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return
 
-        # States "unknown" (Supervisor data not yet populated) and "unsupported"
-        # (non-Hassio environment) are transient or irrelevant; suppress any
-        # notification rather than showing a misleading "no disponible" message.
-        if supervisor_state in {"unknown", "unsupported"}:
+        # State "unknown" means Supervisor data is not yet populated; suppress
+        # any notification to avoid a misleading "no disponible" message.
+        if supervisor_state == "unknown":
             _LOGGER.debug(
                 "Concierge Services: supervisor state is '%s'; suppressing addon notification",
                 supervisor_state,

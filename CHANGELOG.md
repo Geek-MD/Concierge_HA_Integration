@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.6] - 2026-07-10
+
+### Fixed
+
+- **Unnecessary addon health check when HA has no Supervisor** (`sensor.py`):
+
+  When Home Assistant runs without a Supervisor (e.g. Container or Core
+  installations), addons cannot be installed, so there is no point checking
+  the addon health endpoint or showing any addon-related notification.
+
+  Previously the integration still attempted an HTTP request to
+  `http://localhost:8099/health` on every update cycle, logged a failed
+  connection, and only suppressed the notification afterwards.
+
+  Now `_async_manage_addon_notification` returns early as soon as
+  `supervisor_state == "unsupported"` is detected — before building the
+  candidate URL list or running any health checks — and dismisses any
+  leftover addon notification that may have been created by a previous
+  configuration.
+
 ## [1.4.5] - 2026-07-10
 
 ### Fixed
