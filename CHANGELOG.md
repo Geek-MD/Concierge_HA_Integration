@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-07-10
+
+### Fixed
+
+- **False "addon not installed" notification caused by Supervisor full-slug format** (`sensor.py`, `manifest.json`):
+
+  Home Assistant Supervisor identifies third-party repository add-ons with a
+  *full slug* that prepends a repository identifier to the add-on's own slug —
+  for example `geek_md_concierge_ocr` instead of the bare `concierge_ocr`.
+
+  The addon-presence check was doing an exact comparison against the short slug
+  `"concierge_ocr"`, so the add-on was never found in the Supervisor add-on
+  list, causing the code to always return `not_installed`.  As a side-effect,
+  the `get_addons_info` hostname lookup also failed (same key mismatch), so
+  the health-check fell back to `http://localhost:8099`, which is unreachable
+  in Home Assistant OS Docker networking without the correct hostname.
+
+  **Changes:**
+  - The add-on list search now accepts both an exact slug match
+    (`"concierge_ocr"`) and a suffix match (`"*_concierge_ocr"`), covering
+    every possible repository-prefix format Supervisor may assign.
+  - The actual full slug returned by Supervisor is now stored in a local
+    variable (`actual_slug`) and used for the `get_addons_info` lookup, so
+    the Docker hostname is retrieved correctly and the health-check URL is
+    accurate.
+
 ## [1.4.9] - 2026-07-10
 
 ### Fixed
