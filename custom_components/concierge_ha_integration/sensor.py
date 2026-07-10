@@ -871,15 +871,16 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # (e.g. ``geek_md_concierge_ocr`` instead of ``concierge_ocr``).
         # Accept both an exact match and a suffix match so the check works
         # regardless of which repository the user installed the addon from.
+        # Two-pass lookup: prefer exact match, fall back to suffix match.
         basic_info = next(
+            (a for a in addon_list if isinstance(a, dict) and a.get("slug") == ADDON_SLUG),
+            None,
+        ) or next(
             (
                 a
                 for a in addon_list
                 if isinstance(a, dict)
-                and (
-                    a.get("slug") == ADDON_SLUG
-                    or str(a.get("slug", "")).endswith(f"_{ADDON_SLUG}")
-                )
+                and str(a.get("slug", "")).endswith(f"_{ADDON_SLUG}")
             ),
             None,
         )
