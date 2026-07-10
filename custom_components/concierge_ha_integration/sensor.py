@@ -411,6 +411,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tracks whether the Concierge addon is available. None = not yet checked.
         self._addon_available: bool | None = None
         self._addon_api_url: str = ADDON_API_URL
+        # Last addon notification reason shown to the user. This avoids
+        # recreating the same notification on every recursive check after the
+        # user dismisses it manually.
+        self._addon_notification_reason: str | None = None
         # Timestamp when the addon first entered a starting/started-but-unready
         # state so we can enforce the 5-minute startup timeout.
         self._addon_start_wait_since: datetime | None = None
@@ -934,6 +938,31 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_manage_addon_notification(self) -> None:
         """Check addon lifecycle state and manage notifications accordingly."""
+        def _dismiss_addon_notification() -> None:
+            persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
+            self._addon_notification_reason = None
+
+        def _create_addon_notification_once(
+            *,
+            reason: str,
+            title: str,
+            message: str,
+        ) -> None:
+            if self._addon_notification_reason == reason:
+                _LOGGER.debug(
+                    "Concierge Services: addon notice '%s' already shown; skipping recreate",
+                    reason,
+                )
+                return
+
+            persistent_notification.async_create(
+                self.hass,
+                title=title,
+                message=message,
+                notification_id=ADDON_NOTIFICATION_ID,
+            )
+            self._addon_notification_reason = reason
+
         # Suppress all addon checks until ADDON_CHECK_DELAY_SECONDS have elapsed
         # after HA fully started.  This avoids false "not installed" alarms while
         # Supervisor is still populating its addon data after a reboot.
@@ -962,7 +991,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._addon_available = False
             self._addon_start_wait_since = None
-            persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
+            _dismiss_addon_notification()
             return
 
         candidate_urls: list[str] = []
@@ -990,7 +1019,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "using addon OCR for common-expenses and hot-water PDFs",
                     self._addon_api_url,
                 )
-            persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
+            _dismiss_addon_notification()
             return
 
         now = dt_util.utcnow()
@@ -1017,7 +1046,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     elapsed,
                     ADDON_STARTUP_TIMEOUT_SECONDS,
                 )
-                persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
+                _dismiss_addon_notification()
                 return
 
             _LOGGER.warning(
@@ -1027,8 +1056,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 candidate_urls,
                 elapsed,
             )
-            persistent_notification.async_create(
-                self.hass,
+            _create_addon_notification_once(
+                reason="startup_timeout",
                 title="Concierge — Addon de OCR con problemas de inicio",
                 message=(
                     "La integración Concierge HA detectó que el addon **Concierge OCR API** "
@@ -1036,7 +1065,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Revisa el estado y los logs del addon en Home Assistant. Mientras "
                     "tanto, la integración seguirá usando el extractor interno como respaldo."
                 ),
-                notification_id=ADDON_NOTIFICATION_ID,
             )
             return
 
@@ -1046,8 +1074,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info(
                 "Concierge Services: Concierge addon not installed; creating notice"
             )
-            persistent_notification.async_create(
-                self.hass,
+            _create_addon_notification_once(
+                reason="not_installed",
                 title="Concierge — Addon de OCR no instalado",
                 message=(
                     "La integración Concierge HA detectó que el addon **Concierge OCR API** "
@@ -1058,7 +1086,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "(https://github.com/Geek-MD/Concierge_addon)\n\n"
                     "Una vez instalado y listo, esta notificación desaparecerá automáticamente."
                 ),
-                notification_id=ADDON_NOTIFICATION_ID,
             )
             return
 
@@ -1066,8 +1093,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info(
                 "Concierge Services: Concierge addon installed but not running; creating notice"
             )
-            persistent_notification.async_create(
-                self.hass,
+            _create_addon_notification_once(
+                reason="stopped",
                 title="Concierge — Addon de OCR detenido",
                 message=(
                     "La integración Concierge HA detectó que el addon **Concierge OCR API** "
@@ -1075,7 +1102,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Inícialo desde Home Assistant para habilitar el OCR mejorado de "
                     "**Gastos Comunes** y **Agua Caliente**."
                 ),
-                notification_id=ADDON_NOTIFICATION_ID,
             )
             return
 
@@ -1083,9 +1109,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # any notification to avoid a misleading "no disponible" message.
         if supervisor_state == "unknown":
             _LOGGER.debug(
-                "Concierge Services: supervisor state is '%s'; suppressing addon notification",
+                "Concierge Services: supervisor state is '%s'; suppressing addon notification and clearing stale notice",
                 supervisor_state,
             )
+            _dismiss_addon_notification()
             return
 
         _LOGGER.info(
@@ -1093,15 +1120,14 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             candidate_urls,
             supervisor_state,
         )
-        persistent_notification.async_create(
-            self.hass,
+        _create_addon_notification_once(
+            reason="unreachable",
             title="Concierge — Addon de OCR no disponible",
             message=(
                 "La integración Concierge HA no pudo conectarse al addon **Concierge OCR API**.\n\n"
                 "Verifica que esté instalado y funcionando correctamente. Mientras tanto, "
                 "la integración seguirá usando el extractor interno como respaldo."
             ),
-            notification_id=ADDON_NOTIFICATION_ID,
         )
 
     def _manage_gc_template_mismatch_notification(

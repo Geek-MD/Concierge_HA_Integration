@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.9] - 2026-07-10
+
+### Fixed
+
+- **Addon notification no longer reappears on every recursive check after manual dismissal** (`sensor.py`, `README.md`):
+
+  The coordinator now tracks the last addon-notification reason and only creates
+  a new persistent addon notice when the underlying addon state actually changes
+  (for example, from *not installed* to *stopped* or *startup timeout*).
+  This prevents repeated recreation of the same *"Addon de OCR no instalado"*
+  notification during periodic recursive checks.
+
+  Additionally, when Supervisor state is `unknown` (data still loading), any
+  stale addon notice is now dismissed to avoid keeping outdated warnings on
+  screen.
+
 ## [1.4.8] - 2026-07-10
 
 ### Changed
