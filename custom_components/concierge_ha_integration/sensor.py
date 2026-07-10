@@ -19,8 +19,8 @@ from typing import Any
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EntityCategory, EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.hassio import is_hassio
@@ -412,6 +412,21 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Timestamp when the addon first entered a starting/started-but-unready
         # state so we can enforce the 5-minute startup timeout.
         self._addon_start_wait_since: datetime | None = None
+        # True once HA has fully started (or if coordinator is created after start,
+        # e.g. on a config-entry reload).  Addon notifications are suppressed while
+        # this flag is False to avoid false alarms during HA boot.
+        self._ha_started: bool = hass.state == CoreState.running
+
+        if not self._ha_started:
+            @callback
+            def _on_ha_started(_event: Event) -> None:
+                self._ha_started = True
+                hass.async_create_task(
+                    self.async_refresh(),
+                    "concierge_ha_integration_addon_check_after_ha_start",
+                )
+
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_ha_started)
 
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
@@ -863,8 +878,30 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_manage_addon_notification(self) -> None:
         """Check addon lifecycle state and manage notifications accordingly."""
+        # Don't raise any notification while HA hasn't finished starting up.
+        # The supervisor addon list may be incomplete during boot, which would
+        # cause a false "not installed" alarm.  Once EVENT_HOMEASSISTANT_STARTED
+        # fires the flag is set and an immediate async_refresh() is scheduled.
+        if not self._ha_started:
+            _LOGGER.debug(
+                "Concierge Services: HA not yet fully started; suppressing addon notification"
+            )
+            return
+
         was_available = self._addon_available
         supervisor_state, supervisor_addon_url = self._get_supervisor_addon_status()
+
+        # Without Supervisor, addons cannot be installed.  Skip the health
+        # check entirely and dismiss any leftover notification.
+        if supervisor_state == "unsupported":
+            _LOGGER.debug(
+                "Concierge Services: no Supervisor detected; skipping addon check"
+            )
+            self._addon_available = False
+            self._addon_start_wait_since = None
+            persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
+            return
+
         candidate_urls: list[str] = []
         if supervisor_addon_url:
             candidate_urls.append(supervisor_addon_url)
@@ -976,6 +1013,15 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "**Gastos Comunes** y **Agua Caliente**."
                 ),
                 notification_id=ADDON_NOTIFICATION_ID,
+            )
+            return
+
+        # State "unknown" means Supervisor data is not yet populated; suppress
+        # any notification to avoid a misleading "no disponible" message.
+        if supervisor_state == "unknown":
+            _LOGGER.debug(
+                "Concierge Services: supervisor state is '%s'; suppressing addon notification",
+                supervisor_state,
             )
             return
 
