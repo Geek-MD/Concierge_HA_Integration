@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-07-10
+
+### Fixed
+
+- **False "addon not installed" notification when Concierge OCR addon is installed**
+  (`sensor.py`, `manifest.json`):
+
+  The addon-presence check now uses `get_supervisor_info(hass)["addons"]` — the
+  Supervisor's authoritative list of all installed addons — as its primary
+  source instead of `get_addons_info(hass)` (`DATA_ADDONS_INFO`).  The
+  previous approach stored per-addon detailed info fetched individually via the
+  Supervisor API; when any of those individual fetches failed the entry was
+  stored as `None`, which was incorrectly interpreted as "addon not installed"
+  and triggered the persistent notification.  The new logic returns `"unknown"`
+  (suppressing the notification) when Supervisor data is not yet available, and
+  `"not_installed"` only when the addon is genuinely absent from the Supervisor
+  list.  The detailed info from `get_addons_info` is still used — as a
+  best-effort fallback — to obtain the addon's Docker hostname when constructing
+  the API URL.
+
 ## [1.4.3] - 2026-07-09
 
 ### Fixed

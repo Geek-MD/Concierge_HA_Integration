@@ -116,7 +116,7 @@
   (startup, discovery scans, automatic polling, force refresh, recalculate and
   `set_value`) are now written to the **Registro/Logbook** timeline under the
   dedicated domain `concierge_ha_tasks`.
-- 🔌 **Concierge addon integration** (v1.4.3): When the
+- 🔌 **Concierge addon integration** (v1.4.4): When the
   [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and
   running, **Gastos Comunes** and **Agua Caliente** PDF analysis automatically delegates
   to the addon's OCR REST API (PaddleOCR) instead of the built-in pdfminer extractor,
