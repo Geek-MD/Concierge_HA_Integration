@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5] - 2026-07-10
+
+### Fixed
+
+- **False "addon not installed" notification during HA restart / startup**
+  (`sensor.py`, `manifest.json`):
+
+  The integration was raising the "Concierge OCR addon not installed"
+  persistent notification immediately on HA boot, before Home Assistant had
+  finished starting.  At that point the Supervisor addon list returned by
+  `get_supervisor_info` is still being populated, so the addon appeared absent
+  even when it is installed.
+
+  Two root causes were addressed:
+
+  1. **HA startup guard**: The coordinator now tracks a `_ha_started` flag
+     (initialised to `True` when HA is already running, e.g. on a config-entry
+     reload, or `False` during initial boot).  A one-time listener for
+     `EVENT_HOMEASSISTANT_STARTED` sets the flag and immediately schedules an
+     `async_refresh()` so the addon check runs as soon as HA is fully up —
+     without waiting the full 30-minute polling interval.  All notification
+     creation in `_async_manage_addon_notification` is suppressed while the flag
+     is `False`.
+
+  2. **`"unknown"` / `"unsupported"` state fallthrough**: When the Supervisor
+     data was not yet available (`supervisor_state == "unknown"`) or HA is not
+     running under Supervisor (`"unsupported"`), the code was falling through to
+     the generic "Addon de OCR no disponible" notification instead of returning
+     silently.  An explicit early return was added for both states.
+
 ## [1.4.4] - 2026-07-10
 
 ### Fixed
