@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Addon status sensor** (`sensor.py`, `const.py`, `manifest.json`):
 
   A new diagnostic sensor `sensor.concierge_services_addon_status` now exposes
-  the Concierge OCR addon lifecycle state in real time, giving users a single
+  the Concierge OCR addon lifecycle state on the integration update cycle
+  (every 30 minutes by default; first check occurs ~5 minutes after HA boot), giving users a single
   entity they can monitor in dashboards, automations, or the HA history.
 
   **Possible states:**
