@@ -248,9 +248,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up Concierge Services sensors.
 
-    One connection sensor is created for the main entry as a standalone entity
-    (no device) so it does not appear in the "Devices that don't belong to a
-    sub-entry" category.
+    Two hub sensors (connection status and addon status) are created for the
+    main config entry and linked to the hub device so they appear on the
+    integration configuration page.
     Per-subentry sensors:
     - All service types except common_expenses: last_update, consumption,
       total_amount.
@@ -276,7 +276,8 @@ async def async_setup_entry(
         hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     )
 
-    # Main connection sensor (standalone entity, not linked to any device or subentry)
+    # Hub sensors: connection status and addon status, both linked to the hub
+    # device so they appear on the integration configuration page.
     async_add_entities([
         ConciergeServicesConnectionSensor(coordinator, config_entry),
         ConciergeAddonStatusSensor(coordinator, config_entry),
@@ -2344,7 +2345,7 @@ class ConciergeServiceBillingBreakdownSensor(_ConciergeServiceBaseSensor):
 
 
 class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):
-    """Sensor to monitor mail server connection status (no device, standalone entity)."""
+    """Sensor to monitor mail server connection status (linked to the hub device)."""
 
     def __init__(
         self,
@@ -2357,6 +2358,12 @@ class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoord
         self._attr_name = "Concierge Services - Status"
         self._attr_unique_id = f"{config_entry.entry_id}_connection"
         self._attr_icon = "mdi:email-check"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, config_entry.entry_id)},
+            name=config_entry.title or DOMAIN,
+            manufacturer="Concierge Services",
+            model="Hub",
+        )
 
     @property
     def native_value(self) -> str:
@@ -2416,6 +2423,12 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
         self._config_entry = config_entry
         self._attr_name = "Concierge Services - Addon Status"
         self._attr_unique_id = f"{config_entry.entry_id}_addon_status"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, config_entry.entry_id)},
+            name=config_entry.title or DOMAIN,
+            manufacturer="Concierge Services",
+            model="Hub",
+        )
 
     @property
     def native_value(self) -> str:
