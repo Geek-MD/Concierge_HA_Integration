@@ -461,6 +461,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_ha_started)
 
+    @property
+    def addon_status(self) -> str:
+        """Return the current Concierge OCR addon lifecycle status."""
+        return self._addon_status
+
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
     ) -> None:
@@ -2414,12 +2419,12 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
     @property
     def native_value(self) -> str:
         """Return the current addon status string."""
-        return self.coordinator._addon_status  # noqa: SLF001
+        return self.coordinator.addon_status
 
     @property
     def icon(self) -> str:
         """Return an icon that reflects the current addon status."""
         return self._STATUS_ICONS.get(
-            self.coordinator._addon_status,  # noqa: SLF001
+            self.coordinator.addon_status,
             "mdi:puzzle-outline",
         )
