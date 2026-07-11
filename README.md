@@ -129,8 +129,8 @@
   not recreate the same addon notice unless the underlying addon state changes.
 
 - 🧩 **Addon status sensor** (v1.5.1): A dedicated diagnostic sensor
-  `sensor.concierge_services_addon_status` reports the Concierge OCR addon lifecycle in
-  real time.  All state transitions are logged and persisted in the HA history.
+  `sensor.concierge_services_addon_status` reports the Concierge OCR addon lifecycle on the integration update cycle
+  (every 30 minutes by default; first check occurs ~5 minutes after HA startup). All state transitions are logged and persisted in the HA history.
 
   | State | Meaning |
   |---|---|
