@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-07-11
+
+### Fixed
+
+- **Hub sensors not visible on integration page** (`sensor.py`):
+
+  `sensor.concierge_services_status` (connection status) and
+  `sensor.concierge_services_addon_status` (addon lifecycle) were created as
+  standalone entities with no `device_info`, so they did not appear on the
+  integration configuration page (`/config/integrations/integration/concierge_ha_integration`)
+  and were not shown in the Home Assistant summary.
+
+  Both sensors are now linked to a **hub device** (identifiers:
+  `{(DOMAIN, config_entry.entry_id)}`, manufacturer: "Concierge Services", model: "Hub")
+  that represents the integration's main connection coordinator.  The hub device
+  appears on the integration page alongside the per-service subentry devices,
+  making the connection status and addon status sensors fully discoverable and
+  visible in the HA summary.
+
 ## [1.5.1] - 2026-07-11
 
 ### Added

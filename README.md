@@ -448,10 +448,19 @@ Use the **ADD DEVICE** button on the integration card:
 
 After configuration, the integration creates:
 
-### Connection Sensor (standalone entity, no device)
-- **Entity ID**: `sensor.concierge_services_status`
-- **State**: `OK` or `Problem`
-- **Attributes**: `email`, `imap_server`, `imap_port`
+### Hub Device
+
+The integration creates a hub device (named after the configured friendly name, manufacturer: "Concierge Services", model: "Hub") that represents the main IMAP connection and coordinator. Two sensors are attached to this device:
+
+- **Connection Status Sensor**
+  - **Entity ID**: `sensor.concierge_services_status`
+  - **State**: `OK` or `Problem`
+  - **Attributes**: `email`, `imap_server`, `imap_port`
+
+- **Addon Status Sensor** (Diagnostic)
+  - **Entity ID**: `sensor.concierge_services_addon_status`
+  - **State**: one of `unknown`, `unsupported`, `not_installed`, `installed`, `starting`, `running`
+  - **Purpose**: reports the Concierge OCR addon lifecycle state
 
 ### Service Devices (Auto-detected or manually added)
 One device per configured service (e.g., "Aguas Andinas", "Enel", "Metrogas"), each
