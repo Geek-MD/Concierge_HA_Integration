@@ -1009,14 +1009,15 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         def _set_addon_status(new_status: str) -> None:
             """Update _addon_status and log the transition when the state changes."""
-            if self._addon_status != new_status:
-                _LOGGER.info(
-                    "Concierge Services: addon status changed: '%s' → '%s'",
-                    self._addon_status,
-                    new_status,
-                )
-                self._addon_status = new_status
-
+            if self._addon_status == new_status:
+                return
+            _LOGGER.info(
+                "Concierge Services: addon status changed: '%s' → '%s'",
+                self._addon_status,
+                new_status,
+            )
+            self._addon_status = new_status
+            self.async_update_listeners()
         # Suppress all addon checks until ADDON_CHECK_DELAY_SECONDS have elapsed
         # after HA fully started.  This avoids false "not installed" alarms while
         # Supervisor is still populating its addon data after a reboot.
