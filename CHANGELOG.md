@@ -5,7 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.5.0] - 2026-07-10
+## [1.5.1] - 2026-07-11
+
+### Added
+
+- **Addon status sensor** (`sensor.py`, `const.py`, `manifest.json`):
+
+  A new diagnostic sensor `sensor.concierge_services_addon_status` now exposes
+  the Concierge OCR addon lifecycle state in real time, giving users a single
+  entity they can monitor in dashboards, automations, or the HA history.
+
+  **Possible states:**
+
+  | State | Meaning |
+  |---|---|
+  | `unknown` | Supervisor data is not yet available (transient after HA boot). |
+  | `unsupported` | Home Assistant is not running under Supervisor (plain Docker / venv). |
+  | `not_installed` | The Concierge OCR addon is not present in Supervisor. |
+  | `installed` | The addon is installed but currently stopped. |
+  | `starting` | Supervisor reports the addon is starting up (health endpoint not yet ready). |
+  | `running` | The addon is started and its `/health` endpoint reports `{"status": "ok"}`. |
+
+  **Persistence & logging:**
+  - State changes are recorded automatically by the HA recorder, providing a
+    full history of addon lifecycle transitions.
+  - Every state transition is logged at `INFO` level:
+    `Concierge Services: addon status changed: 'X' → 'Y'`.
+
+  **Technical details:**
+  - Uses `SensorDeviceClass.ENUM` with a fixed `options` list so HA can
+    validate and display the state correctly.
+  - Entity category: `Diagnostic` (grouped under the integration diagnostics
+    panel, not on the main device page).
+  - The icon updates dynamically to reflect the current state.
+  - Added `ADDON_STATUS_*` constants and `ADDON_STATUS_OPTIONS` list to
+    `const.py`.
+
 
 ### Fixed
 

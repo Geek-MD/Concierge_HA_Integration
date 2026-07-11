@@ -40,6 +40,13 @@ from .const import (
     ADDON_NOTIFICATION_ID,
     ADDON_SLUG,
     ADDON_STARTUP_TIMEOUT_SECONDS,
+    ADDON_STATUS_INSTALLED,
+    ADDON_STATUS_NOT_INSTALLED,
+    ADDON_STATUS_OPTIONS,
+    ADDON_STATUS_RUNNING,
+    ADDON_STATUS_STARTING,
+    ADDON_STATUS_UNKNOWN,
+    ADDON_STATUS_UNSUPPORTED,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -270,7 +277,10 @@ async def async_setup_entry(
     )
 
     # Main connection sensor (standalone entity, not linked to any device or subentry)
-    async_add_entities([ConciergeServicesConnectionSensor(coordinator, config_entry)])
+    async_add_entities([
+        ConciergeServicesConnectionSensor(coordinator, config_entry),
+        ConciergeAddonStatusSensor(coordinator, config_entry),
+    ])
 
     for subentry_id, subentry in config_entry.subentries.items():  # type: ignore[attr-defined]
         service_type = subentry.data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
@@ -411,6 +421,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tracks whether the Concierge addon is available. None = not yet checked.
         self._addon_available: bool | None = None
         self._addon_api_url: str = ADDON_API_URL
+        # Current addon lifecycle status exposed by ConciergeAddonStatusSensor.
+        # Starts as "unknown" and is updated by _async_manage_addon_notification.
+        self._addon_status: str = ADDON_STATUS_UNKNOWN
         # Last addon notification reason shown to the user. This avoids
         # recreating the same notification on every recursive check after the
         # user dismisses it manually.
@@ -989,6 +1002,16 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._addon_notification_reason = reason
 
+        def _set_addon_status(new_status: str) -> None:
+            """Update _addon_status and log the transition when the state changes."""
+            if self._addon_status != new_status:
+                _LOGGER.info(
+                    "Concierge Services: addon status changed: '%s' → '%s'",
+                    self._addon_status,
+                    new_status,
+                )
+                self._addon_status = new_status
+
         # Suppress all addon checks until ADDON_CHECK_DELAY_SECONDS have elapsed
         # after HA fully started.  This avoids false "not installed" alarms while
         # Supervisor is still populating its addon data after a reboot.
@@ -1017,6 +1040,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._addon_available = False
             self._addon_start_wait_since = None
+            _set_addon_status(ADDON_STATUS_UNSUPPORTED)
             _dismiss_addon_notification()
             return
 
@@ -1045,6 +1069,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "using addon OCR for common-expenses and hot-water PDFs",
                     self._addon_api_url,
                 )
+            _set_addon_status(ADDON_STATUS_RUNNING)
             _dismiss_addon_notification()
             return
 
@@ -1072,6 +1097,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     elapsed,
                     ADDON_STARTUP_TIMEOUT_SECONDS,
                 )
+                _set_addon_status(ADDON_STATUS_STARTING)
                 _dismiss_addon_notification()
                 return
 
@@ -1082,6 +1108,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 candidate_urls,
                 elapsed,
             )
+            _set_addon_status(ADDON_STATUS_STARTING)
             _create_addon_notification_once(
                 reason="startup_timeout",
                 title="Concierge — Addon de OCR con problemas de inicio",
@@ -1100,6 +1127,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info(
                 "Concierge Services: Concierge addon not installed; creating notice"
             )
+            _set_addon_status(ADDON_STATUS_NOT_INSTALLED)
             _create_addon_notification_once(
                 reason="not_installed",
                 title="Concierge — Addon de OCR no instalado",
@@ -1119,6 +1147,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info(
                 "Concierge Services: Concierge addon installed but not running; creating notice"
             )
+            _set_addon_status(ADDON_STATUS_INSTALLED)
             _create_addon_notification_once(
                 reason="stopped",
                 title="Concierge — Addon de OCR detenido",
@@ -1138,6 +1167,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Concierge Services: supervisor state is '%s'; suppressing addon notification and clearing stale notice",
                 supervisor_state,
             )
+            _set_addon_status(ADDON_STATUS_UNKNOWN)
             _dismiss_addon_notification()
             return
 
@@ -1146,6 +1176,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             candidate_urls,
             supervisor_state,
         )
+        _set_addon_status(ADDON_STATUS_UNKNOWN)
         _create_addon_notification_once(
             reason="unreachable",
             title="Concierge — Addon de OCR no disponible",
@@ -2337,3 +2368,58 @@ class ConciergeServicesConnectionSensor(CoordinatorEntity[ConciergeServicesCoord
             "imap_server": cfg.get(CONF_IMAP_SERVER, ""),
             "imap_port": cfg.get(CONF_IMAP_PORT, ""),
         }
+
+
+class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator], SensorEntity):
+    """Sensor reporting the Concierge OCR addon lifecycle state.
+
+    Possible states (see ``ADDON_STATUS_*`` constants in ``const.py``):
+
+    * ``unknown``       — Supervisor data not yet available (transient, post-boot).
+    * ``unsupported``   — Home Assistant is not running under Supervisor.
+    * ``not_installed`` — The addon is absent from Supervisor.
+    * ``installed``     — The addon is installed but currently stopped.
+    * ``starting``      — Supervisor reports the addon is starting up.
+    * ``running``       — The addon is started and its ``/health`` endpoint is healthy.
+
+    State changes are persisted automatically by the HA recorder and logged at
+    INFO level by the coordinator whenever the status transitions.
+    """
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ADDON_STATUS_OPTIONS
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    # Icon map: keyed by addon status value.
+    _STATUS_ICONS: dict[str, str] = {
+        ADDON_STATUS_UNKNOWN: "mdi:help-circle-outline",
+        ADDON_STATUS_UNSUPPORTED: "mdi:puzzle-remove",
+        ADDON_STATUS_NOT_INSTALLED: "mdi:puzzle-outline",
+        ADDON_STATUS_INSTALLED: "mdi:puzzle-off",
+        ADDON_STATUS_STARTING: "mdi:puzzle-check-outline",
+        ADDON_STATUS_RUNNING: "mdi:puzzle-check",
+    }
+
+    def __init__(
+        self,
+        coordinator: ConciergeServicesCoordinator,
+        config_entry: ConfigEntry,
+    ) -> None:
+        """Initialize the addon status sensor."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_name = "Concierge Services - Addon Status"
+        self._attr_unique_id = f"{config_entry.entry_id}_addon_status"
+
+    @property
+    def native_value(self) -> str:
+        """Return the current addon status string."""
+        return self.coordinator._addon_status  # noqa: SLF001
+
+    @property
+    def icon(self) -> str:
+        """Return an icon that reflects the current addon status."""
+        return self._STATUS_ICONS.get(
+            self.coordinator._addon_status,  # noqa: SLF001
+            "mdi:puzzle-outline",
+        )

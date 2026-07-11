@@ -57,3 +57,21 @@ ADDON_STARTUP_TIMEOUT_SECONDS = 300
 # check.  This prevents false "not installed" notifications that can appear
 # right after a reboot when Supervisor data is still being populated.
 ADDON_CHECK_DELAY_SECONDS = 300
+
+# Addon status values reported by ConciergeAddonStatusSensor.
+ADDON_STATUS_UNKNOWN = "unknown"
+ADDON_STATUS_UNSUPPORTED = "unsupported"
+ADDON_STATUS_NOT_INSTALLED = "not_installed"
+ADDON_STATUS_INSTALLED = "installed"
+ADDON_STATUS_STARTING = "starting"
+ADDON_STATUS_RUNNING = "running"
+
+# Ordered list used for SensorDeviceClass.ENUM options declaration.
+ADDON_STATUS_OPTIONS: list[str] = [
+    ADDON_STATUS_UNKNOWN,
+    ADDON_STATUS_UNSUPPORTED,
+    ADDON_STATUS_NOT_INSTALLED,
+    ADDON_STATUS_INSTALLED,
+    ADDON_STATUS_STARTING,
+    ADDON_STATUS_RUNNING,
+]
