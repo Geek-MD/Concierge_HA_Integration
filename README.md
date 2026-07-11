@@ -128,6 +128,19 @@
   disappear automatically once the addon becomes healthy. Repeated recursive checks do
   not recreate the same addon notice unless the underlying addon state changes.
 
+- 🧩 **Addon status sensor** (v1.5.1): A dedicated diagnostic sensor
+  `sensor.concierge_services_addon_status` reports the Concierge OCR addon lifecycle on the integration update cycle
+  (every 30 minutes by default; first check occurs ~5 minutes after HA startup). All state transitions are logged and persisted in the HA history.
+
+  | State | Meaning |
+  |---|---|
+  | `unknown` | Supervisor data not yet available (transient, post-boot) |
+  | `unsupported` | HA is not running under Supervisor |
+  | `not_installed` | The addon is absent from Supervisor |
+  | `installed` | The addon is installed but currently stopped |
+  | `starting` | The addon is starting up |
+  | `running` | The addon is started and healthy |
+
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
   - Service identity: `service_id`, `service_name`, `service_type`, `friendly_name`, `icon`
