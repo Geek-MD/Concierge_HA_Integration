@@ -1871,7 +1871,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             pdf_path,
                                             self._addon_api_url,
                                         )
-                                    if addon_ocr_json and not pdf_attrs:
+                                    if addon_ocr_json:
                                         pdf_attrs = extract_attributes_from_addon_ocr_json(
                                             addon_ocr_json,
                                             pdf_path=pdf_path,
