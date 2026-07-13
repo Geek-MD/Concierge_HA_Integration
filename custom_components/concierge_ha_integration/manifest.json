@@ -12,5 +12,5 @@
     "pdfminer.six>=20221105"
   ],
   "single_config_entry": true,
-  "version": "1.5.2"
+  "version": "1.6.0"
 }
