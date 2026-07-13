@@ -426,6 +426,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Version string reported by GET /status (addon v0.3.1+). None when the
         # /status endpoint is not available (older addon) or addon is not running.
         self._addon_version: str | None = None
+        # Output/template identifiers reported by GET /status (when available).
+        self._addon_scheduled_outputs: tuple[str, ...] = ()
         # Current addon lifecycle status exposed by ConciergeAddonStatusSensor.
         # Starts as "unknown" and is updated by _async_manage_addon_notification.
         self._addon_status: str = ADDON_STATUS_UNKNOWN
@@ -475,6 +477,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def addon_version(self) -> str | None:
         """Return the version reported by GET /status (addon v0.3.1+), or None."""
         return self._addon_version
+
+    @property
+    def addon_scheduled_outputs(self) -> tuple[str, ...]:
+        """Return normalized scheduled output IDs reported by GET /status."""
+        return self._addon_scheduled_outputs
 
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
@@ -838,6 +845,36 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:  # pylint: disable=broad-except
             return None
 
+    @staticmethod
+    def _extract_addon_scheduled_outputs(status_data: dict[str, Any]) -> tuple[str, ...]:
+        """Normalize scheduled output IDs from GET /status payload.
+
+        Accepts either:
+        - ``scheduled_outputs: ["id1", "id2"]``
+        - ``scheduled_outputs: [{"template_id": "id1"}, {"id": "id2"}]``
+        """
+        raw_outputs = status_data.get("scheduled_outputs")
+        if not isinstance(raw_outputs, list):
+            return ()
+
+        result: list[str] = []
+        for item in raw_outputs:
+            output_id: str | None = None
+            if isinstance(item, str):
+                output_id = item
+            elif isinstance(item, dict):
+                for key in ("template_id", "output_id", "id", "name"):
+                    value = item.get(key)
+                    if isinstance(value, str):
+                        output_id = value
+                        break
+            if output_id:
+                normalized = output_id.strip()
+                if normalized and normalized not in result:
+                    result.append(normalized)
+
+        return tuple(result)
+
     def _get_supervisor_addon_status(self) -> tuple[str, str | None]:
         """Return the Supervisor addon lifecycle state and its hostname URL.
 
@@ -1102,6 +1139,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._addon_available = False
         self._addon_api_url = ADDON_API_URL
         self._addon_version = None
+        self._addon_scheduled_outputs = ()
         for candidate_url in candidate_urls:
             # Try GET /status first (available since addon v0.3.1).  A positive
             # response means the addon is running and reports its version.
@@ -1112,6 +1150,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._addon_available = True
                 self._addon_api_url = candidate_url
                 self._addon_version = status_data.get("version")
+                self._addon_scheduled_outputs = self._extract_addon_scheduled_outputs(
+                    status_data
+                )
                 break
             # Fallback: GET /health for addon versions prior to v0.3.1.
             addon_health_ok = await self.hass.async_add_executor_job(
@@ -1848,6 +1889,26 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     )
                                 )
                                 if use_addon:
+                                    available_scheduled_outputs = (
+                                        self._addon_scheduled_outputs
+                                    )
+                                    template_id: str | None = (
+                                        ADDON_COMMON_EXPENSES_TEMPLATE_ID
+                                    )
+                                    if (
+                                        available_scheduled_outputs
+                                        and ADDON_COMMON_EXPENSES_TEMPLATE_ID
+                                        not in available_scheduled_outputs
+                                    ):
+                                        template_id = None
+                                        _LOGGER.debug(
+                                            "Concierge Services [%s]: addon /status "
+                                            "scheduled_outputs=%s does not include '%s'; "
+                                            "using raw OCR response",
+                                            service_name,
+                                            list(available_scheduled_outputs),
+                                            ADDON_COMMON_EXPENSES_TEMPLATE_ID,
+                                        )
                                     _LOGGER.info(
                                         "Concierge Services [%s]: using Concierge "
                                         "addon OCR API for PDF '%s'",
@@ -1857,7 +1918,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     addon_ocr_json = self._sync_ocr_pdf_via_addon(
                                         pdf_path,
                                         self._addon_api_url,
-                                        template_id=ADDON_COMMON_EXPENSES_TEMPLATE_ID,
+                                        template_id=template_id,
                                     )
                                     pdf_attrs: dict[str, Any] = (
                                         extract_attributes_from_addon_ocr_json(
@@ -2473,8 +2534,9 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
 
     When the addon exposes ``GET /status`` (v0.3.1+) and responds positively, the
     ``addon_version`` extra state attribute is populated with the reported version
-    string.  For older addon versions the integration falls back to ``GET /health``
-    and ``addon_version`` is omitted.
+    string. If provided, ``scheduled_outputs`` is also exposed from that response.
+    For older addon versions the integration falls back to ``GET /health`` and
+    these attributes are omitted.
 
     State changes are persisted automatically by the HA recorder and logged at
     INFO level by the coordinator whenever the status transitions.
@@ -2518,16 +2580,20 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra state attributes, including the addon version when known.
+        """Return extra state attributes from GET /status when available.
 
         The ``addon_version`` attribute is populated from the ``GET /status``
         response (available since addon v0.3.1).  It is ``None`` when the addon
         is not running or when the older ``/health``-only API was used.
         """
+        attrs: dict[str, Any] = {}
         version = self.coordinator.addon_version
         if version is not None:
-            return {"addon_version": version}
-        return {}
+            attrs["addon_version"] = version
+        scheduled_outputs = self.coordinator.addon_scheduled_outputs
+        if scheduled_outputs:
+            attrs["scheduled_outputs"] = list(scheduled_outputs)
+        return attrs
 
     @property
     def icon(self) -> str:

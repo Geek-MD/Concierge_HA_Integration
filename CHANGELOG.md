@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to the previous raw OCR JSON path and, if needed, to the internal PDF
     extractor exactly as before.
 
+- **Addon `/status` scheduled outputs are now consumed by the integration** (`sensor.py`, `README.md`):
+
+  The coordinator now parses an optional `scheduled_outputs` field from
+  `GET /status` and stores it with the addon runtime metadata.
+
+  **Behaviour:**
+
+  - `sensor.concierge_services_addon_status` now exposes `scheduled_outputs`
+    (when present in the add-on response) alongside `addon_version`.
+  - If `scheduled_outputs` is present and does not include
+    `coe_administraciones`, the integration skips the structured-template call
+    and requests raw OCR directly from the addon.
+
 ## [1.6.0] - 2026-07-13
 
 ### Changed
