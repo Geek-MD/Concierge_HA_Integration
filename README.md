@@ -120,13 +120,18 @@
   [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and
   running, **Gastos Comunes** and **Agua Caliente** PDF analysis automatically delegates
   to the addon's OCR REST API (PaddleOCR) instead of the built-in pdfminer extractor,
-  improving accuracy on image-backed or non-standard PDFs. If the addon is not installed,
-  or if it is installed but not running, a **persistent notification** appears in Home
-  Assistant immediately. If Supervisor reports that the addon is **starting** (or it is
-  already **started** but its `/status` or `/health` endpoint is still not ready), the integration waits
-  up to **5 minutes** before raising a startup-problem notification. All addon notices
-  disappear automatically once the addon becomes healthy. Repeated recursive checks do
-  not recreate the same addon notice unless the underlying addon state changes.
+  improving accuracy on image-backed or non-standard PDFs. Starting in **v1.6.1**,
+  the integration first requests the addon's built-in
+  `coe_administraciones` structured template output for those PDFs and falls back
+  to raw OCR parsing only when the structured response does not provide usable
+  values. If the addon is not installed, or if it is installed but not running,
+  a **persistent notification** appears in Home Assistant immediately. If
+  Supervisor reports that the addon is **starting** (or it is already
+  **started** but its `/status` or `/health` endpoint is still not ready), the
+  integration waits up to **5 minutes** before raising a startup-problem
+  notification. All addon notices disappear automatically once the addon
+  becomes healthy. Repeated recursive checks do not recreate the same addon
+  notice unless the underlying addon state changes.
 
 - 🧩 **Addon status sensor** (v1.5.1): A dedicated diagnostic sensor
   `sensor.concierge_services_addon_status` reports the Concierge OCR addon lifecycle on the integration update cycle
@@ -143,7 +148,9 @@
 
   When the addon is `running` and exposes `GET /status` (addon v0.3.1+), the sensor also
   exposes an **`addon_version`** extra state attribute with the addon's reported version string.
-  For older addon versions the `/health` fallback is used and `addon_version` is not set.
+  If the add-on includes `scheduled_outputs` in `/status`, they are exposed as an additional
+  `scheduled_outputs` attribute. For older addon versions the `/health` fallback is used and
+  these attributes are not set.
 
 - 📋 **Status Binary Sensor Attributes**: The `binary_sensor.concierge_{id}_status`
   entity always exposes the following attributes (missing values default to `0`):
@@ -339,6 +346,7 @@ data extracted from the same "Nota de Cobro" PDF:
 For every Gastos Comunes bill that arrives, the integration:
 
 1. **Check addon availability** — on Home Assistant Supervisor installs, the integration checks the `concierge_ocr` addon state from Supervisor metadata first and then probes `GET /status` (addon v0.3.1+) using the addon hostname when available (falling back to `GET /health` for older addons and to `http://localhost:8099` outside Supervisor).
+   - If `/status` reports `scheduled_outputs`, the integration uses that list to decide whether to request the structured `coe_administraciones` output or go directly to raw OCR.
    - **Addon available →** steps 2–3 use PaddleOCR via the addon REST API.
    - **Addon not available →** steps 2–3 use the internal pdfminer extractor.
 2. **Extract PDF content** — text is obtained from the PDF (addon OCR or pdfminer).
@@ -464,7 +472,7 @@ The integration creates a hub device (named after the configured friendly name, 
 - **Addon Status Sensor** (Diagnostic)
   - **Entity ID**: `sensor.concierge_services_addon_status`
   - **State**: one of `unknown`, `unsupported`, `not_installed`, `installed`, `starting`, `running`
-  - **Attributes**: `addon_version` (version string reported by `GET /status`, present only when addon v0.3.1+ is running)
+  - **Attributes**: `addon_version` (version string reported by `GET /status`, present only when addon v0.3.1+ is running), `scheduled_outputs` (list of output/template IDs reported by `GET /status`, when available)
   - **Purpose**: reports the Concierge OCR addon lifecycle state
 
 ### Service Devices (Auto-detected or manually added)

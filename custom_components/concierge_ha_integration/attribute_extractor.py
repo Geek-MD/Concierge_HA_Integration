@@ -1668,6 +1668,8 @@ _GC_OPTIONAL_JSON_IGNORE_TOKEN_GROUPS: tuple[tuple[str, ...], ...] = (
 )
 
 _GC_DATE_RE = re.compile(r"(\d{2}[/-]\d{2}[/-]\d{4})")
+_ALICUOTA_RE = re.compile(r"0[,.](\d{4,6})\s*%")
+_ALICUOTA_PRECISION = 4
 _GC_AMOUNT_CAPTURE_RE = re.compile(
     r"\$?\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
 )
@@ -3060,6 +3062,267 @@ def _extract_common_expenses_pdf_attributes(
 # Concierge addon OCR JSON helpers
 # ---------------------------------------------------------------------------
 
+def _addon_structured_field(
+    sections: dict[str, Any],
+    section_id: str,
+    field_key: str,
+) -> str | None:
+    """Return a trimmed field value from an addon structured-response section."""
+    section = sections.get(section_id)
+    if not isinstance(section, dict):
+        return None
+    value = section.get(field_key)
+    if value in ("", None):
+        return None
+    return str(value).strip()
+
+
+def _extract_common_expenses_from_addon_structured_json(
+    addon_json: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract common-expenses attributes from addon template-driven JSON."""
+    sections = addon_json.get("sections")
+    if not isinstance(sections, dict):
+        return {}
+
+    attrs: dict[str, Any] = {}
+    confidence: dict[str, float] = {}
+    billing_year = ""
+
+    note_row = _addon_structured_field(
+        sections, "tabla_nota_cobro", "nota_cobro_mes_depto"
+    )
+    if note_row:
+        period_m = _GC_BILLING_PERIOD_RE.search(note_row)
+        if period_m:
+            month_label = period_m.group(1)
+            month_name = month_label.lower()
+            billing_year = period_m.group(2)
+            attrs["billing_period_month"] = month_label.capitalize()
+            attrs["billing_period_year"] = billing_year
+            confidence["billing_period_month"] = CONF_SCORE_OCR
+            confidence["billing_period_year"] = CONF_SCORE_OCR
+            month_num = _MONTH_NAME_TO_NUM.get(month_name[:3], 0)
+            if month_num:
+                attrs["billing_period_start"] = f"01-{month_num:02d}-{billing_year}"
+                last_day = calendar.monthrange(int(billing_year), month_num)[1]
+                attrs["billing_period_end"] = f"{last_day:02d}-{month_num:02d}-{billing_year}"
+                confidence["billing_period_start"] = CONF_SCORE_OCR
+                confidence["billing_period_end"] = CONF_SCORE_OCR
+        apt_m = _GC_APARTMENT_RE.search(note_row)
+        if apt_m:
+            attrs["apartment"] = apt_m.group(1)
+            confidence["apartment"] = CONF_SCORE_OCR
+
+    emission = _addon_structured_field(sections, "fechas_emision", "fecha_emision")
+    if emission:
+        emission_norm = emission.replace("/", "-")
+        attrs["emission_date"] = emission_norm
+        confidence["emission_date"] = CONF_SCORE_OCR
+        year_match = re.search(r"(\d{4})$", emission_norm)
+        if year_match:
+            billing_year = year_match.group(1)
+
+    due = _addon_structured_field(sections, "fechas_emision", "pagar_hasta")
+    if due:
+        due_norm = due.replace("/", "-")
+        attrs["due_date"] = _gc_fix_year(due_norm, billing_year) if billing_year else due_norm
+        confidence["due_date"] = CONF_SCORE_OCR
+
+    building_name = _addon_structured_field(
+        sections, "datos_comunidad", "nombre_edificio"
+    )
+    if building_name:
+        if not building_name.lower().startswith("edificio "):
+            building_name = f"Edificio {building_name}"
+        attrs["building_name"] = building_name
+        confidence["building_name"] = CONF_SCORE_OCR
+
+    building_rut_raw = _addon_structured_field(sections, "datos_comunidad", "rut")
+    if building_rut_raw:
+        rut_match = _GC_RUT_RE.search(building_rut_raw)
+        if rut_match:
+            attrs["building_rut"] = rut_match.group(1)
+            confidence["building_rut"] = CONF_SCORE_OCR
+
+    address = _addon_structured_field(sections, "datos_comunidad", "direccion")
+    city = _addon_structured_field(sections, "datos_comunidad", "ciudad")
+    if address or city:
+        if address and city:
+            attrs["address"] = f"{address} - {city}"
+        else:
+            attrs["address"] = address or city or ""
+        confidence["address"] = CONF_SCORE_OCR
+
+    owner_name = _addon_structured_field(sections, "tabla_nota_cobro", "copropietario")
+    if owner_name:
+        attrs["owner_name"] = owner_name
+        confidence["owner_name"] = CONF_SCORE_OCR
+
+    alicuota_raw = _addon_structured_field(
+        sections, "tabla_nota_cobro", "alicuota_total"
+    )
+    if alicuota_raw:
+        ali_match = _ALICUOTA_RE.search(alicuota_raw)
+        if ali_match:
+            try:
+                decimal_digits = ali_match.group(1)
+                attrs["alicuota"] = round(
+                    int(decimal_digits) / (10 ** len(decimal_digits)),
+                    _ALICUOTA_PRECISION,
+                )
+                confidence["alicuota"] = CONF_SCORE_OCR
+            except (TypeError, ValueError):
+                pass
+
+    building_total_raw = _addon_structured_field(
+        sections, "tabla_nota_cobro", "gasto_comun_a_prorratear"
+    )
+    if building_total_raw:
+        attrs["building_total_expense"] = _parse_amount_to_int(building_total_raw)
+        confidence["building_total_expense"] = CONF_SCORE_OCR
+
+    gastos_raw = _addon_structured_field(
+        sections, "tabla_desglose_departamento", "gasto_comun_monto"
+    )
+    if gastos_raw:
+        attrs["gastos_comunes_amount"] = _parse_amount_to_int(gastos_raw)
+        confidence["gastos_comunes_amount"] = CONF_SCORE_OCR
+
+    fondos_pct_raw = _addon_structured_field(
+        sections, "tabla_desglose_departamento", "provision_fondos_porcentaje"
+    )
+    if fondos_pct_raw:
+        pct_match = re.search(r"(\d+)", fondos_pct_raw)
+        if pct_match:
+            attrs["fondos_pct"] = int(pct_match.group(1))
+            confidence["fondos_pct"] = CONF_SCORE_OCR
+
+    fondos_raw = _addon_structured_field(
+        sections, "tabla_desglose_departamento", "provision_fondos_monto"
+    )
+    if fondos_raw:
+        attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
+        confidence["fondos_amount"] = CONF_SCORE_OCR
+
+    subtotal_departamento_raw = _addon_structured_field(
+        sections, "tabla_desglose_departamento", "subtotal_departamento"
+    )
+    if subtotal_departamento_raw:
+        attrs["subtotal_departamento"] = _parse_amount_to_int(subtotal_departamento_raw)
+        confidence["subtotal_departamento"] = CONF_SCORE_OCR
+
+    hw_prev = _addon_structured_field(
+        sections, "tabla_consumos_generales", "agua_caliente_lectura_anterior"
+    )
+    if hw_prev:
+        attrs["hot_water_reading_prev"] = _parse_meter_reading(hw_prev)
+        confidence["hot_water_reading_prev"] = CONF_SCORE_OCR
+
+    hw_curr = _addon_structured_field(
+        sections, "tabla_consumos_generales", "agua_caliente_lectura_actual"
+    )
+    if hw_curr:
+        attrs["hot_water_reading_curr"] = _parse_meter_reading(hw_curr)
+        confidence["hot_water_reading_curr"] = CONF_SCORE_OCR
+
+    hw_consumption = _addon_structured_field(
+        sections, "tabla_consumos_generales", "agua_caliente_consumos"
+    )
+    if hw_consumption:
+        attrs["hot_water_consumption"] = _parse_meter_reading(hw_consumption)
+        confidence["hot_water_consumption"] = CONF_SCORE_OCR
+    elif (
+        attrs.get("hot_water_reading_prev") is not None
+        and attrs.get("hot_water_reading_curr") is not None
+    ):
+        derived_consumption = round(
+            attrs["hot_water_reading_curr"] - attrs["hot_water_reading_prev"], 6
+        )
+        if derived_consumption >= 0:
+            attrs["hot_water_consumption"] = derived_consumption
+            confidence["hot_water_consumption"] = CONF_SCORE_DERIVED
+    if "hot_water_consumption" in attrs:
+        attrs["hot_water_consumption_unit"] = "m³"
+        confidence["hot_water_consumption_unit"] = CONF_SCORE_OCR
+
+    hw_cost = _addon_structured_field(
+        sections, "tabla_consumos_generales", "agua_caliente_valor"
+    )
+    if hw_cost:
+        attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(hw_cost)
+        confidence["hot_water_cost_per_m3"] = CONF_SCORE_OCR
+
+    hw_amount = _addon_structured_field(
+        sections, "tabla_consumos_generales", "agua_caliente_total"
+    )
+    if hw_amount:
+        attrs["hot_water_amount"] = _parse_amount_to_int(hw_amount)
+        confidence["hot_water_amount"] = CONF_SCORE_OCR
+
+    subtotal_consumo_raw = _addon_structured_field(
+        sections, "tabla_consumos_generales", "subtotal_consumo"
+    )
+    if subtotal_consumo_raw:
+        subtotal_consumo = _parse_amount_to_int(subtotal_consumo_raw)
+        attrs["subtotal_consumo"] = subtotal_consumo
+        confidence["subtotal_consumo"] = CONF_SCORE_OCR
+        if attrs.get("hot_water_amount") is None:
+            attrs["hot_water_amount"] = subtotal_consumo
+            confidence["hot_water_amount"] = CONF_SCORE_OCR
+
+    cargo_fijo_raw = _addon_structured_field(
+        sections, "tabla_gastos_por_unidad", "cargo_fijo"
+    )
+    if cargo_fijo_raw:
+        attrs["cargo_fijo"] = _parse_amount_to_int(cargo_fijo_raw)
+        confidence["cargo_fijo"] = CONF_SCORE_OCR
+
+    subtotal_recargos_raw = _addon_structured_field(
+        sections, "tabla_gastos_por_unidad", "subtotal_recarga"
+    )
+    if subtotal_recargos_raw:
+        attrs["subtotal_recargos"] = _parse_amount_to_int(subtotal_recargos_raw)
+        confidence["subtotal_recargos"] = CONF_SCORE_OCR
+
+    total_del_mes_raw = _addon_structured_field(
+        sections, "tabla_gastos_por_unidad", "total_del_mes"
+    )
+    obligaciones_raw = _addon_structured_field(
+        sections,
+        "tabla_gastos_por_unidad",
+        "total_a_pagar_obligaciones_economicas",
+    )
+    total_amount_raw = total_del_mes_raw or obligaciones_raw
+    if total_amount_raw:
+        attrs["total_amount"] = _parse_amount_to_int(total_amount_raw)
+        confidence["total_amount"] = CONF_SCORE_OCR
+
+    last_payment_date = _addon_structured_field(
+        sections, "tabla_nota_cobro", "fecha_ultimo_pago_tabla"
+    )
+    if last_payment_date:
+        lp_norm = last_payment_date.replace("/", "-")
+        attrs["last_payment_date"] = _gc_fix_year(lp_norm, billing_year) if billing_year else lp_norm
+        confidence["last_payment_date"] = CONF_SCORE_OCR
+
+    last_payment_amount = _addon_structured_field(
+        sections, "tabla_nota_cobro", "monto_ultimo_pago"
+    )
+    if last_payment_amount:
+        attrs["last_payment_amount"] = _parse_amount_to_int(last_payment_amount)
+        confidence["last_payment_amount"] = CONF_SCORE_OCR
+
+    last_payment_folio = _addon_structured_field(
+        sections, "tabla_nota_cobro", "folio_ultimo_pago"
+    )
+    if last_payment_folio:
+        attrs["last_payment_folio"] = last_payment_folio
+        confidence["last_payment_folio"] = CONF_SCORE_OCR
+
+    return _finalize_common_expenses_attrs(attrs, confidence)
+
+
 def _addon_ocr_json_to_ocrspace_format(
     addon_json: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -3151,6 +3414,16 @@ def extract_attributes_from_addon_ocr_json(
         Attribute dictionary in the same format as
         :func:`_extract_common_expenses_pdf_attributes`.
     """
+    if isinstance(addon_json.get("sections"), dict):
+        attrs = _extract_common_expenses_from_addon_structured_json(addon_json)
+        if attrs:
+            _LOGGER.info(
+                "Concierge addon: extracted GC attributes from structured template '%s' for '%s'",
+                addon_json.get("template_id", "unknown"),
+                pdf_path,
+            )
+            return attrs
+
     parsed_results = _addon_ocr_json_to_ocrspace_format(addon_json)
     if not parsed_results:
         _LOGGER.debug(

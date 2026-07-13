@@ -37,6 +37,7 @@ from .const import (
     ADDON_API_PORT,
     ADDON_API_URL,
     ADDON_CHECK_DELAY_SECONDS,
+    ADDON_COMMON_EXPENSES_TEMPLATE_ID,
     ADDON_NOTIFICATION_ID,
     ADDON_SLUG,
     ADDON_STARTUP_TIMEOUT_SECONDS,
@@ -425,6 +426,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Version string reported by GET /status (addon v0.3.1+). None when the
         # /status endpoint is not available (older addon) or addon is not running.
         self._addon_version: str | None = None
+        # Output/template identifiers reported by GET /status (when available).
+        # None means the field was absent from the /status payload (or /status has
+        # not yet been queried).  An empty tuple means the field was present but
+        # contained no entries.
+        self._addon_scheduled_outputs: tuple[str, ...] | None = None
         # Current addon lifecycle status exposed by ConciergeAddonStatusSensor.
         # Starts as "unknown" and is updated by _async_manage_addon_notification.
         self._addon_status: str = ADDON_STATUS_UNKNOWN
@@ -474,6 +480,16 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def addon_version(self) -> str | None:
         """Return the version reported by GET /status (addon v0.3.1+), or None."""
         return self._addon_version
+
+    @property
+    def addon_scheduled_outputs(self) -> tuple[str, ...] | None:
+        """Return normalized scheduled output IDs reported by GET /status.
+
+        Returns ``None`` when the ``scheduled_outputs`` field was absent from the
+        ``/status`` payload (including when ``/status`` has not yet been queried).
+        Returns an empty tuple when the field was present but contained no entries.
+        """
+        return self._addon_scheduled_outputs
 
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
@@ -837,6 +853,40 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:  # pylint: disable=broad-except
             return None
 
+    @staticmethod
+    def _extract_addon_scheduled_outputs(status_data: dict[str, Any]) -> tuple[str, ...] | None:
+        """Normalize scheduled output IDs from GET /status payload.
+
+        Returns ``None`` when the ``scheduled_outputs`` key is absent from the
+        payload so that callers can distinguish "field not present" from
+        "field present but empty".
+
+        Accepts either:
+        - ``scheduled_outputs: ["id1", "id2"]``
+        - ``scheduled_outputs: [{"template_id": "id1"}, {"id": "id2"}]``
+        """
+        raw_outputs = status_data.get("scheduled_outputs")
+        if not isinstance(raw_outputs, list):
+            return None
+
+        result: list[str] = []
+        for item in raw_outputs:
+            output_id: str | None = None
+            if isinstance(item, str):
+                output_id = item
+            elif isinstance(item, dict):
+                for key in ("template_id", "output_id", "id", "name"):
+                    value = item.get(key)
+                    if isinstance(value, str):
+                        output_id = value
+                        break
+            if output_id:
+                normalized = output_id.strip()
+                if normalized and normalized not in result:
+                    result.append(normalized)
+
+        return tuple(result)
+
     def _get_supervisor_addon_status(self) -> tuple[str, str | None]:
         """Return the Supervisor addon lifecycle state and its hostname URL.
 
@@ -987,7 +1037,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return ("stopped", addon_url)
 
     @staticmethod
-    def _sync_ocr_pdf_via_addon(pdf_path: str, addon_url: str = ADDON_API_URL) -> dict[str, Any]:
+    def _sync_ocr_pdf_via_addon(
+        pdf_path: str,
+        addon_url: str = ADDON_API_URL,
+        template_id: str | None = None,
+    ) -> dict[str, Any]:
         """Submit *pdf_path* to the Concierge addon OCR API synchronously.
 
         Calls ``POST {addon_url}/ocr/source`` with ``source_type=local_path`` and
@@ -997,9 +1051,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         This is designed to be called from an executor thread (blocking I/O).
         """
         try:
-            data = urllib.parse.urlencode(
-                {"source_type": "local_path", "source_value": pdf_path}
-            ).encode("utf-8")
+            form_data: dict[str, str] = {
+                "source_type": "local_path",
+                "source_value": pdf_path,
+            }
+            if template_id:
+                form_data["template_id"] = template_id
+            data = urllib.parse.urlencode(form_data).encode("utf-8")
             req = urllib.request.Request(
                 f"{addon_url}/ocr/source",
                 data=data,
@@ -1093,6 +1151,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._addon_available = False
         self._addon_api_url = ADDON_API_URL
         self._addon_version = None
+        self._addon_scheduled_outputs = None
         for candidate_url in candidate_urls:
             # Try GET /status first (available since addon v0.3.1).  A positive
             # response means the addon is running and reports its version.
@@ -1103,6 +1162,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._addon_available = True
                 self._addon_api_url = candidate_url
                 self._addon_version = status_data.get("version")
+                self._addon_scheduled_outputs = self._extract_addon_scheduled_outputs(
+                    status_data
+                )
                 break
             # Fallback: GET /health for addon versions prior to v0.3.1.
             addon_health_ok = await self.hass.async_add_executor_job(
@@ -1839,6 +1901,26 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     )
                                 )
                                 if use_addon:
+                                    available_scheduled_outputs = (
+                                        self._addon_scheduled_outputs
+                                    )
+                                    template_id: str | None = (
+                                        ADDON_COMMON_EXPENSES_TEMPLATE_ID
+                                    )
+                                    if (
+                                        available_scheduled_outputs is not None
+                                        and ADDON_COMMON_EXPENSES_TEMPLATE_ID
+                                        not in available_scheduled_outputs
+                                    ):
+                                        template_id = None
+                                        _LOGGER.debug(
+                                            "Concierge Services [%s]: addon /status "
+                                            "scheduled_outputs=%s does not include '%s'; "
+                                            "using raw OCR response",
+                                            service_name,
+                                            list(available_scheduled_outputs),
+                                            ADDON_COMMON_EXPENSES_TEMPLATE_ID,
+                                        )
                                     _LOGGER.info(
                                         "Concierge Services [%s]: using Concierge "
                                         "addon OCR API for PDF '%s'",
@@ -1846,18 +1928,39 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         pdf_path,
                                     )
                                     addon_ocr_json = self._sync_ocr_pdf_via_addon(
-                                        pdf_path, self._addon_api_url
+                                        pdf_path,
+                                        self._addon_api_url,
+                                        template_id=template_id,
                                     )
+                                    pdf_attrs: dict[str, Any] = (
+                                        extract_attributes_from_addon_ocr_json(
+                                            addon_ocr_json,
+                                            pdf_path=pdf_path,
+                                            json_dir=self._json_dir,
+                                        )
+                                        if addon_ocr_json
+                                        else {}
+                                    )
+                                    if not pdf_attrs:
+                                        # Structured template responses omit the
+                                        # raw OCR pages needed by the legacy
+                                        # extractor, so request a second raw-OCR
+                                        # payload before falling back to the
+                                        # internal PDF parser.
+                                        addon_ocr_json = self._sync_ocr_pdf_via_addon(
+                                            pdf_path,
+                                            self._addon_api_url,
+                                        )
                                     if addon_ocr_json:
                                         pdf_attrs = extract_attributes_from_addon_ocr_json(
                                             addon_ocr_json,
                                             pdf_path=pdf_path,
                                             json_dir=self._json_dir,
                                         )
-                                    else:
+                                    if not pdf_attrs:
                                         _LOGGER.warning(
                                             "Concierge Services [%s]: addon OCR "
-                                            "returned empty result for '%s'; "
+                                            "returned no usable attributes for '%s'; "
                                             "falling back to internal extractor",
                                             service_name,
                                             pdf_path,
@@ -2443,8 +2546,9 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
 
     When the addon exposes ``GET /status`` (v0.3.1+) and responds positively, the
     ``addon_version`` extra state attribute is populated with the reported version
-    string.  For older addon versions the integration falls back to ``GET /health``
-    and ``addon_version`` is omitted.
+    string. If provided, ``scheduled_outputs`` is also exposed from that response.
+    For older addon versions the integration falls back to ``GET /health`` and
+    these attributes are omitted.
 
     State changes are persisted automatically by the HA recorder and logged at
     INFO level by the coordinator whenever the status transitions.
@@ -2488,16 +2592,20 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra state attributes, including the addon version when known.
+        """Return extra state attributes from GET /status when available.
 
         The ``addon_version`` attribute is populated from the ``GET /status``
         response (available since addon v0.3.1).  It is ``None`` when the addon
         is not running or when the older ``/health``-only API was used.
         """
+        attrs: dict[str, Any] = {}
         version = self.coordinator.addon_version
         if version is not None:
-            return {"addon_version": version}
-        return {}
+            attrs["addon_version"] = version
+        scheduled_outputs = self.coordinator.addon_scheduled_outputs
+        if scheduled_outputs is not None:
+            attrs["scheduled_outputs"] = list(scheduled_outputs)
+        return attrs
 
     @property
     def icon(self) -> str:
