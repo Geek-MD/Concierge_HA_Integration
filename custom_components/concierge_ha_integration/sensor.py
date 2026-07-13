@@ -1867,6 +1867,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             json_dir=self._json_dir,
                                         )
                                     if not pdf_attrs:
+                                        # Structured template responses omit the
+                                        # raw OCR pages needed by the legacy
+                                        # extractor, so request a second raw-OCR
+                                        # payload before falling back to the
+                                        # internal PDF parser.
                                         addon_ocr_json = self._sync_ocr_pdf_via_addon(
                                             pdf_path,
                                             self._addon_api_url,

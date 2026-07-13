@@ -3163,7 +3163,7 @@ def _extract_common_expenses_from_addon_structured_json(
         ali_match = _GC_ALICUOTA_RE.search(alicuota_raw)
         if ali_match:
             try:
-                attrs["alicuota"] = round(float("0." + ali_match.group(1)), 4)
+                attrs["alicuota"] = round(float(f"0.{ali_match.group(1)}"), 4)
                 confidence["alicuota"] = CONF_SCORE_OCR
             except ValueError:
                 pass
