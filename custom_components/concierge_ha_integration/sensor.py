@@ -1102,7 +1102,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if status_data is not None:
                 self._addon_available = True
                 self._addon_api_url = candidate_url
-                self._addon_version = status_data.get("version") or None
+                self._addon_version = status_data.get("version")
                 break
             # Fallback: GET /health for addon versions prior to v0.3.1.
             addon_health_ok = await self.hass.async_add_executor_job(
