@@ -3235,10 +3235,12 @@ def _extract_common_expenses_from_addon_structured_json(
         attrs.get("hot_water_reading_prev") is not None
         and attrs.get("hot_water_reading_curr") is not None
     ):
-        attrs["hot_water_consumption"] = round(
+        derived_consumption = round(
             attrs["hot_water_reading_curr"] - attrs["hot_water_reading_prev"], 6
         )
-        confidence["hot_water_consumption"] = CONF_SCORE_DERIVED
+        if derived_consumption >= 0:
+            attrs["hot_water_consumption"] = derived_consumption
+            confidence["hot_water_consumption"] = CONF_SCORE_DERIVED
     if "hot_water_consumption" in attrs:
         attrs["hot_water_consumption_unit"] = "m³"
         confidence["hot_water_consumption_unit"] = CONF_SCORE_OCR
