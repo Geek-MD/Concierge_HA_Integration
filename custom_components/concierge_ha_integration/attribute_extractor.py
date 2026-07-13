@@ -1668,7 +1668,8 @@ _GC_OPTIONAL_JSON_IGNORE_TOKEN_GROUPS: tuple[tuple[str, ...], ...] = (
 )
 
 _GC_DATE_RE = re.compile(r"(\d{2}[/-]\d{2}[/-]\d{4})")
-_GC_ALICUOTA_RE = re.compile(r"0[,.](\d{4,6})\s*%")
+_ALICUOTA_RE = re.compile(r"0[,.](\d{4,6})\s*%")
+_ALICUOTA_PRECISION = 4
 _GC_AMOUNT_CAPTURE_RE = re.compile(
     r"\$?\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})?)"
 )
@@ -3162,13 +3163,13 @@ def _extract_common_expenses_from_addon_structured_json(
         sections, "tabla_nota_cobro", "alicuota_total"
     )
     if alicuota_raw:
-        ali_match = _GC_ALICUOTA_RE.search(alicuota_raw)
+        ali_match = _ALICUOTA_RE.search(alicuota_raw)
         if ali_match:
             try:
                 decimal_digits = ali_match.group(1)
                 attrs["alicuota"] = round(
                     int(decimal_digits) / (10 ** len(decimal_digits)),
-                    4,
+                    _ALICUOTA_PRECISION,
                 )
                 confidence["alicuota"] = CONF_SCORE_OCR
             except (TypeError, ValueError):

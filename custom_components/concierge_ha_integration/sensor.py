@@ -1859,13 +1859,15 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         self._addon_api_url,
                                         template_id=ADDON_COMMON_EXPENSES_TEMPLATE_ID,
                                     )
-                                    pdf_attrs: dict[str, Any] = {}
-                                    if addon_ocr_json:
-                                        pdf_attrs = extract_attributes_from_addon_ocr_json(
+                                    pdf_attrs: dict[str, Any] = (
+                                        extract_attributes_from_addon_ocr_json(
                                             addon_ocr_json,
                                             pdf_path=pdf_path,
                                             json_dir=self._json_dir,
                                         )
+                                        if addon_ocr_json
+                                        else {}
+                                    )
                                     if not pdf_attrs:
                                         # Structured template responses omit the
                                         # raw OCR pages needed by the legacy
