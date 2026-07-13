@@ -427,7 +427,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # /status endpoint is not available (older addon) or addon is not running.
         self._addon_version: str | None = None
         # Output/template identifiers reported by GET /status (when available).
-        self._addon_scheduled_outputs: tuple[str, ...] = ()
+        # None means the field was absent from the /status payload (or /status has
+        # not yet been queried).  An empty tuple means the field was present but
+        # contained no entries.
+        self._addon_scheduled_outputs: tuple[str, ...] | None = None
         # Current addon lifecycle status exposed by ConciergeAddonStatusSensor.
         # Starts as "unknown" and is updated by _async_manage_addon_notification.
         self._addon_status: str = ADDON_STATUS_UNKNOWN
@@ -479,8 +482,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._addon_version
 
     @property
-    def addon_scheduled_outputs(self) -> tuple[str, ...]:
-        """Return normalized scheduled output IDs reported by GET /status."""
+    def addon_scheduled_outputs(self) -> tuple[str, ...] | None:
+        """Return normalized scheduled output IDs reported by GET /status.
+
+        Returns ``None`` when the ``scheduled_outputs`` field was absent from the
+        ``/status`` payload (including when ``/status`` has not yet been queried).
+        Returns an empty tuple when the field was present but contained no entries.
+        """
         return self._addon_scheduled_outputs
 
     async def async_set_manual_value(
@@ -846,8 +854,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return None
 
     @staticmethod
-    def _extract_addon_scheduled_outputs(status_data: dict[str, Any]) -> tuple[str, ...]:
+    def _extract_addon_scheduled_outputs(status_data: dict[str, Any]) -> tuple[str, ...] | None:
         """Normalize scheduled output IDs from GET /status payload.
+
+        Returns ``None`` when the ``scheduled_outputs`` key is absent from the
+        payload so that callers can distinguish "field not present" from
+        "field present but empty".
 
         Accepts either:
         - ``scheduled_outputs: ["id1", "id2"]``
@@ -855,7 +867,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         raw_outputs = status_data.get("scheduled_outputs")
         if not isinstance(raw_outputs, list):
-            return ()
+            return None
 
         result: list[str] = []
         for item in raw_outputs:
@@ -1139,7 +1151,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._addon_available = False
         self._addon_api_url = ADDON_API_URL
         self._addon_version = None
-        self._addon_scheduled_outputs = ()
+        self._addon_scheduled_outputs = None
         for candidate_url in candidate_urls:
             # Try GET /status first (available since addon v0.3.1).  A positive
             # response means the addon is running and reports its version.
@@ -1896,7 +1908,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         ADDON_COMMON_EXPENSES_TEMPLATE_ID
                                     )
                                     if (
-                                        available_scheduled_outputs
+                                        available_scheduled_outputs is not None
                                         and ADDON_COMMON_EXPENSES_TEMPLATE_ID
                                         not in available_scheduled_outputs
                                     ):
@@ -2591,7 +2603,7 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
         if version is not None:
             attrs["addon_version"] = version
         scheduled_outputs = self.coordinator.addon_scheduled_outputs
-        if scheduled_outputs:
+        if scheduled_outputs is not None:
             attrs["scheduled_outputs"] = list(scheduled_outputs)
         return attrs
 
