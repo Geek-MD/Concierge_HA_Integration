@@ -3146,9 +3146,10 @@ def _extract_common_expenses_from_addon_structured_json(
     address = _addon_structured_field(sections, "datos_comunidad", "direccion")
     city = _addon_structured_field(sections, "datos_comunidad", "ciudad")
     if address or city:
-        attrs["address"] = (
-            f"{address} - {city}" if address and city else (address or city or "")
-        )
+        if address and city:
+            attrs["address"] = f"{address} - {city}"
+        else:
+            attrs["address"] = address or city or ""
         confidence["address"] = CONF_SCORE_OCR
 
     owner_name = _addon_structured_field(sections, "tabla_nota_cobro", "copropietario")
@@ -3163,9 +3164,13 @@ def _extract_common_expenses_from_addon_structured_json(
         ali_match = _GC_ALICUOTA_RE.search(alicuota_raw)
         if ali_match:
             try:
-                attrs["alicuota"] = round(float(f"0.{ali_match.group(1)}"), 4)
+                decimal_digits = ali_match.group(1)
+                attrs["alicuota"] = round(
+                    int(decimal_digits) / (10 ** len(decimal_digits)),
+                    4,
+                )
                 confidence["alicuota"] = CONF_SCORE_OCR
-            except ValueError:
+            except (TypeError, ValueError):
                 pass
 
     building_total_raw = _addon_structured_field(
