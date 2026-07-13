@@ -3094,9 +3094,10 @@ def _extract_common_expenses_from_addon_structured_json(
     if note_row:
         period_m = _GC_BILLING_PERIOD_RE.search(note_row)
         if period_m:
-            month_name = period_m.group(1).lower()
+            month_label = period_m.group(1)
+            month_name = month_label.lower()
             billing_year = period_m.group(2)
-            attrs["billing_period_month"] = period_m.group(1).capitalize()
+            attrs["billing_period_month"] = month_label.capitalize()
             attrs["billing_period_year"] = billing_year
             confidence["billing_period_month"] = CONF_SCORE_OCR
             confidence["billing_period_year"] = CONF_SCORE_OCR
@@ -3281,13 +3282,15 @@ def _extract_common_expenses_from_addon_structured_json(
         attrs["subtotal_recargos"] = _parse_amount_to_int(subtotal_recargos_raw)
         confidence["subtotal_recargos"] = CONF_SCORE_OCR
 
-    total_amount_raw = _addon_structured_field(
+    total_del_mes_raw = _addon_structured_field(
         sections, "tabla_gastos_por_unidad", "total_del_mes"
-    ) or _addon_structured_field(
+    )
+    obligaciones_raw = _addon_structured_field(
         sections,
         "tabla_gastos_por_unidad",
         "total_a_pagar_obligaciones_economicas",
     )
+    total_amount_raw = total_del_mes_raw or obligaciones_raw
     if total_amount_raw:
         attrs["total_amount"] = _parse_amount_to_int(total_amount_raw)
         confidence["total_amount"] = CONF_SCORE_OCR
