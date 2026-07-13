@@ -422,6 +422,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tracks whether the Concierge addon is available. None = not yet checked.
         self._addon_available: bool | None = None
         self._addon_api_url: str = ADDON_API_URL
+        # Version string reported by GET /status (addon v0.3.1+). None when the
+        # /status endpoint is not available (older addon) or addon is not running.
+        self._addon_version: str | None = None
         # Current addon lifecycle status exposed by ConciergeAddonStatusSensor.
         # Starts as "unknown" and is updated by _async_manage_addon_notification.
         self._addon_status: str = ADDON_STATUS_UNKNOWN
@@ -466,6 +469,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def addon_status(self) -> str:
         """Return the current Concierge OCR addon lifecycle status."""
         return self._addon_status
+
+    @property
+    def addon_version(self) -> str | None:
+        """Return the version reported by GET /status (addon v0.3.1+), or None."""
+        return self._addon_version
 
     async def async_set_manual_value(
         self, subentry_id: str, attribute: str, value: Any
@@ -804,6 +812,31 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:  # pylint: disable=broad-except
             return False
 
+    @staticmethod
+    def _sync_get_addon_status_response(addon_url: str) -> dict[str, Any] | None:
+        """Call GET /status on the Concierge addon synchronously (runs in executor).
+
+        Available since addon v0.3.1.  Returns the parsed JSON dict when the
+        endpoint responds with HTTP 200, ``status == "ok"`` and ``running == True``.
+        Returns ``None`` on any error (connection refused, timeout, unexpected
+        payload, HTTP error), so callers can fall back to ``/health``.
+        """
+        try:
+            req = urllib.request.Request(
+                f"{addon_url}/status",
+                method="GET",
+                headers={"Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+                if resp.status != 200:
+                    return None
+                data: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
+                if data.get("status") == "ok" and data.get("running") is True:
+                    return data
+                return None
+        except Exception:  # pylint: disable=broad-except
+            return None
+
     def _get_supervisor_addon_status(self) -> tuple[str, str | None]:
         """Return the Supervisor addon lifecycle state and its hostname URL.
 
@@ -1059,7 +1092,19 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._addon_available = False
         self._addon_api_url = ADDON_API_URL
+        self._addon_version = None
         for candidate_url in candidate_urls:
+            # Try GET /status first (available since addon v0.3.1).  A positive
+            # response means the addon is running and reports its version.
+            status_data = await self.hass.async_add_executor_job(
+                self._sync_get_addon_status_response, candidate_url
+            )
+            if status_data is not None:
+                self._addon_available = True
+                self._addon_api_url = candidate_url
+                self._addon_version = status_data.get("version") or None
+                break
+            # Fallback: GET /health for addon versions prior to v0.3.1.
             addon_health_ok = await self.hass.async_add_executor_job(
                 self._sync_check_addon, candidate_url
             )
@@ -1072,9 +1117,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._addon_start_wait_since = None
             if was_available is not True:
                 _LOGGER.info(
-                    "Concierge Services: Concierge addon detected at %s; "
+                    "Concierge Services: Concierge addon detected at %s%s; "
                     "using addon OCR for common-expenses and hot-water PDFs",
                     self._addon_api_url,
+                    f" (v{self._addon_version})" if self._addon_version else "",
                 )
             _set_addon_status(ADDON_STATUS_RUNNING)
             _dismiss_addon_notification()
@@ -2393,7 +2439,12 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
     * ``not_installed`` — The addon is absent from Supervisor.
     * ``installed``     — The addon is installed but currently stopped.
     * ``starting``      — Supervisor reports the addon is starting up.
-    * ``running``       — The addon is started and its ``/health`` endpoint is healthy.
+    * ``running``       — The addon is started and its ``/status`` (or ``/health``) endpoint is healthy.
+
+    When the addon exposes ``GET /status`` (v0.3.1+) and responds positively, the
+    ``addon_version`` extra state attribute is populated with the reported version
+    string.  For older addon versions the integration falls back to ``GET /health``
+    and ``addon_version`` is omitted.
 
     State changes are persisted automatically by the HA recorder and logged at
     INFO level by the coordinator whenever the status transitions.
@@ -2434,6 +2485,19 @@ class ConciergeAddonStatusSensor(CoordinatorEntity[ConciergeServicesCoordinator]
     def native_value(self) -> str:
         """Return the current addon status string."""
         return self.coordinator.addon_status
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes, including the addon version when known.
+
+        The ``addon_version`` attribute is populated from the ``GET /status``
+        response (available since addon v0.3.1).  It is ``None`` when the addon
+        is not running or when the older ``/health``-only API was used.
+        """
+        version = self.coordinator.addon_version
+        if version is not None:
+            return {"addon_version": version}
+        return {}
 
     @property
     def icon(self) -> str:

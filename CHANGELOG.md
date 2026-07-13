@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-07-13
+
+### Changed
+
+- **Addon status check now uses `GET /status` (addon v0.3.1+) with `GET /health` as fallback** (`sensor.py`, `manifest.json`):
+
+  The Concierge OCR addon v0.3.1 introduced a new `GET /status` endpoint that
+  returns `{"status": "ok", "running": true, "version": "<version>"}`.  Starting
+  with this integration release, the coordinator queries `GET /status` first on
+  every update cycle when checking whether the addon is reachable and healthy.
+
+  **Behaviour:**
+
+  - If `GET /status` responds with HTTP 200 and `status == "ok"` and
+    `running == true` → the sensor transitions to / stays in **`running`**, and
+    the reported addon version is stored internally.
+  - If `GET /status` fails for any reason (connection error, timeout, HTTP
+    error, unexpected payload — e.g. addon older than v0.3.1 that does not
+    expose the endpoint) → the integration falls back to the existing
+    `GET /health` check exactly as before.
+
+  All other status transitions (`unknown`, `unsupported`, `not_installed`,
+  `installed`, `starting`) and the full notification logic are completely
+  unchanged.
+
+- **Addon version exposed as extra state attribute** (`sensor.py`):
+
+  `sensor.concierge_services_addon_status` now exposes an `addon_version`
+  extra state attribute when the addon replies via `GET /status`:
+
+  | Attribute | Value |
+  |---|---|
+  | `addon_version` | Version string reported by the addon (e.g. `"0.3.1"`), or absent when the `/health` fallback was used or the addon is not running. |
+
 ## [1.5.2] - 2026-07-11
 
 ### Fixed
