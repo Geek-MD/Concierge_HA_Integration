@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-07-13
+
+### Changed
+
+- **Concierge addon common-expenses OCR now uses the addon's structured template response first** (`sensor.py`, `attribute_extractor.py`, `const.py`, `manifest.json`, `README.md`):
+
+  When the Concierge OCR addon is available, the integration now requests the
+  built-in `coe_administraciones` template from the addon before parsing Gastos
+  Comunes / Agua Caliente PDFs. This allows the integration to consume the
+  template-driven field extraction introduced in addon v0.3.x directly instead
+  of always reprocessing raw OCR lines locally.
+
+  **Behaviour:**
+
+  - The integration first calls `POST /ocr/source` with `template_id=coe_administraciones`.
+  - If the addon returns structured `sections` data, the integration maps that
+    response directly into the existing Concierge attributes.
+  - If the addon returns no usable structured values, the integration falls back
+    to the previous raw OCR JSON path and, if needed, to the internal PDF
+    extractor exactly as before.
+
 ## [1.6.0] - 2026-07-13
 
 ### Changed

@@ -120,13 +120,18 @@
   [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and
   running, **Gastos Comunes** and **Agua Caliente** PDF analysis automatically delegates
   to the addon's OCR REST API (PaddleOCR) instead of the built-in pdfminer extractor,
-  improving accuracy on image-backed or non-standard PDFs. If the addon is not installed,
-  or if it is installed but not running, a **persistent notification** appears in Home
-  Assistant immediately. If Supervisor reports that the addon is **starting** (or it is
-  already **started** but its `/status` or `/health` endpoint is still not ready), the integration waits
-  up to **5 minutes** before raising a startup-problem notification. All addon notices
-  disappear automatically once the addon becomes healthy. Repeated recursive checks do
-  not recreate the same addon notice unless the underlying addon state changes.
+  improving accuracy on image-backed or non-standard PDFs. Starting in **v1.6.1**,
+  the integration first requests the addon's built-in
+  `coe_administraciones` structured template output for those PDFs and falls back
+  to raw OCR parsing only when the structured response does not provide usable
+  values. If the addon is not installed, or if it is installed but not running,
+  a **persistent notification** appears in Home Assistant immediately. If
+  Supervisor reports that the addon is **starting** (or it is already
+  **started** but its `/status` or `/health` endpoint is still not ready), the
+  integration waits up to **5 minutes** before raising a startup-problem
+  notification. All addon notices disappear automatically once the addon
+  becomes healthy. Repeated recursive checks do not recreate the same addon
+  notice unless the underlying addon state changes.
 
 - 🧩 **Addon status sensor** (v1.5.1): A dedicated diagnostic sensor
   `sensor.concierge_services_addon_status` reports the Concierge OCR addon lifecycle on the integration update cycle

@@ -49,6 +49,7 @@ CONF_OCRSPACE_API_KEY = "ocrspace_api_key"
 ADDON_SLUG = "concierge_ocr"
 ADDON_API_PORT = 8099
 ADDON_API_URL = "http://localhost:8099"
+ADDON_COMMON_EXPENSES_TEMPLATE_ID = "coe_administraciones"
 ADDON_NOTIFICATION_ID = "concierge_addon_not_installed"
 # Maximum seconds to wait while the addon is reported as starting (or started
 # but still failing health checks) before raising a problem notification.

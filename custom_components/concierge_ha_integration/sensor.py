@@ -37,6 +37,7 @@ from .const import (
     ADDON_API_PORT,
     ADDON_API_URL,
     ADDON_CHECK_DELAY_SECONDS,
+    ADDON_COMMON_EXPENSES_TEMPLATE_ID,
     ADDON_NOTIFICATION_ID,
     ADDON_SLUG,
     ADDON_STARTUP_TIMEOUT_SECONDS,
@@ -987,7 +988,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return ("stopped", addon_url)
 
     @staticmethod
-    def _sync_ocr_pdf_via_addon(pdf_path: str, addon_url: str = ADDON_API_URL) -> dict[str, Any]:
+    def _sync_ocr_pdf_via_addon(
+        pdf_path: str,
+        addon_url: str = ADDON_API_URL,
+        template_id: str | None = None,
+    ) -> dict[str, Any]:
         """Submit *pdf_path* to the Concierge addon OCR API synchronously.
 
         Calls ``POST {addon_url}/ocr/source`` with ``source_type=local_path`` and
@@ -997,9 +1002,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         This is designed to be called from an executor thread (blocking I/O).
         """
         try:
-            data = urllib.parse.urlencode(
-                {"source_type": "local_path", "source_value": pdf_path}
-            ).encode("utf-8")
+            form_data: dict[str, str] = {
+                "source_type": "local_path",
+                "source_value": pdf_path,
+            }
+            if template_id:
+                form_data["template_id"] = template_id
+            data = urllib.parse.urlencode(form_data).encode("utf-8")
             req = urllib.request.Request(
                 f"{addon_url}/ocr/source",
                 data=data,
@@ -1846,18 +1855,32 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         pdf_path,
                                     )
                                     addon_ocr_json = self._sync_ocr_pdf_via_addon(
-                                        pdf_path, self._addon_api_url
+                                        pdf_path,
+                                        self._addon_api_url,
+                                        template_id=ADDON_COMMON_EXPENSES_TEMPLATE_ID,
                                     )
+                                    pdf_attrs: dict[str, Any] = {}
                                     if addon_ocr_json:
                                         pdf_attrs = extract_attributes_from_addon_ocr_json(
                                             addon_ocr_json,
                                             pdf_path=pdf_path,
                                             json_dir=self._json_dir,
                                         )
-                                    else:
+                                    if not pdf_attrs:
+                                        addon_ocr_json = self._sync_ocr_pdf_via_addon(
+                                            pdf_path,
+                                            self._addon_api_url,
+                                        )
+                                    if addon_ocr_json and not pdf_attrs:
+                                        pdf_attrs = extract_attributes_from_addon_ocr_json(
+                                            addon_ocr_json,
+                                            pdf_path=pdf_path,
+                                            json_dir=self._json_dir,
+                                        )
+                                    if not pdf_attrs:
                                         _LOGGER.warning(
                                             "Concierge Services [%s]: addon OCR "
-                                            "returned empty result for '%s'; "
+                                            "returned no usable attributes for '%s'; "
                                             "falling back to internal extractor",
                                             service_name,
                                             pdf_path,
