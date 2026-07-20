@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.0
+
+- Added configuration for the Concierge OCR add-on API token.
+- Added Bearer authentication to add-on status, health, and OCR requests.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

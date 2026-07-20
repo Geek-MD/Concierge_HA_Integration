@@ -48,6 +48,7 @@ from .const import (
     ADDON_STATUS_STARTING,
     ADDON_STATUS_UNKNOWN,
     ADDON_STATUS_UNSUPPORTED,
+    CONF_ADDON_API_TOKEN,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -423,6 +424,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tracks whether the Concierge addon is available. None = not yet checked.
         self._addon_available: bool | None = None
         self._addon_api_url: str = ADDON_API_URL
+        self._addon_api_token: str = str(
+            effective_cfg.get(CONF_ADDON_API_TOKEN, "")
+        ).strip()
         # Version string reported by GET /status (addon v0.3.1+). None when the
         # /status endpoint is not available (older addon) or addon is not running.
         self._addon_version: str | None = None
@@ -809,7 +813,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         persistent_notification.async_dismiss(self.hass, _OCR_NOTIFICATION_ID)
 
     @staticmethod
-    def _sync_check_addon(addon_url: str) -> bool:
+    def _sync_check_addon(addon_url: str, api_token: str = "") -> bool:
         """Check the Concierge addon health endpoint synchronously (runs in executor).
 
         Returns ``True`` when the addon is reachable and reports ``{"status": "ok"}``.
@@ -818,7 +822,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             req = urllib.request.Request(
                 f"{addon_url}/health",
                 method="GET",
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {api_token}",
+                },
             )
             with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
                 if resp.status != 200:
@@ -829,7 +836,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return False
 
     @staticmethod
-    def _sync_get_addon_status_response(addon_url: str) -> dict[str, Any] | None:
+    def _sync_get_addon_status_response(
+        addon_url: str, api_token: str = ""
+    ) -> dict[str, Any] | None:
         """Call GET /status on the Concierge addon synchronously (runs in executor).
 
         Available since addon v0.3.1.  Returns the parsed JSON dict when the
@@ -841,7 +850,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             req = urllib.request.Request(
                 f"{addon_url}/status",
                 method="GET",
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {api_token}",
+                },
             )
             with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
                 if resp.status != 200:
@@ -1041,6 +1053,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         pdf_path: str,
         addon_url: str = ADDON_API_URL,
         template_id: str | None = None,
+        api_token: str = "",
     ) -> dict[str, Any]:
         """Submit *pdf_path* to the Concierge addon OCR API synchronously.
 
@@ -1061,7 +1074,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             req = urllib.request.Request(
                 f"{addon_url}/ocr/source",
                 data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Authorization": f"Bearer {api_token}",
+                },
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=90) as resp:  # noqa: S310
@@ -1156,7 +1172,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Try GET /status first (available since addon v0.3.1).  A positive
             # response means the addon is running and reports its version.
             status_data = await self.hass.async_add_executor_job(
-                self._sync_get_addon_status_response, candidate_url
+                self._sync_get_addon_status_response,
+                candidate_url,
+                self._addon_api_token,
             )
             if status_data is not None:
                 self._addon_available = True
@@ -1168,7 +1186,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 break
             # Fallback: GET /health for addon versions prior to v0.3.1.
             addon_health_ok = await self.hass.async_add_executor_job(
-                self._sync_check_addon, candidate_url
+                self._sync_check_addon, candidate_url, self._addon_api_token
             )
             if addon_health_ok:
                 self._addon_available = True
@@ -1931,6 +1949,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         pdf_path,
                                         self._addon_api_url,
                                         template_id=template_id,
+                                        api_token=self._addon_api_token,
                                     )
                                     pdf_attrs: dict[str, Any] = (
                                         extract_attributes_from_addon_ocr_json(
@@ -1950,6 +1969,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         addon_ocr_json = self._sync_ocr_pdf_via_addon(
                                             pdf_path,
                                             self._addon_api_url,
+                                            api_token=self._addon_api_token,
                                         )
                                     if addon_ocr_json:
                                         pdf_attrs = extract_attributes_from_addon_ocr_json(

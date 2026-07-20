@@ -22,10 +22,12 @@
         "description": "Définissez un nom convivial pour ce compte e-mail ({email})",
         "data": {
           "friendly_name": "Nom convivial",
+          "addon_api_token": "Jeton API du module Concierge",
           "ocrspace_api_key": "Clé API OCR.space"
         },
         "data_description": {
           "friendly_name": "Un nom descriptif pour ce compte e-mail",
+          "addon_api_token": "Le même jeton que celui configuré dans le module Concierge OCR. Générez-le avec : openssl rand -hex 32",
           "ocrspace_api_key": "Clé API gratuite de ocr.space/OCRAPI. Utilisée pour l'extraction OCR de l'Eau Chaude. Laissez vide pour ignorer l'OCR."
         }
       }
@@ -51,6 +53,7 @@
           "email": "Adresse e-mail",
           "password": "Mot de passe",
           "friendly_name": "Nom convivial",
+          "addon_api_token": "Jeton API du module Concierge",
           "ocrspace_api_key": "Clé API OCR.space"
         },
         "data_description": {
@@ -59,6 +62,7 @@
           "email": "Exemple : utilisateur@gmail.com",
           "password": "Utilisez un mot de passe d'application pour Gmail et Yahoo",
           "friendly_name": "Un nom descriptif pour ce compte e-mail",
+          "addon_api_token": "Le même jeton que celui configuré dans le module Concierge OCR. Générez-le avec : openssl rand -hex 32",
           "ocrspace_api_key": "Clé API gratuite de ocr.space/OCRAPI. Utilisée pour l'extraction OCR de l'Eau Chaude. Laissez vide pour ignorer l'OCR."
         }
       }
