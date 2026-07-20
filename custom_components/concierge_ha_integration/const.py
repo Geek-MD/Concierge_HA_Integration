@@ -9,6 +9,7 @@ CONF_IMAP_SERVER = "imap_server"
 CONF_IMAP_PORT = "imap_port"
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
+CONF_ADDON_API_TOKEN = "addon_api_token"
 
 # Subentry configuration keys
 CONF_SERVICE_ID = "service_id"

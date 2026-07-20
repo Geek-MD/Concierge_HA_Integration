@@ -22,10 +22,12 @@
         "description": "Legen Sie einen Anzeigenamen für dieses E-Mail-Konto fest ({email})",
         "data": {
           "friendly_name": "Anzeigename",
+          "addon_api_token": "Concierge Add-on API-Token",
           "ocrspace_api_key": "OCR.space API-Schlüssel"
         },
         "data_description": {
           "friendly_name": "Ein beschreibender Name für dieses E-Mail-Konto",
+          "addon_api_token": "Dasselbe Token wie im Concierge OCR Add-on. Erzeugen mit: openssl rand -hex 32",
           "ocrspace_api_key": "Kostenloser API-Schlüssel von ocr.space/OCRAPI. Wird für die OCR-Extraktion von Warmwasser verwendet. Leer lassen, um OCR zu überspringen."
         }
       }
@@ -51,6 +53,7 @@
           "email": "E-Mail-Adresse",
           "password": "Passwort",
           "friendly_name": "Anzeigename",
+          "addon_api_token": "Concierge Add-on API-Token",
           "ocrspace_api_key": "OCR.space API-Schlüssel"
         },
         "data_description": {
@@ -59,6 +62,7 @@
           "email": "Beispiel: benutzer@gmail.com",
           "password": "Verwenden Sie ein App-Passwort für Gmail und Yahoo",
           "friendly_name": "Ein beschreibender Name für dieses E-Mail-Konto",
+          "addon_api_token": "Dasselbe Token wie im Concierge OCR Add-on. Erzeugen mit: openssl rand -hex 32",
           "ocrspace_api_key": "Kostenloser API-Schlüssel von ocr.space/OCRAPI. Wird für die OCR-Extraktion von Warmwasser verwendet. Leer lassen, um OCR zu überspringen."
         }
       }

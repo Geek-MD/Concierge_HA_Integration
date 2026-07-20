@@ -12,8 +12,10 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import selector
 
 from .const import (
+    CONF_ADDON_API_TOKEN,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -29,6 +31,10 @@ from .const import (
 from .service_detector import detect_services_from_imap, normalize_service_id
 
 _LOGGER = logging.getLogger(__name__)
+
+ADDON_TOKEN_SELECTOR = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+)
 
 # Schema for the initial IMAP credential step
 STEP_USER_DATA_SCHEMA = vol.Schema(
@@ -138,6 +144,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
                 data={
                     **self._imap_data,
                     "friendly_name": friendly_name,
+                    CONF_ADDON_API_TOKEN: user_input.get(CONF_ADDON_API_TOKEN, ""),
                 },
             )
 
@@ -147,6 +154,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
                     "friendly_name",
                     default=self._imap_data[CONF_EMAIL],
                 ): str,
+                vol.Optional(
+                    CONF_ADDON_API_TOKEN, default=""
+                ): ADDON_TOKEN_SELECTOR,
             }
         )
 
@@ -196,6 +206,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required(CONF_IMAP_PORT, default=current.get(CONF_IMAP_PORT, DEFAULT_IMAP_PORT)): int,
                 vol.Required(CONF_EMAIL, default=current.get(CONF_EMAIL, "")): str,
                 vol.Required(CONF_PASSWORD, default=current.get(CONF_PASSWORD, "")): str,
+                vol.Optional(
+                    CONF_ADDON_API_TOKEN,
+                    default=current.get(CONF_ADDON_API_TOKEN, ""),
+                ): ADDON_TOKEN_SELECTOR,
                 vol.Optional(
                     "friendly_name",
                     default=current.get("friendly_name", current.get(CONF_EMAIL, "")),

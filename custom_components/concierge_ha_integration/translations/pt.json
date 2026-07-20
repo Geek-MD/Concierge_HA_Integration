@@ -22,10 +22,12 @@
         "description": "Defina um nome amigável para esta conta de e-mail ({email})",
         "data": {
           "friendly_name": "Nome amigável",
+          "addon_api_token": "Token de API do addon Concierge",
           "ocrspace_api_key": "Chave API do OCR.space"
         },
         "data_description": {
           "friendly_name": "Um nome descritivo para esta conta de e-mail",
+          "addon_api_token": "O mesmo token configurado no addon Concierge OCR. Gere-o com: openssl rand -hex 32",
           "ocrspace_api_key": "Chave API gratuita de ocr.space/OCRAPI. Usada para extração OCR de Água Quente. Deixe em branco para ignorar o OCR."
         }
       }
@@ -51,6 +53,7 @@
           "email": "Endereço de e-mail",
           "password": "Senha",
           "friendly_name": "Nome amigável",
+          "addon_api_token": "Token de API do addon Concierge",
           "ocrspace_api_key": "Chave API do OCR.space"
         },
         "data_description": {
@@ -59,6 +62,7 @@
           "email": "Exemplo: usuario@gmail.com",
           "password": "Use uma senha de aplicativo para Gmail e Yahoo",
           "friendly_name": "Um nome descritivo para esta conta de e-mail",
+          "addon_api_token": "O mesmo token configurado no addon Concierge OCR. Gere-o com: openssl rand -hex 32",
           "ocrspace_api_key": "Chave API gratuita de ocr.space/OCRAPI. Usada para extração OCR de Água Quente. Deixe em branco para ignorar o OCR."
         }
       }

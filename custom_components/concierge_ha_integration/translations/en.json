@@ -22,10 +22,12 @@
         "description": "Set a friendly name for this email account ({email})",
         "data": {
           "friendly_name": "Friendly Name",
+          "addon_api_token": "Concierge addon API token",
           "ocrspace_api_key": "OCR.space API Key"
         },
         "data_description": {
           "friendly_name": "A descriptive name for this email account",
+          "addon_api_token": "The same token configured in the Concierge OCR addon. Generate it with: openssl rand -hex 32",
           "ocrspace_api_key": "Free API key from ocr.space/OCRAPI. Used for hot water (Agua Caliente) OCR extraction. Leave empty to skip OCR."
         }
       }
@@ -51,6 +53,7 @@
           "email": "Email Address",
           "password": "Password",
           "friendly_name": "Friendly Name",
+          "addon_api_token": "Concierge addon API token",
           "ocrspace_api_key": "OCR.space API Key"
         },
         "data_description": {
@@ -59,6 +62,7 @@
           "email": "Example: user@gmail.com",
           "password": "Use an app password for Gmail and Yahoo",
           "friendly_name": "A descriptive name for this email account",
+          "addon_api_token": "The same token configured in the Concierge OCR addon. Generate it with: openssl rand -hex 32",
           "ocrspace_api_key": "Free API key from ocr.space/OCRAPI. Used for hot water (Agua Caliente) OCR extraction. Leave empty to skip OCR."
         }
       }

@@ -317,6 +317,11 @@ data:
 For the best extraction quality on **Gastos Comunes** and **Agua Caliente** PDFs,
 install the [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon).
 
+Generate a private API token with `openssl rand -hex 32`, paste it into the
+add-on's `api_token` option, then enter the same value under **Settings → Devices
+& Services → Concierge HA Integration → Configure → Concierge addon API token**.
+Never publish this token or place it in a URL.
+
 The addon runs a local PaddleOCR REST API on port `8099` that the integration
 automatically detects and uses.  Installation steps:
 
