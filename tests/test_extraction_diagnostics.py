@@ -19,7 +19,10 @@ from extraction_diagnostics import (  # noqa: E402
     EXTRACTION_SOURCE,
     EXTRACTION_STATUS,
     EXTRACTION_SUCCESS,
+    common_expenses_needs_fallback,
     common_expenses_extraction_status,
+    merge_missing_common_expenses_values,
+    reconcile_common_expenses_amounts,
     set_common_expenses_diagnostics,
 )
 
@@ -59,6 +62,86 @@ class ExtractionDiagnosticsTests(unittest.TestCase):
         self.assertEqual(
             attrs[EXTRACTION_ERROR], "no_usable_common_expenses_attributes"
         )
+
+    def test_reconciles_incorrect_bill_funds_subtotal_and_total(self) -> None:
+        attrs = {
+            "building_total_expense": 14_171_762,
+            "alicuota": 0.95110,
+            "fondos_pct": 5,
+            "gastos_comunes_amount": 999_999,
+            "fondos_amount": 88_888,
+            "funds_provision": 88_888,
+            "subtotal": 1_088_887,
+            "hot_water_amount": 32_812,
+            "fixed_charge": 16_136,
+            "gc_total": 1_093_887,
+        }
+        confidence: dict[str, float] = {}
+
+        reconcile_common_expenses_amounts(attrs, confidence=confidence)
+
+        self.assertEqual(attrs["gastos_comunes_amount"], 134_788)
+        self.assertEqual(attrs["funds_provision"], 6_739)
+        self.assertEqual(attrs["subtotal"], 141_527)
+        self.assertEqual(attrs["gc_total"], 190_475)
+
+    def test_reconciliation_preserves_manual_override(self) -> None:
+        attrs = {
+            "building_total_expense": 10_000_000,
+            "alicuota": 1.25,
+            "gastos_comunes_amount": 130_000,
+        }
+
+        reconcile_common_expenses_amounts(
+            attrs,
+            confidence={"gastos_comunes_amount": 100.0},
+            override_score=100.0,
+        )
+
+        self.assertEqual(attrs["gastos_comunes_amount"], 130_000)
+
+    def test_fallback_is_needed_when_hot_water_values_are_missing(self) -> None:
+        attrs = {
+            "gastos_comunes_amount": 100,
+            "subtotal": 110,
+            "fixed_charge": 10,
+            "gc_total": 120,
+        }
+
+        self.assertTrue(common_expenses_needs_fallback(attrs))
+        attrs.update(
+            {
+                "funds_provision": 10,
+                "hot_water_consumption": 3.5,
+                "hot_water_cost_per_m3": 1_000,
+                "hot_water_amount": 3_500,
+                "hot_water_reading_prev": 20,
+                "hot_water_reading_curr": 23.5,
+            }
+        )
+        self.assertFalse(common_expenses_needs_fallback(attrs))
+
+    def test_partial_refresh_preserves_only_missing_sensor_values(self) -> None:
+        current = {"fixed_charge": 20, "_confidence": {"fixed_charge": 80.0}}
+        previous = {
+            "gastos_comunes_amount": 100,
+            "fixed_charge": 10,
+            "hot_water_amount": 30,
+            "_confidence": {
+                "gastos_comunes_amount": 75.0,
+                "fixed_charge": 75.0,
+                "hot_water_amount": 75.0,
+            },
+        }
+
+        copied = merge_missing_common_expenses_values(current, previous)
+
+        self.assertEqual(
+            copied, ["gastos_comunes_amount", "hot_water_amount"]
+        )
+        self.assertEqual(current["fixed_charge"], 20)
+        self.assertEqual(current["gastos_comunes_amount"], 100)
+        self.assertEqual(current["_confidence"]["hot_water_amount"], 75.0)
 
 
 if __name__ == "__main__":

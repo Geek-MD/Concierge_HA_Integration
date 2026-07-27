@@ -96,7 +96,7 @@
   | `sensor.concierge_{id}_funds_provision` | Sensor | — | Funds provision amount (`$`) — Bill × Funds % / 100 |
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Cargo Fijo (`$`) |
-  | `sensor.concierge_{id}_total` | Sensor | — | Total GC bill (`$`) — Subtotal + Cargo Fijo |
+  | `sensor.concierge_{id}_total` | Sensor | — | Total del mes (`$`) — Subtotal + Hot Water + Cargo Fijo |
   | `sensor.concierge_{id}_hot_water_consumption` | Sensor | — | Hot Water consumption (`m³`) — from addon OCR or PDF Tier 1 |
   | `sensor.concierge_{id}_hot_water_cost_per_unit` | Sensor | — | Hot Water cost per m³ (`$/m³`) — from addon OCR or PDF Tier 1 |
   | `sensor.concierge_{id}_hot_water_amount` | Sensor | — | Hot Water charge (`$`) — from addon OCR, PDF Tier 1, or derived |
@@ -122,9 +122,10 @@
   to the addon's OCR REST API (PaddleOCR) instead of the built-in pdfminer extractor,
   improving accuracy on image-backed or non-standard PDFs. Starting in **v1.6.1**,
   the integration first requests the addon's built-in
-  `coe_administraciones` structured template output for those PDFs and falls back
-  to raw OCR parsing only when the structured response does not provide usable
-  values. If the addon is not installed, or if it is installed but not running,
+  `coe_administraciones` structured template output for those PDFs. Starting in
+  **v1.7.2**, an incomplete structured response is supplemented field by field
+  from raw OCR and, if necessary, the internal extractor. If the addon is not
+  installed, or if it is installed but not running,
   a **persistent notification** appears in Home Assistant immediately. If
   Supervisor reports that the addon is **starting** (or it is already
   **started** but its `/status` or `/health` endpoint is still not ready), the
@@ -231,7 +232,8 @@ or downloading any PDF.
 Useful after a manual `set_value` correction: instead of waiting for the next
 polling cycle or pressing *Force Refresh*, pressing *Recalculate* immediately
 propagates the corrected input value into all formula sensors (e.g. updating
-`cargo_fijo` instantly recalculates `gc_total = subtotal_departamento + cargo_fijo`).
+`cargo_fijo` instantly recalculates the complete monthly total from
+`subtotal_departamento + hot_water_amount + cargo_fijo`).
 
 | Field | Required | Selector | Description |
 |---|---|---|---|
@@ -271,9 +273,9 @@ applies it as a **manual override** in memory. The correction is applied
 immediately. The overridden sensor will show
 `extraction_confidence = 100`.
 
-Formula-derived sensors (e.g. `sensor.concierge_gastos_comunes_total`, which equals
-`subtotal_departamento + cargo_fijo`) are **automatically recalculated** when any of
-their inputs change.
+Formula-derived sensors (e.g. `sensor.concierge_gastos_comunes_total`, which
+represents `subtotal_departamento + hot_water_amount + cargo_fijo`) are
+**automatically recalculated** when any of their inputs change.
 
 | Field | Required | Selector | Description |
 |---|---|---|---|
@@ -355,12 +357,16 @@ For every Gastos Comunes bill that arrives, the integration:
    - **Addon available →** steps 2–3 use PaddleOCR via the addon REST API.
    - **Addon not available →** steps 2–3 use the internal pdfminer extractor.
 2. **Extract PDF content** — text is obtained from the PDF (addon OCR or pdfminer).
-3. **Extract billing + hot-water fields** — values are parsed from the extracted text.
-4. **Finalize and derive fields** — aliases and computed values are applied
-   (for example `gc_total`, `subtotal_consumo`, and fallback derivations).
+3. **Extract billing + hot-water fields** — values are parsed from the extracted
+   text. An incomplete structured addon result is supplemented from raw OCR and
+   then the internal extractor.
+4. **Finalize and derive fields** — bill and funds are validated against the
+   building total, alícuota and funds percentage; subtotal and the complete
+   monthly total are then recalculated.
 5. **Sensors updated** — `hot_water_consumption`, `hot_water_cost_per_unit`,
    `hot_water_amount`, `hot_water_prev_reading`, and `hot_water_curr_reading`
-   are written to Home Assistant.
+   are written to Home Assistant. Force Refresh preserves any previous valid
+   sensor value that a partial extraction omitted.
 
 ---
 
@@ -546,6 +552,11 @@ with five entities:
 - ✅ **Registro/Logbook task timeline (v1.3.10)**: the integration now publishes task entries to Home Assistant Logbook under `concierge_ha_tasks` for startup, discovery, automatic IMAP polling, force refresh, recalculate and manual `set_value` operations
 - ✅ **Concierge addon integration (v1.4.1)**: when the [Concierge OCR API addon](https://github.com/Geek-MD/Concierge_addon) is installed and running, Gastos Comunes and Agua Caliente PDF analysis delegates to the addon's PaddleOCR REST API instead of the internal pdfminer extractor; detection is now Supervisor-aware and the persistent HA notification is dismissed correctly on Supervisor-based installs
 - ✅ **Addon startup grace period (v1.4.2)**: a 3-minute grace period is now observed after HA starts before the "addon not installed" persistent notification is created, preventing false positives when the addon is installed but has not finished starting yet
+- ✅ **Reliable Gastos Comunes refresh and reconciliation (v1.7.2)**: incomplete
+  structured responses are supplemented with raw OCR/internal extraction,
+  bill/funds/subtotal/total values are arithmetically reconciled, false
+  three-amount matches in the totals block are rejected, and Force Refresh
+  preserves previously valid values omitted by a partial extraction
 
 ### 🔮 Future Enhancements
 - Enhanced attribute display in sensor states
