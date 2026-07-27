@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-07-27
+
+### Fixed
+
+- Gastos Comunes status now reports a problem when a recent matching email
+  contains no usable monetary attributes, instead of relying only on the bill
+  timestamp.
+- Force Refresh now re-checks Concierge OCR add-on availability immediately
+  and records the extraction result (`success`, `partial`, or `failed`) plus
+  its source and error details.
+- Failed OCR refreshes preserve the last valid sensor readings while exposing
+  the new failure through the diagnostic status entity.
+
 ## [1.7.0] - 2026-07-20
 
 - Added configuration for the Concierge OCR add-on API token.
