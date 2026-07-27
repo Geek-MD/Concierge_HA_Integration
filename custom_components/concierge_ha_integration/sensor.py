@@ -80,10 +80,13 @@ from .attribute_extractor import (
     _strip_html,
 )
 from .extraction_diagnostics import (
-    EXTRACTION_ERROR,
+    COMMON_EXPENSES_SENSOR_FIELDS,
     EXTRACTION_FAILED,
-    EXTRACTION_SOURCE,
     EXTRACTION_STATUS,
+    common_expenses_needs_fallback,
+    merge_missing_extracted_attributes,
+    merge_missing_common_expenses_values,
+    reconcile_common_expenses_amounts,
     set_common_expenses_diagnostics,
 )
 from .pdf_downloader import delete_service_pdfs, download_pdf_from_email, purge_old_pdfs
@@ -182,7 +185,7 @@ _ELECTRICITY_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
 # Common expenses: billing breakdown (all CLP amounts).
 # gastos_comunes_amount is exposed as "Bill" so the entity ID becomes
 # sensor.concierge_{service_id}_bill — the primary payable for the apartment.
-# The "Total" sensor (gc_total) covers the GC-only total: Subtotal + Cargo Fijo.
+# The "Total" sensor (gc_total) covers the complete "Total del mes".
 _COMMON_EXPENSES_SPECIFIC_SENSORS: list[tuple[str, str, str, str]] = [
     ("gastos_comunes_amount",       "Bill",                       "$",  "gc_bill"),
     ("funds_provision",             "Funds Provision",            "$",  "gc_funds_provision"),
@@ -549,7 +552,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Re-runs the same alias syncs and arithmetic derivations that
         :func:`attribute_extractor._extract_common_expenses_pdf_attributes`
         applies after extraction, so that entities reporting calculated values
-        (e.g. ``gc_total = subtotal_departamento + cargo_fijo``) update
+        (e.g. the complete ``gc_total``) update
         immediately when a constituent attribute is overridden via the
         ``set_value`` service.
 
@@ -586,7 +589,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             attrs["funds_provision"] = attrs["fondos_amount"]
             confidence["funds_provision"] = confidence.get("fondos_amount", CONF_SCORE_DERIVED)
 
-        # --- Formula: gc_total = subtotal_departamento + cargo_fijo ---
+        # Establish a provisional total.  The final reconciliation below
+        # prefers the bill's Total del mes and includes hot-water consumption.
         subtotal_val = attrs.get("subtotal_departamento")
         cargo_val = attrs.get("cargo_fijo")
         total_val = attrs.get("total_amount")
@@ -604,6 +608,13 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elif total_val is not None:
                 attrs["gc_total"] = total_val
                 confidence["gc_total"] = CONF_SCORE_DERIVED
+
+        reconcile_common_expenses_amounts(
+            attrs,
+            confidence=confidence,
+            derived_score=CONF_SCORE_DERIVED,
+            override_score=CONF_SCORE_OVERRIDE,
+        )
 
     def _recompute_water_derived_attrs(self, attrs: dict[str, Any]) -> None:
         """Recompute water-service formula-derived attributes in-place.
@@ -1661,43 +1672,28 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         self._manage_ocr_repair_issue()
-        # Preserve the last valid readings when a fresh Gastos Comunes OCR
-        # attempt fails.  Copy only the new diagnostics into the old record so
-        # the values stay useful while the status entity reports the problem.
+        # Preserve individual readings that a fresh Gastos Comunes OCR omitted.
+        # A partial result must not erase valid values from the previous scan.
         current: dict[str, Any] = (
             self.data if self.data is not None
             else {"connection_status": "OK", "services": {}}
         )
         previous = current.get("services", {}).get(subentry_id)
-        if (
-            extracted_attrs.get(EXTRACTION_STATUS) == EXTRACTION_FAILED
-            and isinstance(previous, dict)
-            and isinstance(previous.get("attributes"), dict)
-        ):
+        if isinstance(previous, dict) and isinstance(previous.get("attributes"), dict):
             previous_attrs = previous["attributes"]
-            if any(
-                previous_attrs.get(key) is not None
-                for key in (
-                    "gastos_comunes_amount",
-                    "subtotal",
-                    "fixed_charge",
-                    "gc_total",
-                )
-            ):
-                for key in (
-                    EXTRACTION_STATUS,
-                    EXTRACTION_SOURCE,
-                    EXTRACTION_ERROR,
-                ):
-                    if key in extracted_attrs:
-                        previous_attrs[key] = extracted_attrs[key]
-                result = previous
-                extracted_attrs = previous_attrs
+            preserved = merge_missing_common_expenses_values(
+                extracted_attrs, previous_attrs
+            )
+            if preserved:
                 _LOGGER.warning(
-                    "Concierge Services [%s]: fresh extraction failed; "
-                    "preserving last valid sensor values",
+                    "Concierge Services [%s]: preserving omitted values from "
+                    "the previous extraction: %s",
                     service_name,
+                    ", ".join(preserved),
                 )
+            if extracted_attrs.get(EXTRACTION_STATUS) == EXTRACTION_FAILED:
+                if any(previous_attrs.get(key) is not None for key in COMMON_EXPENSES_SENSOR_FIELDS):
+                    result["last_updated"] = previous.get("last_updated")
         current.setdefault("services", {})[subentry_id] = result
         self.async_set_updated_data(current)
         self._manage_gc_template_mismatch_notification(current)
@@ -2016,40 +2012,61 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         if template_id and pdf_attrs
                                         else "addon_raw"
                                     )
-                                    if not pdf_attrs:
-                                        # Structured template responses omit the
-                                        # raw OCR pages needed by the legacy
-                                        # extractor, so request a second raw-OCR
-                                        # payload before falling back to the
-                                        # internal PDF parser.
-                                        addon_ocr_json = self._sync_ocr_pdf_via_addon(
+                                    if (
+                                        template_id
+                                        and common_expenses_needs_fallback(pdf_attrs)
+                                    ):
+                                        # Structured template responses can be
+                                        # valid but incomplete.  Request raw OCR
+                                        # as well to fill the remaining sensors.
+                                        raw_ocr_json = self._sync_ocr_pdf_via_addon(
                                             pdf_path,
                                             self._addon_api_url,
                                             api_token=self._addon_api_token,
                                         )
-                                    if addon_ocr_json:
-                                        pdf_attrs = extract_attributes_from_addon_ocr_json(
-                                            addon_ocr_json,
-                                            pdf_path=pdf_path,
-                                            json_dir=self._json_dir,
+                                        raw_attrs = (
+                                            extract_attributes_from_addon_ocr_json(
+                                                raw_ocr_json,
+                                                pdf_path=pdf_path,
+                                                json_dir=self._json_dir,
+                                            )
+                                            if raw_ocr_json
+                                            else {}
                                         )
-                                        if pdf_attrs:
-                                            extraction_source = "addon_raw"
-                                    if not pdf_attrs:
+                                        if merge_missing_extracted_attributes(
+                                            pdf_attrs, raw_attrs
+                                        ):
+                                            extraction_source = (
+                                                "addon_template+raw"
+                                                if template_id
+                                                else "addon_raw"
+                                            )
+                                    if common_expenses_needs_fallback(pdf_attrs):
                                         _LOGGER.warning(
                                             "Concierge Services [%s]: addon OCR "
-                                            "returned no usable attributes for '%s'; "
-                                            "falling back to internal extractor",
+                                            "left sensor attributes incomplete for "
+                                            "'%s'; using internal extractor as fallback",
                                             service_name,
                                             pdf_path,
                                         )
-                                        pdf_attrs = extract_attributes_from_pdf(
+                                        internal_attrs = extract_attributes_from_pdf(
                                             pdf_path,
                                             service_type,
                                             str(self._cfg.get(CONF_OCRSPACE_API_KEY, "")),
                                             json_dir=self._json_dir,
                                         )
-                                        extraction_source = "internal"
+                                        if merge_missing_extracted_attributes(
+                                            pdf_attrs, internal_attrs
+                                        ):
+                                            extraction_source += "+internal"
+                                    reconcile_common_expenses_amounts(
+                                        pdf_attrs,
+                                        confidence=pdf_attrs.setdefault(
+                                            "_confidence", {}
+                                        ),
+                                        derived_score=CONF_SCORE_DERIVED,
+                                        override_score=CONF_SCORE_OVERRIDE,
+                                    )
                                 else:
                                     pdf_attrs = extract_attributes_from_pdf(
                                         pdf_path,

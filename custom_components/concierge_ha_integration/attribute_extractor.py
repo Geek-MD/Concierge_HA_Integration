@@ -34,6 +34,7 @@ from .const import (
     SERVICE_TYPE_UNKNOWN,
     SERVICE_TYPE_WATER,
 )
+from .extraction_diagnostics import reconcile_common_expenses_amounts
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -2590,6 +2591,13 @@ def _finalize_common_expenses_attrs(
             "hot_water_reading_curr", CONF_SCORE_OCR
         )
 
+    reconcile_common_expenses_amounts(
+        attrs,
+        confidence=confidence,
+        derived_score=CONF_SCORE_DERIVED,
+        override_score=CONF_SCORE_OVERRIDE,
+    )
+
     if confidence:
         attrs["_confidence"] = confidence
 
@@ -2902,15 +2910,16 @@ def _extract_common_expenses_pdf_attributes(
 
         three_amounts_m = _GC_THREE_AMOUNTS_RE.search(text)
         if three_amounts_m:
-            attrs.setdefault(
-                "gastos_comunes_amount", _parse_amount_to_int(three_amounts_m.group(1))
-            )
-            attrs.setdefault(
-                "fondos_amount", _parse_amount_to_int(three_amounts_m.group(2))
-            )
-            attrs.setdefault(
-                "subtotal_departamento", _parse_amount_to_int(three_amounts_m.group(3))
-            )
+            possible_bill = _parse_amount_to_int(three_amounts_m.group(1))
+            possible_funds = _parse_amount_to_int(three_amounts_m.group(2))
+            possible_subtotal = _parse_amount_to_int(three_amounts_m.group(3))
+            # The totals block also contains three consecutive amounts
+            # (fixed charge / total / total).  Accept this positional fallback
+            # only when its arithmetic proves that it is the apartment block.
+            if possible_bill + possible_funds == possible_subtotal:
+                attrs.setdefault("gastos_comunes_amount", possible_bill)
+                attrs.setdefault("fondos_amount", possible_funds)
+                attrs.setdefault("subtotal_departamento", possible_subtotal)
 
         gc_amount_m = _GC_AMOUNT_RE.search(text)
         if gc_amount_m:

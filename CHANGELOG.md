@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2] - 2026-07-27
+
+### Fixed
+
+- Incomplete structured add-on results now fall back to raw OCR and the
+  internal extractor to populate missing Gastos Comunes and hot-water sensors.
+- Common-expenses bill and funds provision amounts are reconciled from the
+  building total, unit allocation percentage, and funds percentage; subtotal
+  and the complete monthly total are recalculated from those validated values.
+- The positional three-amount fallback now rejects the fixed-charge/monthly
+  totals block, preventing it from being mistaken for bill/funds/subtotal.
+- Force Refresh preserves each previously valid sensor value omitted by a
+  partial or failed extraction, preventing sensors from becoming `unknown`.
+
 ## [1.7.1] - 2026-07-27
 
 ### Fixed
