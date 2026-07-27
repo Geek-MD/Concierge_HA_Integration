@@ -31,6 +31,13 @@ from .const import (
 )
 from .sensor import ConciergeServicesCoordinator
 from .service_detector import normalize_service_id
+from .extraction_diagnostics import (
+    EXTRACTION_ERROR,
+    EXTRACTION_FAILED,
+    EXTRACTION_SOURCE,
+    EXTRACTION_STATUS,
+    common_expenses_extraction_status,
+)
 
 # Attributes retained in the status binary sensor for every service type.
 # consumption, consumption_unit, and total_amount are now dedicated sensors.
@@ -70,6 +77,9 @@ _COMMON_EXPENSES_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
     "subtotal_consumo": 0,
     "previous_measure": 0,
     "actual_measure": 0,
+    EXTRACTION_STATUS: EXTRACTION_FAILED,
+    EXTRACTION_SOURCE: "unknown",
+    EXTRACTION_ERROR: "no_extraction_attempt_recorded",
 }
 
 # Agua Caliente: meter readings used to verify consumption.
@@ -179,7 +189,20 @@ class ConciergeServiceStatusBinarySensor(
         # Ensure last_updated is timezone-aware before comparing.
         if last_updated.tzinfo is None:
             last_updated = last_updated.replace(tzinfo=timezone.utc)
-        return last_updated + relativedelta(months=1) < now
+        if last_updated + relativedelta(months=1) < now:
+            return True
+
+        service_type = self._subentry_data.get(
+            CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN
+        )
+        if service_type == SERVICE_TYPE_COMMON_EXPENSES:
+            attrs = service_data.get("attributes", {})
+            extraction_status = attrs.get(EXTRACTION_STATUS)
+            if extraction_status is None:
+                extraction_status = common_expenses_extraction_status(attrs)
+            return extraction_status == EXTRACTION_FAILED
+
+        return False
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

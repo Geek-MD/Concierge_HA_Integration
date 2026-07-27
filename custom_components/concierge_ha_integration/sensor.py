@@ -79,6 +79,13 @@ from .attribute_extractor import (
     extract_attributes_from_pdf,
     _strip_html,
 )
+from .extraction_diagnostics import (
+    EXTRACTION_ERROR,
+    EXTRACTION_FAILED,
+    EXTRACTION_SOURCE,
+    EXTRACTION_STATUS,
+    set_common_expenses_diagnostics,
+)
 from .pdf_downloader import delete_service_pdfs, download_pdf_from_email, purge_old_pdfs
 from .service_detector import (
     SERVICE_PATTERNS,
@@ -1088,8 +1095,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return {}
 
-    async def _async_manage_addon_notification(self) -> None:
-        """Check addon lifecycle state and manage notifications accordingly."""
+    async def _async_manage_addon_notification(self, *, force: bool = False) -> None:
+        """Check addon lifecycle state and manage notifications accordingly.
+
+        ``force`` bypasses the post-startup delay for an explicit user action,
+        such as the per-device Force Refresh button.
+        """
         def _dismiss_addon_notification() -> None:
             persistent_notification.async_dismiss(self.hass, ADDON_NOTIFICATION_ID)
             self._addon_notification_reason = None
@@ -1130,7 +1141,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # after HA fully started.  This avoids false "not installed" alarms while
         # Supervisor is still populating its addon data after a reboot.
         now = dt_util.utcnow()
-        if self._addon_check_not_before is None or now < self._addon_check_not_before:
+        if not force and (
+            self._addon_check_not_before is None
+            or now < self._addon_check_not_before
+        ):
             remaining = (
                 (self._addon_check_not_before - now).total_seconds()
                 if self._addon_check_not_before is not None
@@ -1558,6 +1572,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             f"force_refresh iniciado para {service_name} ({subentry_id})",
         )
 
+        # Refresh addon availability immediately.  A manual refresh must not
+        # depend on the cached result from the previous polling cycle.
+        await self._async_manage_addon_notification(force=True)
+
         # ------------------------------------------------------------------
         # Step 1 — Delete cached PDFs so the downloader fetches a fresh copy.
         # ------------------------------------------------------------------
@@ -1643,11 +1661,43 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         self._manage_ocr_repair_issue()
-        # Replace the service entry and push state to all listening entities.
+        # Preserve the last valid readings when a fresh Gastos Comunes OCR
+        # attempt fails.  Copy only the new diagnostics into the old record so
+        # the values stay useful while the status entity reports the problem.
         current: dict[str, Any] = (
             self.data if self.data is not None
             else {"connection_status": "OK", "services": {}}
         )
+        previous = current.get("services", {}).get(subentry_id)
+        if (
+            extracted_attrs.get(EXTRACTION_STATUS) == EXTRACTION_FAILED
+            and isinstance(previous, dict)
+            and isinstance(previous.get("attributes"), dict)
+        ):
+            previous_attrs = previous["attributes"]
+            if any(
+                previous_attrs.get(key) is not None
+                for key in (
+                    "gastos_comunes_amount",
+                    "subtotal",
+                    "fixed_charge",
+                    "gc_total",
+                )
+            ):
+                for key in (
+                    EXTRACTION_STATUS,
+                    EXTRACTION_SOURCE,
+                    EXTRACTION_ERROR,
+                ):
+                    if key in extracted_attrs:
+                        previous_attrs[key] = extracted_attrs[key]
+                result = previous
+                extracted_attrs = previous_attrs
+                _LOGGER.warning(
+                    "Concierge Services [%s]: fresh extraction failed; "
+                    "preserving last valid sensor values",
+                    service_name,
+                )
         current.setdefault("services", {})[subentry_id] = result
         self.async_set_updated_data(current)
         self._manage_gc_template_mismatch_notification(current)
@@ -1898,6 +1948,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             )
                             if pdf_path:
                                 latest_attributes["pdf_path"] = pdf_path
+                                extraction_source = "internal"
                                 _LOGGER.info(
                                     "Concierge Services [%s]: PDF found at '%s' — "
                                     "extracting additional attributes",
@@ -1960,6 +2011,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         if addon_ocr_json
                                         else {}
                                     )
+                                    extraction_source = (
+                                        "addon_template"
+                                        if template_id and pdf_attrs
+                                        else "addon_raw"
+                                    )
                                     if not pdf_attrs:
                                         # Structured template responses omit the
                                         # raw OCR pages needed by the legacy
@@ -1977,6 +2033,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             pdf_path=pdf_path,
                                             json_dir=self._json_dir,
                                         )
+                                        if pdf_attrs:
+                                            extraction_source = "addon_raw"
                                     if not pdf_attrs:
                                         _LOGGER.warning(
                                             "Concierge Services [%s]: addon OCR "
@@ -1991,6 +2049,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                             str(self._cfg.get(CONF_OCRSPACE_API_KEY, "")),
                                             json_dir=self._json_dir,
                                         )
+                                        extraction_source = "internal"
                                 else:
                                     pdf_attrs = extract_attributes_from_pdf(
                                         pdf_path,
@@ -1999,6 +2058,11 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         json_dir=self._json_dir,
                                     )
                                 latest_attributes.update(pdf_attrs)
+                                if service_type == SERVICE_TYPE_COMMON_EXPENSES:
+                                    set_common_expenses_diagnostics(
+                                        latest_attributes,
+                                        source=extraction_source,
+                                    )
 
                                 pdf_attr_keys = [
                                     k for k in pdf_attrs if not k.startswith("_")
@@ -2059,12 +2123,24 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         except ValueError:
                                             pass
                             else:
+                                if service_type == SERVICE_TYPE_COMMON_EXPENSES:
+                                    set_common_expenses_diagnostics(
+                                        latest_attributes,
+                                        source="none",
+                                        error="bill_pdf_not_found",
+                                    )
                                 _LOGGER.debug(
                                     "Concierge Services [%s]: no PDF attachment found "
                                     "in matching email",
                                     service_name,
                                 )
                         except Exception as pdf_err:
+                            if service_type == SERVICE_TYPE_COMMON_EXPENSES:
+                                set_common_expenses_diagnostics(
+                                    latest_attributes,
+                                    source="error",
+                                    error=f"{type(pdf_err).__name__}: {pdf_err}",
+                                )
                             _LOGGER.warning(
                                 "PDF download failed for service '%s': %s",
                                 service_id, pdf_err,
