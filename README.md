@@ -355,6 +355,7 @@ data extracted from the same "Nota de Cobro" PDF:
 For every Gastos Comunes bill that arrives, the integration:
 
 1. **Check addon availability** — on Home Assistant Supervisor installs, the integration checks the `concierge_ocr` addon state from Supervisor metadata first and then probes `GET /status` (addon v0.3.1+) using the addon hostname when available (falling back to `GET /health` for older addons and to `http://localhost:8099` outside Supervisor).
+   - **Force Refresh always retries OCR** for Gastos Comunes and Agua Caliente, even if this health probe fails or has a stale negative result; a failed OCR request then continues through the internal fallback.
    - If `/status` reports `scheduled_outputs`, the integration uses that list to decide whether to request the structured `coe_administraciones` output or go directly to raw OCR.
    - **Addon available →** steps 2–3 use PaddleOCR via the addon REST API.
    - **Addon not available →** steps 2–3 use the internal pdfminer extractor.

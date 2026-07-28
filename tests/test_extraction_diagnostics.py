@@ -24,11 +24,18 @@ from extraction_diagnostics import (  # noqa: E402
     merge_missing_common_expenses_values,
     reconcile_common_expenses_amounts,
     set_common_expenses_diagnostics,
+    should_attempt_addon,
 )
 
 
 class ExtractionDiagnosticsTests(unittest.TestCase):
     """Verify completeness classification and stored diagnostics."""
+
+    def test_force_refresh_retries_addon_after_failed_health_check(self) -> None:
+        """A manual refresh must call OCR even if availability is cached false."""
+        self.assertTrue(should_attempt_addon(False, forced_refresh=True))
+        self.assertFalse(should_attempt_addon(False))
+        self.assertTrue(should_attempt_addon(None))
 
     def test_common_expenses_extraction_success(self) -> None:
         attrs = {

@@ -88,6 +88,7 @@ from .extraction_diagnostics import (
     merge_missing_common_expenses_values,
     reconcile_common_expenses_amounts,
     set_common_expenses_diagnostics,
+    should_attempt_addon,
 )
 from .pdf_downloader import delete_service_pdfs, download_pdf_from_email, purge_old_pdfs
 from .service_detector import (
@@ -445,6 +446,10 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # not yet been queried).  An empty tuple means the field was present but
         # contained no entries.
         self._addon_scheduled_outputs: tuple[str, ...] | None = None
+        # True only while the per-device Force Refresh operation fetches its
+        # PDF. It makes that action retry OCR even when the preceding health
+        # probe failed or returned stale Supervisor state.
+        self._force_addon_attempt: bool = False
         # Current addon lifecycle status exposed by ConciergeAddonStatusSensor.
         # Starts as "unknown" and is updated by _async_manage_addon_notification.
         self._addon_status: str = ADDON_STATUS_UNKNOWN
@@ -1623,6 +1628,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "Concierge Services [%s]: scanning mailbox for latest bill email",
             service_name,
         )
+        self._force_addon_attempt = True
         try:
             result = await self.hass.async_add_executor_job(
                 self._fetch_single_service_data, subentry_id
@@ -1639,6 +1645,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 f"force_refresh falló para {service_name}: {err}",
             )
             return
+        finally:
+            self._force_addon_attempt = False
 
         # ------------------------------------------------------------------
         # Step 3 — Update coordinator data only when the scan found a result.
@@ -1958,8 +1966,22 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 # For common_expenses and hot_water: when the
                                 # Concierge addon is available use its OCR API
                                 # instead of the internal pdfminer extractor.
+                                # ``None`` means the startup grace period has
+                                # postponed the health check; it does *not*
+                                # mean that the add-on is unavailable.  Try
+                                # the configured/default endpoint in that
+                                # state so the first coordinator refresh can
+                                # already populate PDF-only sensors.  A failed
+                                # request is harmless because the extraction
+                                # path below immediately falls back to the
+                                # internal extractor.  Only skip the add-on
+                                # after an actual availability check returned
+                                # ``False``.
                                 use_addon = (
-                                    self._addon_available is True
+                                    should_attempt_addon(
+                                        self._addon_available,
+                                        forced_refresh=self._force_addon_attempt,
+                                    )
                                     and service_type in (
                                         SERVICE_TYPE_COMMON_EXPENSES,
                                         SERVICE_TYPE_HOT_WATER,
