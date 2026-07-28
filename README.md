@@ -124,7 +124,9 @@
   the integration first requests the addon's built-in
   `coe_administraciones` structured template output for those PDFs. Starting in
   **v1.7.2**, an incomplete structured response is supplemented field by field
-  from raw OCR and, if necessary, the internal extractor. If the addon is not
+  from raw OCR and, if necessary, the internal extractor. Starting in
+  **v1.7.3**, complete currency cells such as `$ 122.060`, nested values, and
+  compatible template-field aliases are handled directly. If the addon is not
   installed, or if it is installed but not running,
   a **persistent notification** appears in Home Assistant immediately. If
   Supervisor reports that the addon is **starting** (or it is already
@@ -557,6 +559,9 @@ with five entities:
   bill/funds/subtotal/total values are arithmetically reconciled, false
   three-amount matches in the totals block are rejected, and Force Refresh
   preserves previously valid values omitted by a partial extraction
+- ✅ **Structured Gastos Comunes compatibility (v1.7.3)**: currency cells are
+  parsed without silently becoming zero, while nested fields and compatible
+  template-key aliases continue populating the corresponding sensors
 
 ### 🔮 Future Enhancements
 - Enhanced attribute display in sensor states
