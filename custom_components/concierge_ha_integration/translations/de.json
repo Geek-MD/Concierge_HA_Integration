@@ -85,18 +85,23 @@
           "title": "Servicegerät hinzufügen",
           "description": "{count} Dienstkonto/Dienstkonten zum Hinzufügen gefunden. Wählen Sie aus, welches als Gerät konfiguriert werden soll:",
           "data": {
-            "service_id": "Dienst"
+            "service_id": "Dienst",
+            "billing_interval_months": "Abrechnungsintervall (Monate)"
           }
         },
         "discovery_confirm": {
           "title": "Erkannt: {service_name}",
-          "description": "{service_name} wurde im Posteingang gefunden ({email_count} E-Mail(s)). Möchten Sie es als Servicegerät hinzufügen?"
+          "description": "{service_name} wurde im Posteingang gefunden ({email_count} E-Mail(s)). Möchten Sie es als Servicegerät hinzufügen?",
+          "data": {
+            "billing_interval_months": "Abrechnungsintervall (Monate)"
+          }
         },
         "reconfigure": {
           "title": "{service_name} neu konfigurieren",
           "description": "Einstellungen dieses Servicegeräts aktualisieren",
           "data": {
-            "service_name": "Dienstname"
+            "service_name": "Dienstname",
+            "billing_interval_months": "Abrechnungsintervall (Monate)"
           }
         }
       },

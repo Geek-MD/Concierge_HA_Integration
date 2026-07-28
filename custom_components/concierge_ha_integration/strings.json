@@ -81,18 +81,23 @@
           "title": "Add Service Device",
           "description": "Found {count} service account(s) available to add. Select which one to configure as a device:",
           "data": {
-            "service_id": "Service"
+            "service_id": "Service",
+            "billing_interval_months": "Billing interval (months)"
           }
         },
         "discovery_confirm": {
           "title": "Discovered: {service_name}",
-          "description": "{service_name} was detected in the inbox ({email_count} email(s)). Do you want to add it as a service device?"
+          "description": "{service_name} was detected in the inbox ({email_count} email(s)). Do you want to add it as a service device?",
+          "data": {
+            "billing_interval_months": "Billing interval (months)"
+          }
         },
         "reconfigure": {
           "title": "Reconfigure {service_name}",
           "description": "Update the settings for this service device",
           "data": {
-            "service_name": "Service Name"
+            "service_name": "Service Name",
+            "billing_interval_months": "Billing interval (months)"
           }
         }
       },

@@ -15,11 +15,13 @@ CONF_ADDON_API_TOKEN = "addon_api_token"
 CONF_SERVICE_ID = "service_id"
 CONF_SERVICE_NAME = "service_name"
 CONF_SERVICE_TYPE = "service_type"
+CONF_BILLING_INTERVAL_MONTHS = "billing_interval_months"
 CONF_SAMPLE_FROM = "sample_from"
 CONF_SAMPLE_SUBJECT = "sample_subject"
 
 # Default values
 DEFAULT_IMAP_PORT = 993
+DEFAULT_BILLING_INTERVAL_MONTHS = 1
 
 # Service type constants used to route to the appropriate extraction tools
 SERVICE_TYPE_WATER = "water"
