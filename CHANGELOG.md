@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.6] - 2026-07-28
+
+- Confirmed that common-expenses sensors are populated from the add-on's
+  structured `sections` response and added regression coverage for the
+  `coe_administraciones` response shape.
+- Added compatibility fallback to values from
+  `meta.matched_sections.*.line_results` when the corresponding canonical
+  section value is absent or null. Null extraction results remain missing so
+  the existing raw OCR and internal-extractor fallbacks can run.
+
 ## [1.7.5] - 2026-07-28
 
 ### Fixed

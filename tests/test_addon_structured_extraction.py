@@ -28,7 +28,7 @@ if PACKAGE not in sys.modules:
     sys.modules[PACKAGE] = package
 
 _load_module("const")
-_load_module("extraction_diagnostics")
+diagnostics = _load_module("extraction_diagnostics")
 extractor = _load_module("attribute_extractor")
 
 
@@ -102,6 +102,76 @@ class AddonStructuredExtractionTests(unittest.TestCase):
         self.assertEqual(attrs["hot_water_reading_prev"], 298.3)
         self.assertEqual(attrs["hot_water_reading_curr"], 301.8)
         self.assertEqual(attrs["hot_water_amount"], 32_812)
+        self.assertEqual(attrs["gc_total"], 190_475)
+
+    def test_real_template_shape_explains_missing_sensor_values(self) -> None:
+        """Null template cells stay missing even when their section matched."""
+        response = {
+            "template_id": "coe_administraciones",
+            "document_type": "gasto_comun",
+            "sections": {
+                "fechas_emision": {
+                    "fecha_emision": "20-07-2026",
+                    "pagar_hasta": "31-07-2026",
+                },
+                "tabla_nota_cobro": {
+                    "copropietario": "JORGE CORDERO ORELLANA",
+                    "alicuota_total": "0,95110%",
+                    "gasto_comun_a_prorratear": "$ 14.171.762",
+                },
+                "tabla_desglose_departamento": {
+                    "gasto_comun_monto": None,
+                    "provision_fondos_monto": None,
+                    "subtotal_departamento": None,
+                },
+                "tabla_consumos_generales": {},
+                "tabla_gastos_por_unidad": {
+                    "cargo_fijo": None,
+                    "total_del_mes": None,
+                },
+            },
+            "meta": {
+                "matched_sections": {
+                    "tabla_desglose_departamento": {
+                        "matched": True,
+                        "score": 0.992,
+                        "line_results": {
+                            "gasto_comun_monto": {"value": None},
+                        },
+                    }
+                }
+            },
+        }
+
+        attrs = extractor.extract_attributes_from_addon_ocr_json(response)
+
+        self.assertEqual(attrs["emission_date"], "20-07-2026")
+        self.assertEqual(attrs["due_date"], "31-07-2026")
+        self.assertEqual(attrs["owner_name"], "JORGE CORDERO ORELLANA")
+        self.assertEqual(attrs["gastos_comunes_amount"], 134_788)
+        self.assertNotIn("funds_provision", attrs)
+        self.assertNotIn("fixed_charge", attrs)
+        self.assertNotIn("gc_total", attrs)
+        self.assertTrue(diagnostics.common_expenses_needs_fallback(attrs))
+
+    def test_meta_line_results_fill_missing_canonical_section_values(self) -> None:
+        response = {
+            "sections": {"tabla_gastos_por_unidad": {"cargo_fijo": None}},
+            "meta": {
+                "matched_sections": {
+                    "tabla_gastos_por_unidad": {
+                        "line_results": {
+                            "cargo_fijo": {"value": "$ 16.136"},
+                            "total_del_mes": {"value": "$ 190.475"},
+                        }
+                    }
+                }
+            },
+        }
+
+        attrs = extractor.extract_attributes_from_addon_ocr_json(response)
+
+        self.assertEqual(attrs["fixed_charge"], 16_136)
         self.assertEqual(attrs["gc_total"], 190_475)
 
 

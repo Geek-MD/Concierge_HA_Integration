@@ -3204,9 +3204,38 @@ def _extract_common_expenses_from_addon_structured_json(
     addon_json: dict[str, Any],
 ) -> dict[str, Any]:
     """Extract common-expenses attributes from addon template-driven JSON."""
-    sections = addon_json.get("sections")
-    if not isinstance(sections, dict):
+    response_sections = addon_json.get("sections")
+    if not isinstance(response_sections, dict):
         return {}
+
+    # ``sections`` is the canonical template result.  Some add-on releases also
+    # return the extracted values in ``meta.matched_sections.*.line_results``;
+    # use those only to fill absent/null canonical fields.  Besides making the
+    # integration tolerant of partially serialised template responses, this
+    # deliberately preserves nulls when the add-on did not extract a value -- a
+    # matched section is not evidence that each of its fields was recognised.
+    sections = {
+        key: dict(value) if isinstance(value, dict) else value
+        for key, value in response_sections.items()
+    }
+    meta = addon_json.get("meta")
+    matched_sections = meta.get("matched_sections") if isinstance(meta, dict) else None
+    if isinstance(matched_sections, dict):
+        for section_id, match_data in matched_sections.items():
+            if not isinstance(match_data, dict):
+                continue
+            line_results = match_data.get("line_results")
+            if not isinstance(line_results, dict):
+                continue
+            section = sections.setdefault(section_id, {})
+            if not isinstance(section, dict):
+                continue
+            for field_key, result in line_results.items():
+                if section.get(field_key) not in (None, ""):
+                    continue
+                value = result.get("value") if isinstance(result, dict) else None
+                if value not in (None, ""):
+                    section[field_key] = value
 
     attrs: dict[str, Any] = {}
     confidence: dict[str, float] = {}
