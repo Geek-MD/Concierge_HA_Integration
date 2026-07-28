@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.5] - 2026-07-28
+
+### Fixed
+
+- Structured add-on table rows with human-readable labels now populate the
+  common-expenses amount, funds percentage/amount, and hot-water readings and
+  amounts instead of leaving their sensors at default zero values.
+- Common-expenses diagnostics no longer report `no_extraction_attempt_recorded`
+  after an actual partial extraction; partial results now list the required
+  monetary fields that remain missing.
+
 ## [1.7.4] - 2026-07-28
 
 ### Fixed

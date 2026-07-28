@@ -55,6 +55,17 @@ class ExtractionDiagnosticsTests(unittest.TestCase):
             EXTRACTION_PARTIAL,
         )
 
+    def test_partial_diagnostics_identify_missing_fields(self) -> None:
+        attrs: dict[str, object] = {"gastos_comunes_amount": 90}
+
+        set_common_expenses_diagnostics(attrs, source="addon_template")
+
+        self.assertEqual(attrs[EXTRACTION_STATUS], EXTRACTION_PARTIAL)
+        self.assertEqual(
+            attrs[EXTRACTION_ERROR],
+            "missing_required_fields:subtotal,fixed_charge,gc_total",
+        )
+
     def test_common_expenses_extraction_failed(self) -> None:
         self.assertEqual(common_expenses_extraction_status({}), EXTRACTION_FAILED)
 

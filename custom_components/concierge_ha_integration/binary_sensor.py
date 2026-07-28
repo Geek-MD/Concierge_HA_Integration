@@ -79,7 +79,6 @@ _COMMON_EXPENSES_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
     "actual_measure": 0,
     EXTRACTION_STATUS: EXTRACTION_FAILED,
     EXTRACTION_SOURCE: "unknown",
-    EXTRACTION_ERROR: "no_extraction_attempt_recorded",
 }
 
 # Agua Caliente: meter readings used to verify consumption.
@@ -250,6 +249,12 @@ class ConciergeServiceStatusBinarySensor(
                         value = extracted_attrs.get(key)
                         if value is not None:
                             attrs[key] = value
+
+                    # An extraction error is conditional. Keeping a synthetic
+                    # default here made successful/partial attempts appear as
+                    # though no extraction had ever run.
+                    if extracted_attrs.get(EXTRACTION_ERROR):
+                        attrs[EXTRACTION_ERROR] = extracted_attrs[EXTRACTION_ERROR]
 
                     # Include pdf_path when a bill PDF was downloaded.
                     if pdf_path := extracted_attrs.get("pdf_path"):

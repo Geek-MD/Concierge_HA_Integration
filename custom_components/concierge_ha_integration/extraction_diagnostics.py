@@ -203,6 +203,11 @@ def set_common_expenses_diagnostics(
     attrs[EXTRACTION_SOURCE] = source
     if error or status == EXTRACTION_FAILED:
         attrs[EXTRACTION_ERROR] = error or "no_usable_common_expenses_attributes"
+    elif status == EXTRACTION_PARTIAL:
+        missing = ",".join(
+            key for key in COMMON_EXPENSES_CORE_FIELDS if attrs.get(key) is None
+        )
+        attrs[EXTRACTION_ERROR] = f"missing_required_fields:{missing}"
     else:
         attrs.pop(EXTRACTION_ERROR, None)
     return status

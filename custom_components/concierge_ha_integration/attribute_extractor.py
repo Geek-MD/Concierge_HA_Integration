@@ -3131,6 +3131,75 @@ def _addon_structured_field(
     return matches[0] if len(matches) == 1 else None
 
 
+def _addon_structured_row_field(
+    sections: dict[str, Any],
+    section_id: str,
+    row_tokens: tuple[str, ...],
+    field_tokens: tuple[str, ...],
+) -> str | None:
+    """Return a cell from a human-labelled structured table row.
+
+    Some add-on template versions use a row label as the JSON key and put the
+    columns below it (for example ``{"Gasto común": {"Monto a pagar": ...}}``).
+    Those responses cannot be read by :func:`_addon_structured_field`, which
+    intentionally matches complete machine-field names.  Match semantic tokens
+    here so percentages embedded in a dynamic row label and nested table cells
+    survive harmless template schema changes.
+    """
+    section = sections.get(section_id)
+    if section is None:
+        return None
+
+    def normalized(value: Any) -> str:
+        return _normalize_gc_anchor_text(str(value))
+
+    def find_row(value: Any) -> tuple[str, Any] | None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key_text = normalized(key)
+                if all(token in key_text for token in row_tokens):
+                    return key_text, child
+                if (match := find_row(child)) is not None:
+                    return match
+        elif isinstance(value, list):
+            for child in value:
+                if (match := find_row(child)) is not None:
+                    return match
+        return None
+
+    row = find_row(section)
+    if row is None:
+        return None
+    row_label, row_value = row
+
+    # A percentage is often part of the row label itself, e.g.
+    # "PROVISIÓN DE FONDOS 5% DEL GASTO MENSUAL".
+    if "porcentaje" in field_tokens:
+        match = re.search(r"(\d+(?:[.,]\d+)?)\s*%", row_label)
+        if match:
+            return match.group(1)
+
+    def find_cell(value: Any) -> str | None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key_text = normalized(key)
+                if any(token in key_text for token in field_tokens):
+                    if isinstance(child, dict):
+                        child = child.get("value", child.get("text"))
+                    if child not in ("", None) and not isinstance(child, (dict, list)):
+                        return str(child).strip()
+            for child in value.values():
+                if (match := find_cell(child)) is not None:
+                    return match
+        elif isinstance(value, list):
+            for child in value:
+                if (match := find_cell(child)) is not None:
+                    return match
+        return None
+
+    return find_cell(row_value)
+
+
 def _extract_common_expenses_from_addon_structured_json(
     addon_json: dict[str, Any],
 ) -> dict[str, Any]:
@@ -3240,6 +3309,12 @@ def _extract_common_expenses_from_addon_structured_json(
         sections, "tabla_desglose_departamento", "gasto_comun_monto",
         "gasto_comun", "monto_gasto_comun",
     )
+    gastos_raw = gastos_raw or _addon_structured_row_field(
+        sections,
+        "tabla_desglose_departamento",
+        ("gasto", "comun"),
+        ("monto", "total", "valor"),
+    )
     if gastos_raw:
         attrs["gastos_comunes_amount"] = _parse_amount_to_int(gastos_raw)
         confidence["gastos_comunes_amount"] = CONF_SCORE_OCR
@@ -3247,6 +3322,12 @@ def _extract_common_expenses_from_addon_structured_json(
     fondos_pct_raw = _addon_structured_field(
         sections, "tabla_desglose_departamento", "provision_fondos_porcentaje",
         "provision_de_fondos_porcentaje", "fondos_porcentaje",
+    )
+    fondos_pct_raw = fondos_pct_raw or _addon_structured_row_field(
+        sections,
+        "tabla_desglose_departamento",
+        ("provision", "fondos"),
+        ("porcentaje", "detalle"),
     )
     if fondos_pct_raw:
         pct_match = re.search(r"(\d+)", fondos_pct_raw)
@@ -3257,6 +3338,12 @@ def _extract_common_expenses_from_addon_structured_json(
     fondos_raw = _addon_structured_field(
         sections, "tabla_desglose_departamento", "provision_fondos_monto",
         "provision_de_fondos_monto", "fondos_monto",
+    )
+    fondos_raw = fondos_raw or _addon_structured_row_field(
+        sections,
+        "tabla_desglose_departamento",
+        ("provision", "fondos"),
+        ("monto", "total", "valor"),
     )
     if fondos_raw:
         attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
@@ -3272,6 +3359,9 @@ def _extract_common_expenses_from_addon_structured_json(
     hw_prev = _addon_structured_field(
         sections, "tabla_consumos_generales", "agua_caliente_lectura_anterior"
     )
+    hw_prev = hw_prev or _addon_structured_row_field(
+        sections, "tabla_consumos_generales", ("agua", "caliente"), ("lectura anterior",)
+    )
     if hw_prev:
         attrs["hot_water_reading_prev"] = _parse_meter_reading(hw_prev)
         confidence["hot_water_reading_prev"] = CONF_SCORE_OCR
@@ -3279,12 +3369,18 @@ def _extract_common_expenses_from_addon_structured_json(
     hw_curr = _addon_structured_field(
         sections, "tabla_consumos_generales", "agua_caliente_lectura_actual"
     )
+    hw_curr = hw_curr or _addon_structured_row_field(
+        sections, "tabla_consumos_generales", ("agua", "caliente"), ("lectura actual",)
+    )
     if hw_curr:
         attrs["hot_water_reading_curr"] = _parse_meter_reading(hw_curr)
         confidence["hot_water_reading_curr"] = CONF_SCORE_OCR
 
     hw_consumption = _addon_structured_field(
         sections, "tabla_consumos_generales", "agua_caliente_consumos"
+    )
+    hw_consumption = hw_consumption or _addon_structured_row_field(
+        sections, "tabla_consumos_generales", ("agua", "caliente"), ("consumos", "consumo")
     )
     if hw_consumption:
         attrs["hot_water_consumption"] = _parse_meter_reading(hw_consumption)
@@ -3306,12 +3402,18 @@ def _extract_common_expenses_from_addon_structured_json(
     hw_cost = _addon_structured_field(
         sections, "tabla_consumos_generales", "agua_caliente_valor"
     )
+    hw_cost = hw_cost or _addon_structured_row_field(
+        sections, "tabla_consumos_generales", ("agua", "caliente"), ("valor",)
+    )
     if hw_cost:
         attrs["hot_water_cost_per_m3"] = _parse_consumption_to_float(hw_cost)
         confidence["hot_water_cost_per_m3"] = CONF_SCORE_OCR
 
     hw_amount = _addon_structured_field(
         sections, "tabla_consumos_generales", "agua_caliente_total"
+    )
+    hw_amount = hw_amount or _addon_structured_row_field(
+        sections, "tabla_consumos_generales", ("agua", "caliente"), ("total", "monto")
     )
     if hw_amount:
         attrs["hot_water_amount"] = _parse_amount_to_int(hw_amount)
