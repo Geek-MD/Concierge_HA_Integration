@@ -61,6 +61,49 @@ class AddonStructuredExtractionTests(unittest.TestCase):
         self.assertEqual(attrs["hot_water_amount"], 20_000)
         self.assertEqual(attrs["gc_total"], 150_000)
 
+    def test_human_labelled_rows_populate_funds_and_hot_water(self) -> None:
+        response = {
+            "sections": {
+                "tabla_desglose_departamento": {
+                    "rows": [
+                        {"Gasto común": {"Detalle": "0,95110 %", "Monto a pagar": "$ 134.788"}},
+                        {
+                            "PROVISIÓN DE FONDOS 5% DEL GASTO MENSUAL": {
+                                "Detalle": "5,00 %",
+                                "Monto a pagar": "$ 6.739",
+                            }
+                        },
+                    ],
+                    "Subtotal Departamento": "$ 141.527",
+                },
+                "tabla_consumos_generales": {
+                    "rows": [{
+                        "Agua Caliente": {
+                            "Lectura Anterior": "298,300000",
+                            "Lectura Actual": "301,800000",
+                            "Consumos": "3,500000",
+                            "Valor": "9.374,86",
+                            "Total": "$ 32.812",
+                        }
+                    }],
+                    "Subtotal Consumo": "$ 32.812",
+                },
+                "tabla_gastos_por_unidad": {
+                    "Cargo Fijo": "$ 16.136",
+                    "Total del mes": "$ 190.475",
+                },
+            }
+        }
+
+        attrs = extractor.extract_attributes_from_addon_ocr_json(response)
+
+        self.assertEqual(attrs["funds_provision_percentage"], 5)
+        self.assertEqual(attrs["funds_provision"], 6_739)
+        self.assertEqual(attrs["hot_water_reading_prev"], 298.3)
+        self.assertEqual(attrs["hot_water_reading_curr"], 301.8)
+        self.assertEqual(attrs["hot_water_amount"], 32_812)
+        self.assertEqual(attrs["gc_total"], 190_475)
+
 
 if __name__ == "__main__":
     unittest.main()
