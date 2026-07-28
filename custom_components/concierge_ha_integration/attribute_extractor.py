@@ -233,6 +233,13 @@ def _parse_amount_to_int(raw: str) -> int:
         "1,234.56" → 1234    # English: comma = thousands, dot = decimal
     """
     raw = raw.strip()
+    # Structured add-on templates return the complete cell (for example
+    # ``"$ 122.060"``), while regex-based extractors pass only its digits.
+    # Accept both forms instead of silently converting currency cells to zero.
+    amount_match = re.search(r"-?[0-9]+(?:[.,][0-9]+)*", raw)
+    if not amount_match:
+        return 0
+    raw = amount_match.group(0)
     m = re.search(r"([,.])(\d+)$", raw)
     if m:
         frac_digits = len(m.group(2))
@@ -3075,15 +3082,53 @@ def _addon_structured_field(
     sections: dict[str, Any],
     section_id: str,
     field_key: str,
+    *aliases: str,
 ) -> str | None:
-    """Return a trimmed field value from an addon structured-response section."""
+    """Return a field from an addon structured response.
+
+    Add-on templates have used both machine keys (``gasto_comun_monto``) and
+    human-readable Spanish labels (``Gasto común - Monto``).  Match normalized
+    variants so a harmless template-key rename does not blank every sensor.
+    The preferred section is searched first; a unique match in another section
+    is accepted as a compatibility fallback.
+    """
+    wanted = {
+        _normalize_gc_anchor_text(key).replace(" ", "_")
+        for key in (field_key, *aliases)
+    }
+
+    def value_from(section: Any) -> str | None:
+        if isinstance(section, dict):
+            for key, value in section.items():
+                normalized = _normalize_gc_anchor_text(str(key)).replace(" ", "_")
+                if normalized in wanted:
+                    if isinstance(value, dict):
+                        value = value.get("value", value.get("text"))
+                    if value not in ("", None) and not isinstance(value, (dict, list)):
+                        return str(value).strip()
+            for value in section.values():
+                match = value_from(value)
+                if match is not None:
+                    return match
+        elif isinstance(section, list):
+            for value in section:
+                match = value_from(value)
+                if match is not None:
+                    return match
+        return None
+
     section = sections.get(section_id)
-    if not isinstance(section, dict):
-        return None
-    value = section.get(field_key)
-    if value in ("", None):
-        return None
-    return str(value).strip()
+    value = value_from(section)
+    if value is not None:
+        return value
+
+    matches = [
+        match
+        for candidate in sections.values()
+        if candidate is not section
+        if (match := value_from(candidate)) is not None
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _extract_common_expenses_from_addon_structured_json(
@@ -3192,14 +3237,16 @@ def _extract_common_expenses_from_addon_structured_json(
         confidence["building_total_expense"] = CONF_SCORE_OCR
 
     gastos_raw = _addon_structured_field(
-        sections, "tabla_desglose_departamento", "gasto_comun_monto"
+        sections, "tabla_desglose_departamento", "gasto_comun_monto",
+        "gasto_comun", "monto_gasto_comun",
     )
     if gastos_raw:
         attrs["gastos_comunes_amount"] = _parse_amount_to_int(gastos_raw)
         confidence["gastos_comunes_amount"] = CONF_SCORE_OCR
 
     fondos_pct_raw = _addon_structured_field(
-        sections, "tabla_desglose_departamento", "provision_fondos_porcentaje"
+        sections, "tabla_desglose_departamento", "provision_fondos_porcentaje",
+        "provision_de_fondos_porcentaje", "fondos_porcentaje",
     )
     if fondos_pct_raw:
         pct_match = re.search(r"(\d+)", fondos_pct_raw)
@@ -3208,7 +3255,8 @@ def _extract_common_expenses_from_addon_structured_json(
             confidence["fondos_pct"] = CONF_SCORE_OCR
 
     fondos_raw = _addon_structured_field(
-        sections, "tabla_desglose_departamento", "provision_fondos_monto"
+        sections, "tabla_desglose_departamento", "provision_fondos_monto",
+        "provision_de_fondos_monto", "fondos_monto",
     )
     if fondos_raw:
         attrs["fondos_amount"] = _parse_amount_to_int(fondos_raw)
@@ -3288,7 +3336,7 @@ def _extract_common_expenses_from_addon_structured_json(
         confidence["cargo_fijo"] = CONF_SCORE_OCR
 
     subtotal_recargos_raw = _addon_structured_field(
-        sections, "tabla_gastos_por_unidad", "subtotal_recarga"
+        sections, "tabla_gastos_por_unidad", "subtotal_recarga", "subtotal_recargos"
     )
     if subtotal_recargos_raw:
         attrs["subtotal_recargos"] = _parse_amount_to_int(subtotal_recargos_raw)
