@@ -1,10 +1,9 @@
 """Binary sensor platform for Concierge Services."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
-
-from dateutil.relativedelta import relativedelta
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -17,11 +16,14 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .billing import is_bill_overdue
 from .const import (
+    CONF_BILLING_INTERVAL_MONTHS,
     CONF_SERVICE_ID,
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
     DOMAIN,
+    DEFAULT_BILLING_INTERVAL_MONTHS,
     SERVICE_TYPE_COMMON_EXPENSES,
     SERVICE_TYPE_ELECTRICITY,
     SERVICE_TYPE_GAS,
@@ -63,8 +65,7 @@ _ELECTRICITY_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
     "substation": 0,
     "pdf_url": "",
 }
-_WATER_STATUS_ATTR_DEFAULTS: dict[str, Any] = {
-}
+_WATER_STATUS_ATTR_DEFAULTS: dict[str, Any] = {}
 
 # Gastos Comunes: building-level totals used to verify the apartment portion,
 # plus the funds-provision percentage and agua caliente subtotal extracted
@@ -107,9 +108,9 @@ async def async_setup_entry(
     each associated with its own subentry so it appears correctly grouped
     in the Home Assistant device registry under the Diagnostic category.
     """
-    coordinator: ConciergeServicesCoordinator = (
-        hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
-    )
+    coordinator: ConciergeServicesCoordinator = hass.data[DOMAIN][
+        config_entry.entry_id
+    ]["coordinator"]
 
     for subentry_id, subentry in config_entry.subentries.items():  # type: ignore[attr-defined]
         async_add_entities(
@@ -148,7 +149,9 @@ class ConciergeServiceStatusBinarySensor(
         """Initialize the status binary sensor."""
         super().__init__(coordinator)
         self._subentry_id = subentry_id
-        self._service_id = normalize_service_id(subentry_data.get(CONF_SERVICE_ID, subentry_id))
+        self._service_id = normalize_service_id(
+            subentry_data.get(CONF_SERVICE_ID, subentry_id)
+        )
         # Use service_id (human-readable slug) as fallback, never the raw subentry UUID
         self._service_name = subentry_data.get(
             CONF_SERVICE_NAME,
@@ -174,7 +177,7 @@ class ConciergeServiceStatusBinarySensor(
         A problem is reported when:
         - No coordinator data is available.
         - No bill data has been found for this service.
-        - The most recent bill is older than one calendar month.
+        - The most recent bill is older than the configured billing interval.
         """
         if not self.coordinator.data:
             return True
@@ -188,12 +191,13 @@ class ConciergeServiceStatusBinarySensor(
         # Ensure last_updated is timezone-aware before comparing.
         if last_updated.tzinfo is None:
             last_updated = last_updated.replace(tzinfo=timezone.utc)
-        if last_updated + relativedelta(months=1) < now:
+        billing_interval = self._subentry_data.get(
+            CONF_BILLING_INTERVAL_MONTHS, DEFAULT_BILLING_INTERVAL_MONTHS
+        )
+        if is_bill_overdue(last_updated, now, billing_interval):
             return True
 
-        service_type = self._subentry_data.get(
-            CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN
-        )
+        service_type = self._subentry_data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
         if service_type == SERVICE_TYPE_COMMON_EXPENSES:
             attrs = service_data.get("attributes", {})
             extraction_status = attrs.get(EXTRACTION_STATUS)
@@ -219,6 +223,9 @@ class ConciergeServiceStatusBinarySensor(
             "service_id": self._service_id,
             "service_name": self._service_name,
             "service_type": service_type,
+            CONF_BILLING_INTERVAL_MONTHS: self._subentry_data.get(
+                CONF_BILLING_INTERVAL_MONTHS, DEFAULT_BILLING_INTERVAL_MONTHS
+            ),
             "folio": 0,
             "billing_period_start": 0,
             "billing_period_end": 0,
@@ -230,11 +237,15 @@ class ConciergeServiceStatusBinarySensor(
         }
 
         # Service-type-specific attributes — only for the matching type.
-        type_specific_defaults = _SERVICE_TYPE_STATUS_ATTR_DEFAULTS.get(service_type, {})
+        type_specific_defaults = _SERVICE_TYPE_STATUS_ATTR_DEFAULTS.get(
+            service_type, {}
+        )
         attrs.update(type_specific_defaults)
 
         if self.coordinator.data:
-            service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)
+            service_data = self.coordinator.data.get("services", {}).get(
+                self._subentry_id
+            )
             if service_data:
                 extracted_attrs = service_data.get("attributes", {})
                 if extracted_attrs:

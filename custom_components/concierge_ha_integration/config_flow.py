@@ -1,4 +1,5 @@
 """Config flow for Concierge Services integration."""
+
 from __future__ import annotations
 
 import imaplib
@@ -16,6 +17,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_ADDON_API_TOKEN,
+    CONF_BILLING_INTERVAL_MONTHS,
     CONF_EMAIL,
     CONF_IMAP_PORT,
     CONF_IMAP_SERVER,
@@ -26,6 +28,7 @@ from .const import (
     CONF_SERVICE_NAME,
     CONF_SERVICE_TYPE,
     DEFAULT_IMAP_PORT,
+    DEFAULT_BILLING_INTERVAL_MONTHS,
     DOMAIN,
 )
 from .service_detector import detect_services_from_imap, normalize_service_id
@@ -36,12 +39,18 @@ ADDON_TOKEN_SELECTOR = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
 )
 
+BILLING_INTERVAL_VALIDATOR = vol.All(vol.Coerce(int), vol.Range(min=1, max=24))
+
 # Schema for the initial IMAP credential step
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_IMAP_SERVER, description={"suggested_value": "imap.gmail.com"}): str,
+        vol.Required(
+            CONF_IMAP_SERVER, description={"suggested_value": "imap.gmail.com"}
+        ): str,
         vol.Required(CONF_IMAP_PORT, default=DEFAULT_IMAP_PORT): int,
-        vol.Required(CONF_EMAIL, description={"suggested_value": "user@gmail.com"}): str,
+        vol.Required(
+            CONF_EMAIL, description={"suggested_value": "user@gmail.com"}
+        ): str,
         vol.Required(CONF_PASSWORD): str,
     }
 )
@@ -138,7 +147,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
     ) -> FlowResult:
         """Ask for a friendly name, then create the config entry."""
         if user_input is not None:
-            friendly_name = user_input.get("friendly_name") or self._imap_data[CONF_EMAIL]
+            friendly_name = (
+                user_input.get("friendly_name") or self._imap_data[CONF_EMAIL]
+            )
             return self.async_create_entry(  # type: ignore[return-value]
                 title=friendly_name,
                 data={
@@ -154,9 +165,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call
                     "friendly_name",
                     default=self._imap_data[CONF_EMAIL],
                 ): str,
-                vol.Optional(
-                    CONF_ADDON_API_TOKEN, default=""
-                ): ADDON_TOKEN_SELECTOR,
+                vol.Optional(CONF_ADDON_API_TOKEN, default=""): ADDON_TOKEN_SELECTOR,
             }
         )
 
@@ -202,10 +211,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         options_schema = vol.Schema(
             {
-                vol.Required(CONF_IMAP_SERVER, default=current.get(CONF_IMAP_SERVER, "imap.gmail.com")): str,
-                vol.Required(CONF_IMAP_PORT, default=current.get(CONF_IMAP_PORT, DEFAULT_IMAP_PORT)): int,
+                vol.Required(
+                    CONF_IMAP_SERVER,
+                    default=current.get(CONF_IMAP_SERVER, "imap.gmail.com"),
+                ): str,
+                vol.Required(
+                    CONF_IMAP_PORT,
+                    default=current.get(CONF_IMAP_PORT, DEFAULT_IMAP_PORT),
+                ): int,
                 vol.Required(CONF_EMAIL, default=current.get(CONF_EMAIL, "")): str,
-                vol.Required(CONF_PASSWORD, default=current.get(CONF_PASSWORD, "")): str,
+                vol.Required(
+                    CONF_PASSWORD, default=current.get(CONF_PASSWORD, "")
+                ): str,
                 vol.Optional(
                     CONF_ADDON_API_TOKEN,
                     default=current.get(CONF_ADDON_API_TOKEN, ""),
@@ -261,6 +278,9 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
                         CONF_SERVICE_ID: selected.service_id,
                         CONF_SERVICE_NAME: selected.service_name,
                         CONF_SERVICE_TYPE: selected.service_type,
+                        CONF_BILLING_INTERVAL_MONTHS: user_input[
+                            CONF_BILLING_INTERVAL_MONTHS
+                        ],
                         CONF_SAMPLE_FROM: selected.sample_from,
                         CONF_SAMPLE_SUBJECT: selected.sample_subject,
                         "email_count": selected.email_count,
@@ -306,7 +326,13 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
         return self.async_show_form(  # type: ignore[return-value]
             step_id="user",
             data_schema=vol.Schema(
-                {vol.Required(CONF_SERVICE_ID): vol.In(service_options)}
+                {
+                    vol.Required(CONF_SERVICE_ID): vol.In(service_options),
+                    vol.Required(
+                        CONF_BILLING_INTERVAL_MONTHS,
+                        default=DEFAULT_BILLING_INTERVAL_MONTHS,
+                    ): BILLING_INTERVAL_VALIDATOR,
+                }
             ),
             errors=errors,
             description_placeholders={"count": str(len(self._available_services))},
@@ -341,7 +367,14 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
                 "service_name": discovery_info.get(CONF_SERVICE_NAME, ""),
                 "email_count": str(discovery_info.get("email_count", 0)),
             },
-            data_schema=vol.Schema({}),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_BILLING_INTERVAL_MONTHS,
+                        default=DEFAULT_BILLING_INTERVAL_MONTHS,
+                    ): BILLING_INTERVAL_VALIDATOR,
+                }
+            ),
         )
 
     async def async_step_discovery_confirm(
@@ -356,8 +389,12 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
         """
         if user_input is not None:
             entry = self._get_entry()  # type: ignore[attr-defined]
+            subentry_data = {
+                **self._discovery_data,
+                CONF_BILLING_INTERVAL_MONTHS: user_input[CONF_BILLING_INTERVAL_MONTHS],
+            }
             subentry = config_entries.ConfigSubentry(  # type: ignore[attr-defined]
-                data=MappingProxyType(self._discovery_data),
+                data=MappingProxyType(subentry_data),
                 subentry_type="service",
                 title=self._discovery_data.get(CONF_SERVICE_NAME, ""),
                 unique_id=self._discovery_data.get(CONF_SERVICE_ID),
@@ -373,7 +410,14 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
                 "service_name": self._discovery_data.get(CONF_SERVICE_NAME, ""),
                 "email_count": str(self._discovery_data.get("email_count", 0)),
             },
-            data_schema=vol.Schema({}),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_BILLING_INTERVAL_MONTHS,
+                        default=DEFAULT_BILLING_INTERVAL_MONTHS,
+                    ): BILLING_INTERVAL_VALIDATOR,
+                }
+            ),
         )
 
     async def async_step_reconfigure(
@@ -385,12 +429,19 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
         current = subentry.data
 
         if user_input is not None:
-            new_name = user_input.get(CONF_SERVICE_NAME) or current.get(CONF_SERVICE_NAME, "")
+            new_name = user_input.get(CONF_SERVICE_NAME) or current.get(
+                CONF_SERVICE_NAME, ""
+            )
+            billing_interval = user_input[CONF_BILLING_INTERVAL_MONTHS]
             return self.async_update_and_abort(  # type: ignore[return-value]
                 self._get_entry(),  # type: ignore[attr-defined]
                 subentry,
                 title=new_name,
-                data={**current, CONF_SERVICE_NAME: new_name},
+                data={
+                    **current,
+                    CONF_SERVICE_NAME: new_name,
+                    CONF_BILLING_INTERVAL_MONTHS: billing_interval,
+                },
             )
 
         return self.async_show_form(  # type: ignore[return-value]
@@ -401,6 +452,13 @@ class ServiceSubentryFlowHandler(config_entries.ConfigSubentryFlow):  # type: ig
                         CONF_SERVICE_NAME,
                         default=current.get(CONF_SERVICE_NAME, ""),
                     ): str,
+                    vol.Required(
+                        CONF_BILLING_INTERVAL_MONTHS,
+                        default=current.get(
+                            CONF_BILLING_INTERVAL_MONTHS,
+                            DEFAULT_BILLING_INTERVAL_MONTHS,
+                        ),
+                    ): BILLING_INTERVAL_VALIDATOR,
                 }
             ),
             errors=errors,

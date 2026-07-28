@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-07-28
+
+### Added
+
+- Added a configurable billing interval (1–24 months) to every service device.
+  The interval can be selected during manual addition or automatic-discovery
+  confirmation, and changed later from the service device's reconfiguration
+  flow.
+- The service status binary sensor now uses its configured billing interval
+  when deciding whether the latest bill is overdue. Existing service devices
+  retain the previous one-month behavior until reconfigured.
+- Exposed `billing_interval_months` as a status sensor attribute and added
+  localized configuration labels.
+
 ## [1.7.6] - 2026-07-28
 
 - Confirmed that common-expenses sensors are populated from the add-on's

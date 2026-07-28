@@ -435,14 +435,18 @@ Once the integration is set up, service devices can be added in two ways:
 Right after setup the integration scans your inbox for service providers.
 Discovered services appear on the **Concierge HA Integration** integration card as
 **"Discovered: {service_name}"** — click the card to confirm and the device is added
-automatically.  The scan repeats every hour so newly-arrived bills are noticed.
+automatically. During confirmation, set the provider's **Billing interval (months)**
+(for example, `2` for a provider that bills every two months). The scan repeats every
+hour so newly-arrived bills are noticed.
 
 #### ➕ Manual Addition
 Use the **ADD DEVICE** button on the integration card:
 - The integration scans your inbox and shows available service providers
 - Select a service to add it as a device
+- Set its **Billing interval (months)** from 1 to 24 (the default is `1`)
 - Repeat for each service you want to track
-- Each service can be reconfigured later via its device page
+- Each service can be reconfigured later via its device page to change its name or
+  billing interval without removing and adding the device again
 
 > **Note**: Only one Concierge HA Integration instance is allowed per Home Assistant installation
 > (`single_config_entry`). To monitor a different email account, reconfigure the existing
@@ -495,8 +499,8 @@ with five entities:
 
 #### Diagnostic: Status Binary Sensor
 - **Entity ID**: `binary_sensor.concierge_{service_id}_status`
-- **State**: `on` (Problem — no bill data found or last update older than 1 month) / `off` (OK — data retrieved within the last month)
-- **Attributes**: billing metadata (folio, period, address, due date, pdf_path) and
+- **State**: `on` (Problem — no bill data found or the last update is older than the service's configured billing interval) / `off` (OK — data retrieved within that interval)
+- **Attributes**: configured `billing_interval_months`, billing metadata (folio, period, address, due date, pdf_path), and
   service-type-specific fields (pdf_url, electricity breakdowns, water components, etc.)
 
 #### Diagnostic: Last Update Sensor
@@ -531,7 +535,7 @@ with five entities:
 - ✅ Service-specific device creation via ADD DEVICE button
 - ✅ MQTT-style architecture: email as hub, services as subentry devices
 - ✅ Options flow: CONFIGURE button to update IMAP credentials without reinstalling
-- ✅ Subentry reconfigure: update service name from the device page
+- ✅ Subentry reconfigure: update the service name and its 1–24 month billing interval from the device page
 - ✅ Automatic migration (v0.5.1): upgrading from older versions no longer requires reinstalling
 - ✅ Automatic discovery (v0.5.2): inbox is scanned periodically; new services surface in the integration card for one-click confirmation (requires HA 2025.4+)
 - ✅ Heuristic PDF download: attachment → billing link in HTML → plain-text URL

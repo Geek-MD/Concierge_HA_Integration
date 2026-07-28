@@ -85,18 +85,23 @@
           "title": "Ajouter un appareil de service",
           "description": "{count} compte(s) de service disponible(s) à ajouter. Sélectionnez celui à configurer comme appareil :",
           "data": {
-            "service_id": "Service"
+            "service_id": "Service",
+            "billing_interval_months": "Intervalle de facturation (mois)"
           }
         },
         "discovery_confirm": {
           "title": "Détecté : {service_name}",
-          "description": "{service_name} a été détecté dans la boîte de réception ({email_count} e-mail(s)). Voulez-vous l'ajouter comme appareil de service ?"
+          "description": "{service_name} a été détecté dans la boîte de réception ({email_count} e-mail(s)). Voulez-vous l'ajouter comme appareil de service ?",
+          "data": {
+            "billing_interval_months": "Intervalle de facturation (mois)"
+          }
         },
         "reconfigure": {
           "title": "Reconfigurer {service_name}",
           "description": "Mettez à jour les paramètres de cet appareil de service",
           "data": {
-            "service_name": "Nom du service"
+            "service_name": "Nom du service",
+            "billing_interval_months": "Intervalle de facturation (mois)"
           }
         }
       },

@@ -85,18 +85,23 @@
           "title": "Adicionar dispositivo de serviço",
           "description": "Encontrada(s) {count} conta(s) de serviço disponível(is) para adicionar. Selecione qual deseja configurar como dispositivo:",
           "data": {
-            "service_id": "Serviço"
+            "service_id": "Serviço",
+            "billing_interval_months": "Intervalo de faturamento (meses)"
           }
         },
         "discovery_confirm": {
           "title": "Detectado: {service_name}",
-          "description": "{service_name} foi detectado na caixa de entrada ({email_count} e-mail(s)). Deseja adicioná-lo como dispositivo de serviço?"
+          "description": "{service_name} foi detectado na caixa de entrada ({email_count} e-mail(s)). Deseja adicioná-lo como dispositivo de serviço?",
+          "data": {
+            "billing_interval_months": "Intervalo de faturamento (meses)"
+          }
         },
         "reconfigure": {
           "title": "Reconfigurar {service_name}",
           "description": "Atualize as configurações deste dispositivo de serviço",
           "data": {
-            "service_name": "Nome do serviço"
+            "service_name": "Nome do serviço",
+            "billing_interval_months": "Intervalo de faturamento (meses)"
           }
         }
       },
