@@ -11,6 +11,19 @@ EXTRACTION_SUCCESS = "success"
 EXTRACTION_PARTIAL = "partial"
 EXTRACTION_FAILED = "failed"
 
+
+def should_attempt_addon(
+    availability: bool | None, *, forced_refresh: bool = False
+) -> bool:
+    """Return whether PDF extraction should call the Concierge add-on.
+
+    A manual refresh is an explicit request to retry the complete extraction
+    pipeline, so it must not be blocked by a failed or stale health check. The
+    OCR request still has the internal extractor as its fallback.
+    """
+    return forced_refresh or availability is not False
+
+
 # These are the monetary values exposed by the primary Gastos Comunes sensors.
 COMMON_EXPENSES_CORE_FIELDS: tuple[str, ...] = (
     "gastos_comunes_amount",

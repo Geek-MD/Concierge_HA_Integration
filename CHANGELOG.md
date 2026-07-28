@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.4] - 2026-07-28
+
+### Fixed
+
+- Gastos Comunes and hot-water PDFs now try the Concierge OCR add-on during
+  the initial Home Assistant startup grace period instead of silently using
+  only the internal extractor. If the early add-on request is unavailable,
+  extraction continues through the existing internal fallback.
+- The per-device Force Refresh action now retries the add-on OCR request even
+  when its preceding health check fails or reports stale availability, before
+  continuing through the internal fallback.
+
 ## [1.7.3] - 2026-07-28
 
 ### Fixed
