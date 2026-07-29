@@ -150,7 +150,9 @@ def _store_ocrspace_json_snapshot(
 # Patterns for billing period dates (start and end)
 DATE_PATTERNS = [
     r"([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})",
-    r"([0-9]{1,2}\s+de\s+[a-zA-Z]+\s+de\s+[0-9]{4})",
+    r"([0-9]{1,2}-[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,12}-[0-9]{4})",
+    r"([0-9]{1,2}\s+(?:de\s+)?[a-zA-ZáéíóúÁÉÍÓÚñÑ]+"
+    r"\s+(?:de\s+)?[0-9]{4})",
     r"([A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})",
 ]
 
@@ -204,6 +206,21 @@ _ADDRESS_LABELS = re.compile(
 # Label pattern that precedes a payment due date
 _DUE_DATE_LABELS = re.compile(
     r"fecha\s+de\s+vencimiento[:\s]+",
+    re.IGNORECASE,
+)
+
+# Labels used by Chilean providers for the date printed on the bill.  This is
+# intentionally separate from the email Date header: forwarded/duplicated
+# messages can have different timestamps while carrying the same bill.
+_EMISSION_DATE_LABELS = re.compile(
+    r"(?:fecha\s+(?:de\s+)?(?:emisi[oó]n|la\s+boleta|boleta|documento|factura)"
+    r"|emitid[ao]\s+el)[:\s]+",
+    re.IGNORECASE,
+)
+_BOLETA_ISSUED_ON_RE = re.compile(
+    r"\b(?:n[°º.]?\s*)?boleta(?:\s+electr[oó]nica)?"
+    r"(?:\s+n[°º.]?)?\s*\d*\s+del\s+"
+    r"([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})",
     re.IGNORECASE,
 )
 
@@ -345,6 +362,27 @@ def _extract_due_date(text: str) -> str | None:
             date_match = re.search(pattern, rest[:60], re.IGNORECASE)
             if date_match:
                 return date_match.group(1).strip()
+    return None
+
+
+def _extract_emission_date(text: str) -> str | None:
+    """Return the issue date explicitly printed in bill content."""
+    for label_match in _EMISSION_DATE_LABELS.finditer(text):
+        rest = text[label_match.end():label_match.end() + 120]
+        candidates: list[tuple[int, str]] = []
+        for pattern in DATE_PATTERNS:
+            date_match = re.search(pattern, rest, re.IGNORECASE)
+            if date_match:
+                candidates.append((date_match.start(), date_match.group(1)))
+        if candidates:
+            # Prefer the date closest to the label, irrespective of which
+            # supported date format happens to appear later in the text.
+            return min(candidates, key=lambda item: item[0])[1].strip().replace(
+                "/", "-"
+            )
+    boleta_match = _BOLETA_ISSUED_ON_RE.search(text)
+    if boleta_match:
+        return boleta_match.group(1).strip().replace("/", "-")
     return None
 
 
@@ -494,6 +532,16 @@ _WATER_AA_PDF_FIXED_CHARGE_RE = re.compile(
     r"cargo\s+fijo\s*" + _WATER_AA_TARIFF_AMT,
     re.IGNORECASE,
 )
+_WATER_AA_PDF_NON_PEAK_TARIFF_RE = re.compile(
+    r"metro\s+c[uú]bico\s+agua\s+potable\s+no\s+punta\s*"
+    + _WATER_AA_TARIFF_AMT,
+    re.IGNORECASE,
+)
+_WATER_AA_PDF_PEAK_TARIFF_RE = re.compile(
+    r"metro\s+c[uú]bico\s+agua\s+potable\s+punta\s*"
+    + _WATER_AA_TARIFF_AMT,
+    re.IGNORECASE,
+)
 _WATER_AA_PDF_FIXED_CHARGE_ROW_RE = re.compile(
     r"^CARGO\s+FIJO(?:\s*\|\s*|\s+)(-?[0-9][0-9.,]*)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -532,6 +580,29 @@ _WATER_AA_PDF_BILLING_TABLE_RE = re.compile(
     r"([0-9][0-9.,]+)\s*\n"               # group 6 – INTERÉS DEUDA
     r"([0-9][0-9.,]+)\s*\n"               # group 7 – TOTAL VENTA
     r"(-?[0-9][0-9.,]*)",                  # group 8 – DESCUENTO LEY REDONDEO
+    re.IGNORECASE,
+)
+# Current compact layout without an "INTERÉS DEUDA" row. The three repeated
+# m³ values belong to potable water, collection and treatment respectively.
+_WATER_AA_PDF_BILLING_TABLE_COMBINED_RE = re.compile(
+    r"CARGO\s+FIJO\n"
+    r"CONSUMO\s+AGUA\s+POTABLE\n"
+    r"RECOLECCI[OÓ]N\s+AGUAS\s+SERVIDAS\n"
+    r"TRATAMIENTO\s+AGUAS\s+SERVIDAS\n"
+    r"SUBTOTAL\s+SERVICIO\n"
+    r"TOTAL\s+VENTA\n"
+    r"DESCUENTO\s+LEY\s+REDONDEO\n"
+    r"\s*TOTAL\s+A\s+PAGAR\s*\n"
+    r"\s*([0-9][0-9.,]*)\s*\n"             # potable-water m³
+    r"\s*([0-9][0-9.,]*)\s*\n"             # collection m³
+    r"\s*([0-9][0-9.,]*)\s*\n"             # treatment m³
+    r"\s*([0-9][0-9.,]+)\s*\n"             # fixed charge
+    r"([0-9][0-9.,]+)\s*\n"                # potable-water charge
+    r"([0-9][0-9.,]+)\s*\n"                # collection charge
+    r"([0-9][0-9.,]+)\s*\n"                # treatment charge
+    r"([0-9][0-9.,]+)\s*\n"                # subtotal
+    r"([0-9][0-9.,]+)\s*\n"                # total sale
+    r"(-?[0-9][0-9.,]*)",                   # rounding discount
     re.IGNORECASE,
 )
 # Newer Aguas Andinas layout (column-serialised, NO PUNTA + PUNTA split):
@@ -710,8 +781,31 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
     #   1) legacy column-serialised table (single "CONSUMO AGUA POTABLE" row)
     #   2) newer column-serialised table ("NO PUNTA" + "PUNTA" split rows)
     #   3) line-by-line fallback (each row on its own line with m³ and CLP)
-    table_match = _WATER_AA_PDF_BILLING_TABLE_RE.search(text)
-    if table_match:
+    combined_match = _WATER_AA_PDF_BILLING_TABLE_COMBINED_RE.search(text)
+    table_match = None
+    if combined_match:
+        # This layout has one potable-water row. Aguas Andinas bills it at
+        # the non-peak tariff and omits a zero-valued peak row.
+        attrs["water_consumption_non_peak_m3"] = _parse_consumption_to_float(
+            combined_match.group(1)
+        )
+        attrs["water_consumption_non_peak"] = _parse_amount_to_int(
+            combined_match.group(5)
+        )
+        attrs["water_consumption_peak_m3"] = 0.0
+        attrs["water_consumption_peak"] = 0
+        attrs["water_consumption"] = attrs["water_consumption_non_peak"]
+        attrs["fixed_charge"] = _parse_amount_to_int(combined_match.group(4))
+        attrs["wastewater_recolection"] = _parse_amount_to_int(
+            combined_match.group(6)
+        )
+        attrs["wastewater_treatment"] = _parse_amount_to_int(
+            combined_match.group(7)
+        )
+        attrs["other_charges"] = _parse_amount_to_int(combined_match.group(10))
+    elif not combined_match:
+        table_match = _WATER_AA_PDF_BILLING_TABLE_RE.search(text)
+    if not combined_match and table_match:
         water_cons = _parse_amount_to_int(table_match.group(2))
         ww_recol   = _parse_amount_to_int(table_match.group(3))
         ww_treat   = _parse_amount_to_int(table_match.group(4))
@@ -722,7 +816,7 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
         attrs["wastewater_recolection"] = ww_recol
         attrs["wastewater_treatment"]   = ww_treat
         attrs["other_charges"]          = interes + descuento
-    else:
+    elif not combined_match:
         nopunta_match = _WATER_AA_PDF_BILLING_TABLE_NOPUNTA_RE.search(text)
         if nopunta_match:
             # Column-serialised format with NO PUNTA / PUNTA split.
@@ -771,17 +865,36 @@ def _extract_water_pdf_attributes(text: str) -> dict[str, Any]:
                 interes = _parse_amount_to_int(interes_m.group(1)) if interes_m else 0
                 attrs["other_charges"] = descuento + interes
 
+    # Published tariff values keep the cost-per-unit sensors meaningful when
+    # the compact bill omits the zero-valued peak row.
+    non_peak_tariff = _WATER_AA_PDF_NON_PEAK_TARIFF_RE.search(text)
+    if non_peak_tariff:
+        attrs["cost_per_unit_non_peak"] = _parse_consumption_to_float(
+            non_peak_tariff.group(1)
+        )
+        _confidence["cost_per_unit_non_peak"] = CONF_SCORE_PDFMINER
+    peak_tariff = _WATER_AA_PDF_PEAK_TARIFF_RE.search(text)
+    if peak_tariff:
+        attrs["cost_per_unit_peak"] = _parse_consumption_to_float(
+            peak_tariff.group(1)
+        )
+        _confidence["cost_per_unit_peak"] = CONF_SCORE_PDFMINER
+
     # Formula-derived attributes (initial computation; also recomputed by
     # _recompute_water_derived_attrs on set_value overrides).
     no_punta_m3 = attrs.get("water_consumption_non_peak_m3")
     no_punta_amt = attrs.get("water_consumption_non_peak")
-    if no_punta_m3 and no_punta_amt is not None:
+    if (
+        no_punta_m3
+        and no_punta_amt is not None
+        and "cost_per_unit_non_peak" not in attrs
+    ):
         attrs["cost_per_unit_non_peak"] = round(no_punta_amt / no_punta_m3, 2)
         _confidence["cost_per_unit_non_peak"] = CONF_SCORE_DERIVED
 
     punta_m3 = attrs.get("water_consumption_peak_m3")
     punta_amt = attrs.get("water_consumption_peak")
-    if punta_m3 and punta_amt is not None:
+    if punta_m3 and punta_amt is not None and "cost_per_unit_peak" not in attrs:
         attrs["cost_per_unit_peak"] = round(punta_amt / punta_m3, 2)
         _confidence["cost_per_unit_peak"] = CONF_SCORE_DERIVED
 
@@ -3747,6 +3860,11 @@ def extract_attributes_from_email_body(
         if due_date:
             attributes["due_date"] = due_date
 
+        # Date printed on the bill (never the email transport timestamp).
+        emission_date = _extract_emission_date(combined)
+        if emission_date:
+            attributes["emission_date"] = emission_date
+
         # Service-type-specific attributes (consumption, meter readings, etc.)
         type_attrs = _extract_type_specific_attributes(combined, service_type)
         attributes.update(type_attrs)
@@ -3961,6 +4079,12 @@ def extract_attributes_from_pdf(
             pdf_text, service_type, pdf_path, ocrspace_api_key, json_dir=json_dir
         )
         attrs.update(pdf_attrs)
+
+        # Every service can expose an issue date under a provider-specific
+        # label, even when its dedicated extractor does not otherwise need it.
+        emission_date = _extract_emission_date(pdf_text)
+        if emission_date:
+            attrs["emission_date"] = emission_date
 
         # Ensure every non-metadata attribute has a confidence score.
         # Extractors that do not provide per-attribute confidence (water, gas,
