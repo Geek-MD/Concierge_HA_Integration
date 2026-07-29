@@ -79,6 +79,7 @@ from .attribute_extractor import (
     extract_attributes_from_pdf,
     _strip_html,
 )
+from .billing import parse_bill_date
 from .extraction_diagnostics import (
     COMMON_EXPENSES_SENSOR_FIELDS,
     EXTRACTION_FAILED,
@@ -1847,8 +1848,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             email_ids = messages[0].split()
             email_ids = email_ids[-100:]
 
+            # This value is sourced only from the date printed on the bill.
+            # The email Date header is transport metadata and is not suitable
+            # for status calculations when the same bill is sent more than once.
             latest_date = None
             latest_attributes: dict[str, Any] = {}
+            matched_email = False
 
             sample_from = service_data.get(CONF_SAMPLE_FROM, "")
             sample_subject = service_data.get(CONF_SAMPLE_SUBJECT, "")
@@ -1892,6 +1897,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
 
                     if match_strategy:
+                        matched_email = True
                         _LOGGER.info(
                             "Concierge Services [%s]: email matched via strategy '%s' — "
                             "from='%s', subject='%s', date='%s'",
@@ -1905,7 +1911,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         if date_header:
                             try:
                                 email_date = parsedate_to_datetime(date_header)
-                                latest_date = email_date
                             except (TypeError, ValueError) as err:
                                 _LOGGER.debug(
                                     "Concierge Services [%s]: could not parse email Date "
@@ -2123,44 +2128,6 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                         service_name,
                                     )
 
-                                # For PDF-only services (common_expenses,
-                                # hot_water) the email Date header reflects
-                                # when the administrator forwarded the bill,
-                                # not the bill issue date.  Override
-                                # last_updated with the bill's Fecha Emisión
-                                # extracted from the PDF when available.
-                                if service_type in (
-                                    SERVICE_TYPE_COMMON_EXPENSES,
-                                    SERVICE_TYPE_HOT_WATER,
-                                ):
-                                    emission_str = latest_attributes.get(
-                                        "emission_date"
-                                    )
-                                    if emission_str:
-                                        try:
-                                            parsed = datetime.strptime(
-                                                emission_str, "%d-%m-%Y"
-                                            )
-                                            # Use the HA-configured local
-                                            # timezone at noon so the sensor
-                                            # displays the correct local date
-                                            # (avoids UTC-midnight rollover to
-                                            # the previous day in negative-offset
-                                            # timezones such as America/Santiago).
-                                            latest_date = parsed.replace(
-                                                hour=12,
-                                                minute=0,
-                                                second=0,
-                                                tzinfo=dt_util.DEFAULT_TIME_ZONE,
-                                            )
-                                            _LOGGER.info(
-                                                "Concierge Services [%s]: last_updated "
-                                                "overridden with PDF emission date '%s'",
-                                                service_name,
-                                                emission_str,
-                                            )
-                                        except ValueError:
-                                            pass
                             else:
                                 if service_type == SERVICE_TYPE_COMMON_EXPENSES:
                                     set_common_expenses_diagnostics(
@@ -2184,11 +2151,28 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 "PDF download failed for service '%s': %s",
                                 service_id, pdf_err,
                             )
-                        if latest_date is None:
-                            latest_date = dt_util.now()
-                            _LOGGER.debug(
-                                "Concierge Services [%s]: using current timestamp "
-                                "as last_updated fallback",
+                        emission_str = latest_attributes.get("emission_date")
+                        bill_date = parse_bill_date(emission_str)
+                        if bill_date is not None:
+                            # Noon in HA's timezone prevents the displayed date
+                            # rolling back one day in negative UTC offsets.
+                            latest_date = datetime.combine(
+                                bill_date,
+                                datetime.min.time(),
+                            ).replace(
+                                hour=12,
+                                tzinfo=dt_util.DEFAULT_TIME_ZONE,
+                            )
+                            _LOGGER.info(
+                                "Concierge Services [%s]: last_updated sourced "
+                                "from bill emission date '%s'",
+                                service_name,
+                                emission_str,
+                            )
+                        else:
+                            _LOGGER.warning(
+                                "Concierge Services [%s]: matched bill has no "
+                                "recognisable emission date; status remains a problem",
                                 service_name,
                             )
                     else:
@@ -2213,7 +2197,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             result["last_updated"] = latest_date
             result["attributes"] = latest_attributes
 
-            if latest_date is None:
+            if not matched_email:
                 _LOGGER.warning(
                     "No matching email found for service '%s' (id: %s) in the last %d emails",
                     service_data.get(CONF_SERVICE_NAME, ""),
@@ -2432,7 +2416,7 @@ class _ConciergeServiceBaseSensor(CoordinatorEntity[ConciergeServicesCoordinator
 
 
 class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
-    """Sensor reporting the date of the latest processed bill for a service.
+    """Sensor reporting the issue date printed on the latest bill.
 
     Device class TIMESTAMP causes the HA frontend to render the value as a
     relative time string ("hace 2 días", "2 days ago", etc.) in the user's
@@ -2459,7 +2443,7 @@ class ConciergeServiceLastUpdateSensor(_ConciergeServiceBaseSensor):
 
     @property
     def native_value(self) -> datetime | None:
-        """Return the last bill datetime; HA renders it as a relative time string."""
+        """Return the bill issue datetime; HA renders it as relative time."""
         if not self.coordinator.data:
             return None
         service_data = self.coordinator.data.get("services", {}).get(self._subentry_id)

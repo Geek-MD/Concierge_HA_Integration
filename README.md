@@ -41,7 +41,7 @@
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
-  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Issue date printed on the latest bill — displayed as relative time ("hace 2 días") |
   | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
   | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/m³ |
   | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
@@ -53,7 +53,7 @@
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
-  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Issue date printed on the latest bill — displayed as relative time ("hace 2 días") |
   | `sensor.concierge_{id}_consumption` | Sensor | — | kWh consumed |
   | `sensor.concierge_{id}_cost_per_unit` | Sensor | — | $/kWh |
   | `sensor.concierge_{id}_total_amount` | Sensor | — | Total bill amount (`$`) |
@@ -69,7 +69,7 @@
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
-  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Issue date printed on the latest bill — displayed as relative time ("hace 2 días") |
   | `sensor.concierge_{id}_consumption` | Sensor | — | m³ consumed |
   | `sensor.concierge_{id}_total_amount` ✦ | Sensor | — | Total bill amount (`$`) — `subtotal + other_charges` |
   | `sensor.concierge_{id}_fixed_charge` | Sensor | — | Fixed service charge (`$`) |
@@ -91,7 +91,7 @@
   | Entity | Type | Category | Value / Purpose |
   |---|---|---|---|
   | `binary_sensor.concierge_{id}_status` | Binary sensor | Diagnostic | `on` = problem (no data or data older than 1 month), `off` = OK |
-  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Datetime of the latest processed bill — displayed as relative time ("hace 2 días") |
+  | `sensor.concierge_{id}_last_update` | Sensor | Diagnostic | Issue date printed on the latest bill — displayed as relative time ("hace 2 días") |
   | `sensor.concierge_{id}_bill` | Sensor | — | GC apartment portion (`$`) — alícuota % of building expense |
   | `sensor.concierge_{id}_funds_provision` | Sensor | — | Funds provision amount (`$`) — Bill × Funds % / 100 |
   | `sensor.concierge_{id}_subtotal` | Sensor | — | Subtotal Departamento (`$`) — Bill + Funds Provision |
@@ -505,7 +505,8 @@ with five entities:
 
 #### Diagnostic: Last Update Sensor
 - **Entity ID**: `sensor.concierge_{service_id}_last_update`
-- **State**: Full ISO 8601 datetime of the most recently processed bill
+- **State**: Full ISO 8601 datetime derived from the issue date printed on the
+  latest bill. The email `Date` header is never used for this state.
 
 #### Consumption Sensor
 - **Entity ID**: `sensor.concierge_{service_id}_consumption`
@@ -617,7 +618,8 @@ without enabling verbose logger output.
 | `INFO` | PDF attachment found and being processed | `Concierge Services [Common Expenses]: PDF found at '/config/.../gc_2026-04.pdf' — extracting additional attributes` |
 | `INFO` | Addon OCR API used for PDF analysis | `Concierge Services [Common Expenses]: using Concierge addon OCR API for PDF '/config/.../gc_2026-04.pdf'` |
 | `INFO` | Attributes extracted from the PDF | `Concierge Services [Common Expenses]: attributes extracted from PDF — subtotal=95000, cargo_fijo=9638, ...` |
-| `INFO` | `last_updated` overridden with the PDF's issue date | `Concierge Services [Common Expenses]: last_updated overridden with PDF emission date '15-04-2026'` |
+| `INFO` | `last_updated` sourced from the bill's issue date | `Concierge Services [Common Expenses]: last_updated sourced from bill emission date '15-04-2026'` |
+| `WARNING` | A matched bill has no recognisable issue date | `Concierge Services [Gas]: matched bill has no recognisable emission date; status remains a problem` |
 | `DEBUG` | Matching email found but no PDF attachment | `Concierge Services [Gas]: no PDF attachment found in matching email` |
 | `WARNING` | No matching email found after scanning the last 100 messages | `No matching email found for service 'Gas' (id: gas) in the last N emails` |
 

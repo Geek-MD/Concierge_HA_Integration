@@ -35,6 +35,63 @@ extractor = _load_module("attribute_extractor")
 class AddonStructuredExtractionTests(unittest.TestCase):
     """Verify extraction survives compatible add-on schema variations."""
 
+    def test_email_bill_issue_date_is_extracted_from_provider_labels(self) -> None:
+        attrs = extractor.extract_attributes_from_email_body(
+            "Tu boleta",
+            "Fecha de emisión: 20/07/2026\nFecha de vencimiento: 31/07/2026",
+        )
+        self.assertEqual(attrs["emission_date"], "20-07-2026")
+
+    def test_enel_boleta_date_is_not_confused_with_email_transport_date(self) -> None:
+        attrs = extractor.extract_attributes_from_email_body(
+            "Documento disponible",
+            "N° Boleta 12345678 del 18-07-2026",
+        )
+        self.assertEqual(attrs["emission_date"], "18-07-2026")
+
+    def test_compact_water_bill_populates_every_water_breakdown_field(self) -> None:
+        text = """CARGO FIJO
+CONSUMO AGUA POTABLE
+RECOLECCION AGUAS SERVIDAS
+TRATAMIENTO AGUAS SERVIDAS
+SUBTOTAL SERVICIO
+TOTAL VENTA
+DESCUENTO LEY REDONDEO
+
+TOTAL A PAGAR
+
+8,27
+8,27
+8,27
+
+944
+5.056
+3.817
+2.574
+12.391
+12.391
+-1
+
+CONSUMO TOTAL
+8,27 m3
+MODALIDAD DE PRORRATEO
+Cargo fijo = $ 944
+Metro cúbico agua potable punta = $ 605,25
+Metro cúbico agua potable no punta = $ 611,48
+FECHA EMISIÓN:02-JUL-2026
+"""
+        attrs = extractor._extract_water_pdf_attributes(text)
+        self.assertEqual(attrs["water_consumption_non_peak_m3"], 8.27)
+        self.assertEqual(attrs["water_consumption_non_peak"], 5056)
+        self.assertEqual(attrs["water_consumption_peak_m3"], 0.0)
+        self.assertEqual(attrs["water_consumption_peak"], 0)
+        self.assertEqual(attrs["wastewater_recolection"], 3817)
+        self.assertEqual(attrs["wastewater_treatment"], 2574)
+        self.assertEqual(attrs["cost_per_unit_non_peak"], 611.48)
+        self.assertEqual(attrs["cost_per_unit_peak"], 605.25)
+        self.assertEqual(attrs["subtotal"], 12391)
+        self.assertEqual(attrs["total_amount"], 12390)
+
     def test_nested_values_and_renamed_fields_populate_sensor_amounts(self) -> None:
         response = {
             "sections": {

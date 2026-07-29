@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - 2026-07-28
+
+### Fixed
+
+- Service status and last-update sensors now use the issue date printed on the
+  bill (`Fecha de emisión`, `Fecha de la boleta`, or an equivalent label)
+  instead of the email `Date` header. Duplicate messages carrying the same bill
+  therefore produce the same status regardless of when each email was sent.
+- Bills without a recognisable issue date no longer fall back to the email date
+  or the current time; their status remains a problem so transport metadata
+  cannot make stale bill data appear current.
+- The extracted `emission_date` is exposed on each service status entity.
+- Aguas Andinas bills using the compact combined potable-water row now
+  populate the non-peak and zero-valued peak consumption/charge sensors,
+  wastewater charges, published peak/non-peak tariffs, derived unit costs,
+  subtotal, other charges, and total instead of leaving those entities
+  unknown.
+- Water-bill issue dates such as `FECHA EMISIÓN:02-JUL-2026` are parsed
+  correctly and no longer fall through to a later unrelated numeric date.
+
 ## [1.8.0] - 2026-07-28
 
 ### Added

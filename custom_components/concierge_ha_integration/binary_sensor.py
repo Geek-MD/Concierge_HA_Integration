@@ -45,6 +45,7 @@ from .extraction_diagnostics import (
 # consumption, consumption_unit, and total_amount are now dedicated sensors.
 _STATUS_COMMON_ATTRS: tuple[str, ...] = (
     "folio",
+    "emission_date",
     "billing_period_start",
     "billing_period_end",
     "customer_number",
@@ -227,6 +228,7 @@ class ConciergeServiceStatusBinarySensor(
                 CONF_BILLING_INTERVAL_MONTHS, DEFAULT_BILLING_INTERVAL_MONTHS
             ),
             "folio": 0,
+            "emission_date": 0,
             "billing_period_start": 0,
             "billing_period_end": 0,
             "customer_number": 0,
