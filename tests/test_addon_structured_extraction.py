@@ -92,6 +92,37 @@ FECHA EMISIÓN:02-JUL-2026
         self.assertEqual(attrs["subtotal"], 12391)
         self.assertEqual(attrs["total_amount"], 12390)
 
+    def test_enel_bill_without_stabilization_row_populates_all_sensors(self) -> None:
+        text = """Total a pagar:
+Monto del periodo 29 May 2026 - 26 Jun 2026
+
+$83.222
+
+Servicio Eléctrico
+Administración del servicio
+Electricidad Consumida (346kWh)
+Transporte de electricidad
+
+$
+$
+$
+
+725
+76.678
+5.820
+
+Período de lectura: 29/05/2026 - 26/06/2026
+"""
+        attrs = extractor._extract_electricity_pdf_attributes(text)
+        self.assertEqual(attrs["consumption"], 346)
+        self.assertEqual(attrs["consumption_unit"], "kWh")
+        self.assertEqual(attrs["service_administration"], 725)
+        self.assertEqual(attrs["electricity_consumption"], 76678)
+        self.assertEqual(attrs["electricity_transport"], 5820)
+        self.assertEqual(attrs["stabilization_fund"], 0)
+        self.assertEqual(attrs["cost_per_kwh"], 221.61)
+        self.assertEqual(attrs["total_amount"], 83222)
+
     def test_nested_values_and_renamed_fields_populate_sensor_amounts(self) -> None:
         response = {
             "sections": {

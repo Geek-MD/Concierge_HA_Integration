@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.2] - 2026-07-29
+
+### Fixed
+
+- Current Enel bills that omit the Fondo de Estabilización row now populate
+  electricity consumption, administration, electricity and transport charges,
+  cost per kWh, and the total instead of leaving those sensors unknown.
+- When Enel omits the Fondo de Estabilización row because it does not apply,
+  its dedicated sensor now reports `$0`.
+- Electricity totals are extracted directly from the PDF in addition to any
+  value available in the notification email.
+
 ## [1.8.1] - 2026-07-28
 
 ### Fixed

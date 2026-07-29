@@ -1229,6 +1229,20 @@ _ELEC_PDF_TABLE_RE = re.compile(
     r"([0-9]{1,3}(?:[.,][0-9]{3})*)",        # stabilization_fund
     re.IGNORECASE,
 )
+# Current Enel layout when no stabilization-fund charge applies. The row is
+# omitted entirely instead of being printed with a zero value.
+_ELEC_PDF_TABLE_NO_FUND_RE = re.compile(
+    r"administraci[oó]n\s+del\s+servicio\s*\n"
+    r"electricidad\s+consumida\s*\(([0-9]+(?:[.,][0-9]+)?)\s*(kWh)\)\s*\n"
+    r"transporte\s+de\s+electricidad\s*\n"
+    r"\s*"
+    r"\$\s*\n\$\s*\n\$\s*\n"
+    r"\s*"
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)\s*\n"
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)\s*\n"
+    r"([0-9]{1,3}(?:[.,][0-9]{3})*)",
+    re.IGNORECASE,
+)
 # "Tipo de tarifa contratada: BT1-T2"
 _ELEC_PDF_TARIFF_CODE_RE = re.compile(
     r"tipo\s+de\s+tarifa\s+contratada[:\s]+([^\n\r]{1,40})",
@@ -1330,6 +1344,27 @@ def _extract_electricity_pdf_attributes(text: str) -> dict[str, Any]:
         attrs["electricity_consumption"] = _parse_amount_to_int(table_match.group(4).strip())
         attrs["electricity_transport"] = _parse_amount_to_int(table_match.group(5).strip())
         attrs["stabilization_fund"] = _parse_amount_to_int(table_match.group(6).strip())
+    else:
+        no_fund_match = _ELEC_PDF_TABLE_NO_FUND_RE.search(text)
+        if no_fund_match:
+            attrs["consumption"] = _parse_consumption_to_float(
+                no_fund_match.group(1).strip()
+            )
+            attrs["consumption_unit"] = no_fund_match.group(2)
+            attrs["service_administration"] = _parse_amount_to_int(
+                no_fund_match.group(3).strip()
+            )
+            attrs["electricity_consumption"] = _parse_amount_to_int(
+                no_fund_match.group(4).strip()
+            )
+            attrs["electricity_transport"] = _parse_amount_to_int(
+                no_fund_match.group(5).strip()
+            )
+            attrs["stabilization_fund"] = 0
+
+    total = _extract_total_amount(text)
+    if total is not None:
+        attrs["total_amount"] = total
 
     # cost_per_kwh — cost per kWh consumed.
     # Calculated only when both values are available and consumption > 0.
