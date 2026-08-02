@@ -658,6 +658,6 @@ MIT License. See [LICENSE](https://github.com/Geek-MD/Concierge_HA_Integration/b
 
 <div align="center">
   
-💻 **Proudly developed with GitHub Copilot** 🚀
+💻 **Proudly developed with GitHub Copilot and ChatGPT Codex** 🚀
 
 </div>
