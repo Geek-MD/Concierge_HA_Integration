@@ -25,6 +25,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.hassio import is_hassio
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -118,6 +119,8 @@ except (OSError, ValueError, TypeError):
 
 # Update interval for checking mail server connection
 SCAN_INTERVAL = timedelta(minutes=30)
+_STORAGE_VERSION = 1
+_STORAGE_KEY_PREFIX = f"{DOMAIN}.coordinator"
 
 # Consumption unit of measure by service type.
 _CONSUMPTION_UNITS: dict[str, str] = {
@@ -429,6 +432,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=SCAN_INTERVAL,
         )
         self.config_entry = config_entry
+        self._store: Store[dict[str, Any]] = Store(
+            hass, _STORAGE_VERSION, f"{_STORAGE_KEY_PREFIX}.{config_entry.entry_id}"
+        )
         self._cfg = effective_cfg
         self._pdf_dir: str = hass.config.path(PDF_SUBDIR)
         self._json_dir: str = hass.config.path(JSON_SUBDIR)
@@ -476,7 +482,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             @callback
             def _trigger_deferred_refresh(_now: datetime) -> None:
                 hass.async_create_task(
-                    self.async_refresh(),
+                    self._async_manage_addon_notification(),
                     "concierge_ha_integration_addon_check_after_ha_start",
                 )
 
@@ -490,6 +496,67 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _arm_addon_check_delay()
 
             hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_ha_started)
+
+    async def async_restore_data(self) -> bool:
+        """Restore complete sensor data from HA storage without scanning mail."""
+        stored = await self._store.async_load()
+        if not isinstance(stored, dict):
+            return False
+        data = stored.get("data")
+        if not isinstance(data, dict) or not self._cached_data_is_complete(data):
+            return False
+        for service in data.get("services", {}).values():
+            raw_date = service.get("last_updated")
+            if isinstance(raw_date, str):
+                try:
+                    service["last_updated"] = datetime.fromisoformat(raw_date)
+                except ValueError:
+                    return False
+        self.async_set_updated_data(data)
+        _LOGGER.info("Concierge Services: restored complete sensor data from storage")
+        return True
+
+    def _cached_data_is_complete(self, data: dict[str, Any]) -> bool:
+        """Return whether storage covers every configured, populated sensor."""
+        services = data.get("services")
+        if not isinstance(services, dict):
+            return False
+        for subentry_id, subentry in self.config_entry.subentries.items():  # type: ignore[attr-defined,union-attr]
+            service = services.get(subentry_id)
+            if not isinstance(service, dict) or service.get("last_updated") is None:
+                return False
+            attrs = service.get("attributes")
+            if not isinstance(attrs, dict):
+                return False
+            service_type = subentry.data.get(CONF_SERVICE_TYPE, SERVICE_TYPE_UNKNOWN)
+            required = {"consumption", "total_amount"}
+            if service_type == SERVICE_TYPE_COMMON_EXPENSES:
+                required = {item[0] for item in _COMMON_EXPENSES_SPECIFIC_SENSORS}
+                required.update(item[0] for item in _COMMON_EXPENSES_HOT_WATER_SENSORS)
+            elif service_type == SERVICE_TYPE_WATER:
+                required.update(item[0] for item in _WATER_SPECIFIC_SENSORS)
+            elif service_type == SERVICE_TYPE_ELECTRICITY:
+                required.add("cost_per_kwh")
+                required.update(item[0] for item in _ELECTRICITY_SPECIFIC_SENSORS)
+            elif service_type in (SERVICE_TYPE_GAS, SERVICE_TYPE_HOT_WATER):
+                required.add(_COST_PER_UNIT_ATTR[service_type])
+            if any(attrs.get(key) is None for key in required):
+                return False
+        return True
+
+    async def _async_save_data(self, data: dict[str, Any]) -> None:
+        """Persist coordinator data, converting datetimes to JSON-safe strings."""
+        saved_services: dict[str, Any] = {}
+        payload: dict[str, Any] = {
+            "connection_status": data.get("connection_status"),
+            "services": saved_services,
+        }
+        for subentry_id, service in data.get("services", {}).items():
+            saved = dict(service)
+            if isinstance(saved.get("last_updated"), datetime):
+                saved["last_updated"] = saved["last_updated"].isoformat()
+            saved_services[subentry_id] = saved
+        await self._store.async_save({"data": payload})
 
     @property
     def addon_status(self) -> str:
@@ -825,6 +892,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._manage_ocr_repair_issue()
         self._manage_gc_template_mismatch_notification(result)
+        await self._async_save_data(result)
         return result
 
     def _manage_ocr_repair_issue(self) -> None:
@@ -1717,6 +1785,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # push with the final derived values.
         # ------------------------------------------------------------------
         await self.async_recompute_derived(subentry_id)
+        if self.data is not None:
+            await self._async_save_data(self.data)
         _LOGGER.info(
             "Concierge Services [%s]: sensor states updated from force refresh "
             "(subentry=%s)",
@@ -1799,7 +1869,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Fetch data for each subentry (service device)
             assert self.config_entry is not None
             for subentry_id, subentry in self.config_entry.subentries.items():  # type: ignore[attr-defined]
-                service_data = self._find_latest_email_for_service(imap, subentry.data, subentry_id)
+                previous = None
+                if self.data is not None:
+                    previous = self.data.get("services", {}).get(subentry_id)
+                service_data = self._find_latest_email_for_service(
+                    imap, subentry.data, subentry_id, previous=previous
+                )
                 result["services"][subentry_id] = service_data
 
         except imaplib.IMAP4.error as err:
@@ -1830,6 +1905,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _find_latest_email_for_service(
         self, imap: imaplib.IMAP4_SSL, service_data: dict[str, Any],
         subentry_id: str | None = None,
+        previous: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Find the latest email for a service and extract attributes."""
         result: dict[str, Any] = {
@@ -1898,6 +1974,33 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     if match_strategy:
                         matched_email = True
+                        fingerprint = msg.get("Message-ID") or email_id.decode(
+                            errors="replace"
+                        )
+                        if (
+                            previous is not None
+                            and previous.get("email_fingerprint") == fingerprint
+                            and subentry_id is not None
+                            and self._cached_data_is_complete(
+                                {
+                                    "services": {
+                                        **{
+                                            key: value
+                                            for key, value in (self.data or {}).get(
+                                                "services", {}
+                                            ).items()
+                                        },
+                                        subentry_id: previous,
+                                    }
+                                }
+                            )
+                        ):
+                            _LOGGER.debug(
+                                "Concierge Services [%s]: newest bill is unchanged; "
+                                "reusing persisted sensor values",
+                                service_name,
+                            )
+                            return previous
                         _LOGGER.info(
                             "Concierge Services [%s]: email matched via strategy '%s' — "
                             "from='%s', subject='%s', date='%s'",
@@ -2196,6 +2299,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             result["last_updated"] = latest_date
             result["attributes"] = latest_attributes
+            if matched_email:
+                result["email_fingerprint"] = fingerprint
 
             if not matched_email:
                 _LOGGER.warning(

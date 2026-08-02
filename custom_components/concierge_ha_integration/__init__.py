@@ -353,7 +353,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialise the shared coordinator here so that both the sensor and
     # binary_sensor platforms can access it from hass.data without a race.
     coordinator = ConciergeServicesCoordinator(hass, entry, effective_cfg)
-    await coordinator.async_config_entry_first_refresh()
+    if not await coordinator.async_restore_data():
+        await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
 
     # Forward the setup to sensor, binary_sensor, and button platforms

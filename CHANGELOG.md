@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.3] - 2026-08-02
+
+### Fixed
+
+- Complete sensor data is now restored from Home Assistant storage after a
+  restart instead of re-downloading and reprocessing every service bill.
+- Automatic mailbox checks reuse stored readings when the newest matching
+  message has not changed. Extraction runs only for a new bill or when stored
+  sensor data is missing or incomplete.
+- The delayed add-on startup probe no longer triggers a second full mailbox
+  scan and bill reconstruction.
+
 ## [1.8.2] - 2026-07-29
 
 ### Fixed
