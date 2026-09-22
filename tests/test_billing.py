@@ -48,6 +48,19 @@ class BillingStatusTests(unittest.TestCase):
         self.assertIsNone(parse_bill_date(None))
         self.assertIsNone(parse_bill_date("correo recibido ayer"))
 
+    def test_month_only_bill_dates_use_first_day(self) -> None:
+        """Monthly statements should accept common Spanish representations."""
+        cases = {
+            "08 2026": "2026-08-01",
+            "Agosto 2026": "2026-08-01",
+            "08/2026": "2026-08-01",
+            "Nota de cobro Agosto 2026": "2026-08-01",
+            "common_expenses_2026-09.pdf": "2026-09-01",
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(parse_bill_date(value).isoformat(), expected)
+
     def test_bimonthly_bill_remains_current_during_second_month(self) -> None:
         """A two-month service such as Metrogas should remain current longer."""
         last_updated = datetime(2026, 1, 15, tzinfo=timezone.utc)
