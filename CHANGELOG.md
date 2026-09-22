@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.4] - 2026-09-22
+
+### Fixed
+
+- Monthly issue dates now accept numeric and Spanish month formats such as
+  `08 2026`, `08/2026`, `Agosto 2026`, and `Nota de cobro Agosto 2026`.
+- Common-expenses statements without an extracted issue-date label now use the
+  `YYYY-MM` period in their canonical PDF filename instead of incorrectly
+  leaving the service status in a problem state.
+- Linked and attached bills replace a same-period cached PDF. This prevents a
+  stale or previously misidentified Metrogas document from being reused merely
+  because it has the same `gas_YYYY-MM.pdf` cache name.
+
 ## [1.8.3] - 2026-08-02
 
 ### Fixed

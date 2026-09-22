@@ -1930,6 +1930,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             latest_date = None
             latest_attributes: dict[str, Any] = {}
             matched_email = False
+            pdf_path: str | None = None
 
             sample_from = service_data.get(CONF_SAMPLE_FROM, "")
             sample_subject = service_data.get(CONF_SAMPLE_SUBJECT, "")
@@ -2256,6 +2257,24 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             )
                         emission_str = latest_attributes.get("emission_date")
                         bill_date = parse_bill_date(emission_str)
+                        if (
+                            bill_date is None
+                            and pdf_path
+                            and service_type == SERVICE_TYPE_COMMON_EXPENSES
+                        ):
+                            # Monthly statements can omit a full issue date,
+                            # while their canonical filename still carries the
+                            # authoritative billing month.
+                            bill_date = parse_bill_date(Path(pdf_path).name)
+                            if bill_date is not None:
+                                emission_str = bill_date.isoformat()
+                                latest_attributes["emission_date"] = emission_str
+                                _LOGGER.info(
+                                    "Concierge Services [%s]: emission month "
+                                    "inferred from PDF filename '%s'",
+                                    service_name,
+                                    Path(pdf_path).name,
+                                )
                         if bill_date is not None:
                             # Noon in HA's timezone prevents the displayed date
                             # rolling back one day in negative UTC offsets.
