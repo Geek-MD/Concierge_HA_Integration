@@ -80,7 +80,7 @@ from .attribute_extractor import (
     extract_attributes_from_pdf,
     _strip_html,
 )
-from .billing import parse_bill_date
+from .billing import parse_bill_date, resolve_bill_date
 from .extraction_diagnostics import (
     COMMON_EXPENSES_SENSOR_FIELDS,
     EXTRACTION_FAILED,
@@ -2256,7 +2256,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 service_id, pdf_err,
                             )
                         emission_str = latest_attributes.get("emission_date")
-                        bill_date = parse_bill_date(emission_str)
+                        bill_date, bill_date_source = resolve_bill_date(
+                            latest_attributes,
+                            # Metrogas notifications commonly expose a billing
+                            # period but no separately labelled emission date.
+                            allow_period_end=service_type == SERVICE_TYPE_GAS,
+                        )
                         if (
                             bill_date is None
                             and pdf_path
@@ -2269,6 +2274,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             if bill_date is not None:
                                 emission_str = bill_date.isoformat()
                                 latest_attributes["emission_date"] = emission_str
+                                bill_date_source = "pdf_filename"
                                 _LOGGER.info(
                                     "Concierge Services [%s]: emission month "
                                     "inferred from PDF filename '%s'",
@@ -2287,9 +2293,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             )
                             _LOGGER.info(
                                 "Concierge Services [%s]: last_updated sourced "
-                                "from bill emission date '%s'",
+                                "from bill %s '%s'",
                                 service_name,
-                                emission_str,
+                                bill_date_source,
+                                latest_attributes.get(
+                                    bill_date_source or "", emission_str
+                                ),
                             )
                         else:
                             _LOGGER.warning(

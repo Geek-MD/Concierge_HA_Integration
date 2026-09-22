@@ -1,6 +1,7 @@
 """Billing-cycle helpers for Concierge service accounts."""
 
 import calendar
+from collections.abc import Mapping
 from datetime import date, datetime
 import re
 import unicodedata
@@ -111,6 +112,29 @@ def parse_bill_date(value: object) -> date | None:
             return date(int(named_month.group(2)), month, 1)
 
     return None
+
+
+def resolve_bill_date(
+    attributes: Mapping[str, object], *, allow_period_end: bool = False
+) -> tuple[date | None, str | None]:
+    """Return the best bill-content date and the attribute that supplied it.
+
+    An explicit emission date always wins.  Some utility notices, notably
+    Metrogas emails, contain the consumption period and payment deadline but
+    do not print an emission date.  For those services the period end is a
+    stable date from the bill itself and is preferable to leaving the billing
+    status permanently unresolved.  Callers must opt into that fallback so it
+    is not silently applied to unrelated document types.
+    """
+    candidates = ["emission_date"]
+    if allow_period_end:
+        candidates.append("billing_period_end")
+
+    for attribute in candidates:
+        parsed = parse_bill_date(attributes.get(attribute))
+        if parsed is not None:
+            return parsed, attribute
+    return None, None
 
 
 def is_bill_overdue(

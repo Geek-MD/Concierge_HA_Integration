@@ -17,6 +17,7 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 is_bill_overdue = _MODULE.is_bill_overdue
 parse_bill_date = _MODULE.parse_bill_date
+resolve_bill_date = _MODULE.resolve_bill_date
 
 
 class BillingStatusTests(unittest.TestCase):
@@ -47,6 +48,40 @@ class BillingStatusTests(unittest.TestCase):
         """Missing or malformed bill dates must leave the status unresolved."""
         self.assertIsNone(parse_bill_date(None))
         self.assertIsNone(parse_bill_date("correo recibido ayer"))
+
+    def test_gas_bill_can_use_billing_period_end_when_emission_is_missing(self) -> None:
+        """The bill period prevents gas status remaining permanently unresolved."""
+        bill_date, source = resolve_bill_date(
+            {
+                "billing_period_start": "15-06-2026",
+                "billing_period_end": "14-08-2026",
+                "due_date": "01-09-2026",
+            },
+            allow_period_end=True,
+        )
+
+        self.assertEqual(bill_date.isoformat(), "2026-08-14")
+        self.assertEqual(source, "billing_period_end")
+
+    def test_explicit_emission_date_precedes_period_fallback(self) -> None:
+        """An issuer-provided emission date remains the authoritative value."""
+        bill_date, source = resolve_bill_date(
+            {
+                "emission_date": "18-08-2026",
+                "billing_period_end": "14-08-2026",
+            },
+            allow_period_end=True,
+        )
+
+        self.assertEqual(bill_date.isoformat(), "2026-08-18")
+        self.assertEqual(source, "emission_date")
+
+    def test_period_fallback_requires_explicit_opt_in(self) -> None:
+        """Other services retain the strict emission-date behaviour."""
+        self.assertEqual(
+            resolve_bill_date({"billing_period_end": "14-08-2026"}),
+            (None, None),
+        )
 
     def test_month_only_bill_dates_use_first_day(self) -> None:
         """Monthly statements should accept common Spanish representations."""
