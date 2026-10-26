@@ -356,7 +356,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = ConciergeServicesCoordinator(hass, entry, effective_cfg)
     panel = ConciergePanel(hass, entry, coordinator)
     panel.history = await panel.store.async_load() or {}
-    coordinator.collect_bill_history = set(entry.subentries) - panel.history.keys()
+    coordinator.collect_bill_history = set(entry.subentries) - panel.history.keys()  # type: ignore[attr-defined]
     if not await coordinator.async_restore_data():
         await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator

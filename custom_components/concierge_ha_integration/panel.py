@@ -103,7 +103,8 @@ class ConciergePanel:
             return
         changed = False
         services = (self.coordinator.data or {}).get("services", {})
-        for sub_id, sub in self.entry.subentries.items():
+        # CI pins HA 2025.1; subentry types were introduced in later HA releases.
+        for sub_id, sub in self.entry.subentries.items():  # type: ignore[attr-defined]
             data = services.get(sub_id, {})
             key = {"common_expenses": "gc_total", "hot_water": "hot_water_amount"}.get(
                 sub.data.get(CONF_SERVICE_TYPE), "total_amount"
@@ -148,10 +149,10 @@ class ConciergePanel:
                 "months": monthly_totals(self.history.get(sub_id, {}), today),
                 "entities": [
                     {"entity_id": entity.entity_id, "disabled": bool(entity.disabled_by)}
-                    for entity in entities if entity.config_subentry_id == sub_id
+                    for entity in entities if entity.config_subentry_id == sub_id  # type: ignore[attr-defined]
                 ],
             }
-            for sub_id, sub in self.entry.subentries.items()
+            for sub_id, sub in self.entry.subentries.items()  # type: ignore[attr-defined]
         ]}
 
     async def async_unload(self) -> None:
