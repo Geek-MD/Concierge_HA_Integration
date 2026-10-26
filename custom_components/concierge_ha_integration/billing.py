@@ -1,6 +1,7 @@
 """Billing-cycle helpers for Concierge service accounts."""
 
 import calendar
+from collections.abc import Mapping
 from datetime import date, datetime
 import re
 import unicodedata
@@ -36,7 +37,11 @@ _SPANISH_MONTHS = {
 
 
 def parse_bill_date(value: object) -> date | None:
-    """Parse a date extracted from a bill, never an email timestamp."""
+    """Parse a date or billing month extracted from a bill.
+
+    Month-only values use the first day of the month.  Accepting surrounding
+    text also lets callers use a meaningful PDF filename as a fallback.
+    """
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -77,15 +82,59 @@ def parse_bill_date(value: object) -> date | None:
         r"(\d{1,2})\s+(?:de\s+)?([a-z]+)\s+(?:de\s+)?(\d{4})",
         normalized,
     )
-    if not match:
-        return None
-    month = _SPANISH_MONTHS.get(match.group(2).rstrip("."))
-    if month is None:
-        return None
-    try:
-        return date(int(match.group(3)), month, int(match.group(1)))
-    except ValueError:
-        return None
+    if match:
+        month = _SPANISH_MONTHS.get(match.group(2).rstrip("."))
+        if month is None:
+            return None
+        try:
+            return date(int(match.group(3)), month, int(match.group(1)))
+        except ValueError:
+            return None
+
+    numeric_month = re.search(
+        r"(?<!\d)(?:(?P<year>20\d{2})[-_/ .](?P<month>0?[1-9]|1[0-2])|"
+        r"(?P<month_first>0?[1-9]|1[0-2])[-_/ .](?P<year_last>20\d{2}))(?!\d)",
+        normalized,
+    )
+    if numeric_month:
+        year = int(numeric_month.group("year") or numeric_month.group("year_last"))
+        month = int(
+            numeric_month.group("month") or numeric_month.group("month_first")
+        )
+        return date(year, month, 1)
+
+    named_month = re.search(
+        r"(?<![a-z])([a-z]+)\.?\s+(?:de\s+)?(20\d{2})(?!\d)", normalized
+    )
+    if named_month:
+        month = _SPANISH_MONTHS.get(named_month.group(1))
+        if month is not None:
+            return date(int(named_month.group(2)), month, 1)
+
+    return None
+
+
+def resolve_bill_date(
+    attributes: Mapping[str, object], *, allow_period_end: bool = False
+) -> tuple[date | None, str | None]:
+    """Return the best bill-content date and the attribute that supplied it.
+
+    An explicit emission date always wins.  Some utility notices, notably
+    Metrogas emails, contain the consumption period and payment deadline but
+    do not print an emission date.  For those services the period end is a
+    stable date from the bill itself and is preferable to leaving the billing
+    status permanently unresolved.  Callers must opt into that fallback so it
+    is not silently applied to unrelated document types.
+    """
+    candidates = ["emission_date"]
+    if allow_period_end:
+        candidates.append("billing_period_end")
+
+    for attribute in candidates:
+        parsed = parse_bill_date(attributes.get(attribute))
+        if parsed is not None:
+            return parsed, attribute
+    return None, None
 
 
 def is_bill_overdue(

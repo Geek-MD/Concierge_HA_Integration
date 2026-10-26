@@ -1572,7 +1572,14 @@ def download_pdf_from_email(
         else:
             _LOGGER.debug("No HTML body in email for service '%s'", service_id)
 
-    if os.path.exists(dest_path):
+    # The filename identifies a billing period, not a unique document.
+    # Re-fetch a source present in the current message so that a stale or
+    # previously misidentified Metrogas PDF cannot win through a cache hit.
+    pdf_bytes = _get_pdf_attachment_bytes(msg)
+    has_download_source = bool(
+        pdf_bytes or fidelizador_href_url or html_candidate_urls
+    )
+    if os.path.exists(dest_path) and not has_download_source:
         if max_files is not None and max_files > 0:
             _enforce_pdf_count_retention(pdf_dir, max_files)
         _LOGGER.info("PDF already present, skipping download: %s", dest_path)
@@ -1581,7 +1588,6 @@ def download_pdf_from_email(
     _LOGGER.info("Starting PDF download for service '%s' (target: %s)", service_id, dest_path)
 
     # --- Strategy 1: PDF attachment ---
-    pdf_bytes = _get_pdf_attachment_bytes(msg)
     if pdf_bytes:
         try:
             with open(dest_path, "wb") as fh:

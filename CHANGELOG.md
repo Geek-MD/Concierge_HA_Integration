@@ -19,6 +19,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available INBOX bills when a service has no stored history. Missing months are
   shown as unknown; repeated bills with the same issue date are upserted.
 
+## [1.8.5] - 2026-09-22
+
+### Fixed
+
+- Gas bills without a separately labelled emission date now use the end of
+  their bill-provided consumption period for status calculations, rather than
+  leaving the service permanently in a problem state.
+
+## [1.8.4] - 2026-09-22
+
+### Fixed
+
+- Monthly issue dates now accept numeric and Spanish month formats such as
+  `08 2026`, `08/2026`, `Agosto 2026`, and `Nota de cobro Agosto 2026`.
+- Common-expenses statements without an extracted issue-date label now use the
+  `YYYY-MM` period in their canonical PDF filename instead of incorrectly
+  leaving the service status in a problem state.
+- Linked and attached bills replace a same-period cached PDF. This prevents a
+  stale or previously misidentified Metrogas document from being reused merely
+  because it has the same `gas_YYYY-MM.pdf` cache name.
+
+## [1.8.3] - 2026-08-02
+
+### Fixed
+
+- Complete sensor data is now restored from Home Assistant storage after a
+  restart instead of re-downloading and reprocessing every service bill.
+- Automatic mailbox checks reuse stored readings when the newest matching
+  message has not changed. Extraction runs only for a new bill or when stored
+  sensor data is missing or incomplete.
+- The delayed add-on startup probe no longer triggers a second full mailbox
+  scan and bill reconstruction.
+
 ## [1.8.2] - 2026-07-29
 
 ### Fixed

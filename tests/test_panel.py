@@ -93,6 +93,8 @@ class BackfillTests(unittest.TestCase):
             "email": email, "imaplib": imaplib, "datetime": datetime,
             "parsedate_to_datetime": parsedate_to_datetime, "_LOGGER": Mock(),
             "normalize_service_id": lambda value: value,
+            "resolve_bill_date": lambda attrs, **kwargs: (date.fromisoformat(attrs["emission_date"]), "emission_date"),
+            "Path": Path,
             "extract_attributes_from_email_body": lambda subject, body, kind: json.loads(body),
             "download_pdf_from_email": lambda *args, **kwargs: None,
             "dt_util": SimpleNamespace(DEFAULT_TIME_ZONE=timezone.utc),
@@ -118,7 +120,7 @@ class BackfillTests(unittest.TestCase):
         namespace["dt_util"].now = lambda: SimpleNamespace(date=lambda: date(2026, 10, 26))
         exec("from __future__ import annotations\n" + method_source, namespace)
         result = namespace["_find_latest_email_for_service"](
-            owner, imap, {"service_type": "gas", "service_id": "gas"}, "gas", True
+            owner, imap, {"service_type": "gas", "service_id": "gas"}, "gas", collect_history=True
         )
         self.assertEqual(result["attributes"]["total_amount"], 100)
         self.assertEqual([bill["attributes"]["total_amount"] for bill in result["historical_bills"]], [90, 100])

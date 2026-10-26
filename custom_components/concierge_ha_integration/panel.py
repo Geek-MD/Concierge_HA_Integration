@@ -110,7 +110,7 @@ class ConciergePanel:
             )
             for bill in [*data.pop("historical_bills", []), data]:
                 attrs = bill.get("attributes", {})
-                issued = parse_bill_date(attrs.get("emission_date"))
+                issued = parse_bill_date(attrs.get("emission_date")) or parse_bill_date(bill.get("last_updated"))
                 if issued:
                     changed |= record_bill(
                         self.history, sub_id, issued, attrs.get(key), dt_util.now().date()
