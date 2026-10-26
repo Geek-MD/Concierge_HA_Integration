@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-10-26
+
+### Added
+
+- Native Concierge sidebar panel with twelve calendar months of bill totals in
+  CLP, a period total per service, and accessible monthly detail tables.
+- Service sections listing all integration entities, including renamed entities
+  and disabled entries, with Home Assistant's native more-info dialogs.
+- Restorable `input_boolean.concierge_show_panel` that immediately shows or hides
+  the panel without stopping bill collection.
+- Persistent bill history independent of Recorder and PDF retention, seeded from
+  available INBOX bills when a service has no stored history. Missing months are
+  shown as unknown; repeated bills with the same issue date are upserted.
+
 ## [1.8.2] - 2026-07-29
 
 ### Fixed

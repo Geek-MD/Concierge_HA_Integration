@@ -28,6 +28,7 @@ from .const import (
     SERVICE_TYPE_UNKNOWN,
     SERVICE_TYPE_WATER,
 )
+from .panel import ConciergePanel
 from .sensor import ConciergeServicesCoordinator, attr_key_from_uid_suffix
 from .service_detector import detect_services_from_imap, normalize_service_id
 from .task_logbook import async_log_task
@@ -353,11 +354,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialise the shared coordinator here so that both the sensor and
     # binary_sensor platforms can access it from hass.data without a race.
     coordinator = ConciergeServicesCoordinator(hass, entry, effective_cfg)
+    panel = ConciergePanel(hass, entry, coordinator)
+    panel.history = await panel.store.async_load() or {}
+    coordinator.collect_bill_history = set(entry.subentries) - panel.history.keys()
     await coordinator.async_config_entry_first_refresh()
+    coordinator.collect_bill_history.clear()
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
 
     # Forward the setup to sensor, binary_sensor, and button platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    hass.data[DOMAIN][entry.entry_id]["panel"] = panel
+    await panel.async_setup()
 
     # Reload the entry whenever it is updated (options changed, subentries
     # added/removed) so that sensors are recreated with the latest config.
@@ -775,6 +783,8 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        if panel := hass.data[DOMAIN][entry.entry_id].get("panel"):
+            await panel.async_unload()
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
     return unload_ok
