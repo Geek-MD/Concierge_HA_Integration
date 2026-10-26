@@ -436,6 +436,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass, _STORAGE_VERSION, f"{_STORAGE_KEY_PREFIX}.{config_entry.entry_id}"
         )
         self._cfg = effective_cfg
+        self.collect_bill_history: set[str] = set()
         self._pdf_dir: str = hass.config.path(PDF_SUBDIR)
         self._json_dir: str = hass.config.path(JSON_SUBDIR)
         self._gc_template_alert_fingerprint: str | None = None
@@ -553,6 +554,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
         for subentry_id, service in data.get("services", {}).items():
             saved = dict(service)
+            # Historical records belong to the panel store, not sensor cache.
+            saved.pop("historical_bills", None)
             if isinstance(saved.get("last_updated"), datetime):
                 saved["last_updated"] = saved["last_updated"].isoformat()
             saved_services[subentry_id] = saved
@@ -874,6 +877,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Error communicating with IMAP server: {err}") from err
 
         services = result.get("services", {})
+        for sub_id, service in services.items():
+            if "historical_bills" in service:
+                self.collect_bill_history.discard(sub_id)
         service_count = len(services) if isinstance(services, dict) else 0
         without_match = 0
         if isinstance(services, dict):
@@ -1873,7 +1879,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if self.data is not None:
                     previous = self.data.get("services", {}).get(subentry_id)
                 service_data = self._find_latest_email_for_service(
-                    imap, subentry.data, subentry_id, previous=previous
+                    imap, subentry.data, subentry_id,
+                    previous=previous,
+                    collect_history=subentry_id in self.collect_bill_history,
                 )
                 result["services"][subentry_id] = service_data
 
@@ -1906,6 +1914,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self, imap: imaplib.IMAP4_SSL, service_data: dict[str, Any],
         subentry_id: str | None = None,
         previous: dict[str, Any] | None = None,
+        collect_history: bool = False,
     ) -> dict[str, Any]:
         """Find the latest email for a service and extract attributes."""
         result: dict[str, Any] = {
@@ -1916,13 +1925,25 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             imap.select("INBOX")
 
-            status, messages = imap.search(None, "ALL")
+            if collect_history:
+                # Include all messages received within the chart window. Bill
+                # dates, rather than transport dates, determine chart months.
+                from .cost_history import months_ending
+
+                start = months_ending(dt_util.now().date())[0] + "-01"
+                since = datetime.strptime(start, "%Y-%m-%d").strftime("%d-%b-%Y")
+                status, messages = imap.search(None, "SINCE", since)
+            else:
+                status, messages = imap.search(None, "ALL")
 
             if status != "OK":
                 return result
 
             email_ids = messages[0].split()
-            email_ids = email_ids[-100:]
+            if not collect_history:
+                email_ids = email_ids[-100:]
+            historical_bills: list[dict[str, Any]] = []
+            newest_bill: tuple[Any, dict[str, Any]] | None = None
 
             # This value is sourced only from the date printed on the bill.
             # The email Date header is transport metadata and is not suitable
@@ -1943,7 +1964,9 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 sample_from, sample_subject
             )
 
-            for email_id in reversed(email_ids):
+            # Backfill oldest-first so PDF retention keeps recent bills.
+            scan_ids = email_ids if collect_history else reversed(email_ids)
+            for email_id in scan_ids:
                 try:
                     status, msg_data = imap.fetch(email_id, "(RFC822)")
 
@@ -1979,7 +2002,8 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             errors="replace"
                         )
                         if (
-                            previous is not None
+                            not collect_history
+                            and previous is not None
                             and previous.get("email_fingerprint") == fingerprint
                             and subentry_id is not None
                             and self._cached_data_is_complete(
@@ -2024,6 +2048,7 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     err,
                                 )
 
+                        latest_date = None
                         latest_attributes = extract_attributes_from_email_body(
                             subject, body, service_type
                         )
@@ -2315,6 +2340,19 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             subject,
                         )
 
+                    if match_strategy and collect_history:
+                        newest_bill = (latest_date, latest_attributes)
+                        if latest_date is not None:
+                            if service_type == SERVICE_TYPE_WATER:
+                                self._recompute_water_derived_attrs(latest_attributes)
+                            elif service_type == SERVICE_TYPE_COMMON_EXPENSES:
+                                self._recompute_gc_derived_attrs(latest_attributes)
+                            historical_bills.append({
+                                "last_updated": latest_date,
+                                "attributes": dict(latest_attributes),
+                            })
+                        continue
+
                     if match_strategy:
                         # Only analyse the single most-recent matching email.
                         # Emails are iterated newest-first (reversed), so the
@@ -2325,8 +2363,12 @@ class ConciergeServicesCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.debug("Error processing email %s: %s", email_id, err)
                     continue
 
+            if newest_bill is not None:
+                latest_date, latest_attributes = newest_bill
             result["last_updated"] = latest_date
             result["attributes"] = latest_attributes
+            if collect_history:
+                result["historical_bills"] = historical_bills
             if matched_email:
                 result["email_fingerprint"] = fingerprint
 

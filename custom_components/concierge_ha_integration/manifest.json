@@ -1,9 +1,20 @@
 {
   "domain": "concierge_ha_integration",
   "name": "Concierge HA Integration",
-  "after_dependencies": ["hassio"],
-  "codeowners": ["@Geek-MD"],
+  "after_dependencies": [
+    "hassio"
+  ],
+  "codeowners": [
+    "@Geek-MD"
+  ],
   "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http",
+    "input_boolean",
+    "panel_custom",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/Geek-MD/Concierge_HA_Integration",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
@@ -12,5 +23,5 @@
     "pdfminer.six>=20221105"
   ],
   "single_config_entry": true,
-  "version": "1.8.5"
+  "version": "2.0.0"
 }

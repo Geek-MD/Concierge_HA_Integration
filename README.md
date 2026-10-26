@@ -22,6 +22,40 @@
 
 ---
 
+## Panel Concierge (v2.0.0)
+
+La integración agrega **Concierge** a la barra lateral de Home Assistant, sin
+instalar tarjetas adicionales ni editar YAML:
+
+- Un gráfico por servicio con los últimos **12 meses calendario**, incluido el
+  mes actual, los montos mensuales en pesos chilenos y el total del período.
+- Una sección por servicio con todas sus entidades. Pulsa una entidad para abrir
+  su diálogo de Home Assistant; las entidades deshabilitadas se listan aparte.
+- El helper **`input_boolean.concierge_show_panel`** controla la visibilidad:
+  `on` muestra el panel y `off` lo oculta inmediatamente. Inicialmente está
+  activado y restaura su estado tras reiniciar. Puedes manejarlo desde
+  **Herramientas para desarrolladores → Acciones**, otro dashboard o una
+  automatización, incluso cuando el panel está oculto.
+
+Al configurar un servicio sin historial guardado, Concierge revisa los mensajes
+recibidos en INBOX desde el inicio de la ventana de 12 meses y analiza sus
+boletas. Esta primera carga puede tardar más si hay muchos mensajes o PDFs que
+requieren OCR. Después, los ciclos habituales siguen leyendo la última boleta.
+El historial queda guardado en el almacenamiento de Home Assistant, independiente
+de la retención de Recorder y de los PDFs.
+
+Los gráficos usan la **fecha de emisión de la boleta**, no la fecha del correo.
+Las copias con la misma fecha de emisión se consideran una misma boleta; una
+corrección reemplaza su monto. Las boletas de fechas distintas en un mismo mes se
+suman. Los meses sin boletas disponibles o sin fecha/monto reconocible aparecen
+como **sin datos**, no como cero. Los importes de gastos comunes y agua caliente
+usan sus respectivos totales para evitar duplicar cargos. Los cambios manuales
+mediante `set_value` también actualizan el historial; una lectura posterior de la
+boleta puede volver a reemplazarlos.
+
+El panel actualiza los estados de las entidades en tiempo real y consulta los
+montos cada 30 segundos. Ocultarlo no detiene la lectura de boletas ni el historial.
+
 ## ✨ Features
 
 - 📧 **IMAP Email Configuration**: Connect your email account where you receive utility bills
