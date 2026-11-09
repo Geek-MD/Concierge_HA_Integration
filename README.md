@@ -6,6 +6,10 @@
 [![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/Geek-MD/Concierge_HA_Integration/blob/main/LICENSE)
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom%20Repository-blue)](https://hacs.xyz/)
 
+<!-- ha-marketplace:exclude-start -->
+[![Open your Home Assistant instance and open Concierge HA Integration in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Geek-MD&repository=Concierge_HA_Integration&category=integration)
+<!-- ha-marketplace:exclude-end -->
+
 [![Ruff + Mypy + Hassfest](https://github.com/Geek-MD/Concierge_HA_Integration/actions/workflows/ci.yaml/badge.svg)](https://github.com/Geek-MD/Concierge/actions/workflows/ci.yaml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
@@ -409,7 +413,7 @@ For every Gastos Comunes bill that arrives, the integration:
 
 ---
 
-## 📦 Installation
+## 🛠 Installation
 
 ### Before you install
 
@@ -420,7 +424,14 @@ For the best Gastos Comunes / Hot Water OCR accuracy, also install the
 (see [Prerequisites](#-prerequisites) above). It is optional — the integration
 works without it using the built-in pdfminer extractor.
 
-### Option 1: HACS (Recommended)
+### Option 1: Marketplace (Home Assistant 2026.11 or newer)
+
+1. Install and configure the required Concierge OCR API add-on first.
+2. Go to **Settings → Marketplace**.
+3. Search for **Concierge HA Integration**, select **Install**, and confirm the version.
+4. Complete setup when Home Assistant opens the integration page.
+
+### Option 2: HACS (Home Assistant 2026.10 or older)
 
 1. Open HACS in Home Assistant
 2. Go to **Integrations → Custom Repositories**
@@ -434,7 +445,7 @@ works without it using the built-in pdfminer extractor.
 
 ---
 
-### Option 2: Manual Installation
+### Option 3: Manual installation
 
 1. Download this repository
 2. Copy the `custom_components/concierge_ha_integration/` folder to your Home Assistant `config/custom_components/` directory
