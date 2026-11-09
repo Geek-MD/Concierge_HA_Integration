@@ -4,6 +4,10 @@
   "after_dependencies": [
     "hassio"
   ],
+  "categories": [
+    "local_services",
+    "productivity_information.documents_photos"
+  ],
   "codeowners": [
     "@Geek-MD"
   ],
@@ -20,8 +24,8 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Geek-MD/Concierge_HA_Integration/issues",
   "requirements": [
-    "pdfminer.six>=20221105"
+    "pdfminer.six==20260107"
   ],
   "single_config_entry": true,
-  "version": "2.0.0"
+  "version": "2.0.1"
 }

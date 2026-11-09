@@ -16,13 +16,15 @@
 
 **Concierge HA Integration** is a custom integration for [Home Assistant](https://www.home-assistant.io) that allows you to manage utility bills (electricity, water, gas, etc.) received by email. The integration automatically detects services, extracts information from emails, and creates devices and sensors for each service with billing data.
 
+Version **2.0.1** adds Home Assistant 2026.11 Marketplace metadata and a reproducibly pinned PDF parsing dependency.
+
 > **🇨🇱 Geographic scope — Chile only**
 > 
 > Concierge HA Integration and Concierge are designed and tested exclusively for Chilean utility service accounts (Aguas Andinas, Enel, etc.). Billing email formats, field labels, and patterns are tuned for Chilean providers.
 
 ---
 
-## Panel Concierge (v2.0.0)
+## Panel Concierge (v2.0.1)
 
 La integración agrega **Concierge** a la barra lateral de Home Assistant, sin
 instalar tarjetas adicionales ni editar YAML:
